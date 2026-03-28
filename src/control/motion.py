@@ -98,9 +98,9 @@ class MotionController:
         self.joint_limits_upper = np.ones(num_joints) * np.pi
         
         # 速度/加速度限制
-        self.max_velocity = max_velocity or np.ones(num_joints) * np.pi  # rad/s
-        self.max_acceleration = max_acceleration or np.ones(num_joints) * 2.0  # rad/s^2
-        self.max_torque = max_torque or np.ones(num_joints) * 100.0  # Nm
+        self.max_velocity = max_velocity if max_velocity is not None else np.ones(num_joints) * np.pi  # rad/s
+        self.max_acceleration = max_acceleration if max_acceleration is not None else np.ones(num_joints) * 2.0  # rad/s^2
+        self.max_torque = max_torque if max_torque is not None else np.ones(num_joints) * 100.0  # Nm
         
         # PID参数
         self.kp = np.ones(num_joints) * 1.0
