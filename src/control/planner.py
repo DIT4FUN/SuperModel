@@ -1,0 +1,364 @@
+"""
+任务规划模块
+============
+
+层次化任务规划
+- 任务图构建
+- HTN (层次任务网络) 规划
+- 动作序列生成
+- 任务监控与重规划
+"""
+
+import numpy as np
+from dataclasses import dataclass, field
+from typing import Dict, List, Optional, Tuple, Any, Callable
+from enum import Enum
+import time
+
+
+class TaskStatus(Enum):
+    """任务状态"""
+    PENDING = "pending"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+
+class TaskPriority(Enum):
+    """任务优先级"""
+    LOW = 0
+    NORMAL = 1
+    HIGH = 2
+    CRITICAL = 3
+
+
+@dataclass
+class Task:
+    """任务"""
+    id: str
+    name: str
+    description: str = ""
+    priority: TaskPriority = TaskPriority.NORMAL
+    parameters: Dict[str, Any] = field(default_factory=dict)
+    subtasks: List['Task'] = field(default_factory=list)
+    status: TaskStatus = TaskStatus.PENDING
+    start_time: Optional[float] = None
+    end_time: Optional[float] = None
+    result: Optional[Dict[str, Any]] = None
+    
+    def duration(self) -> float:
+        """任务持续时间"""
+        if self.start_time is None:
+            return 0.0
+        end = self.end_time or time.time()
+        return end - self.start_time
+
+
+@dataclass
+class TaskSpec:
+    """任务规格 (用于创建任务)"""
+    name: str
+    goal_state: Dict[str, Any]  # 目标状态
+    constraints: Dict[str, Any] = field(default_factory=dict)  # 约束条件
+    max_depth: int = 5          # 最大分解深度
+    timeout: float = 60.0       # 超时时间
+
+
+@dataclass
+class WorldState:
+    """世界状态"""
+    objects: Dict[str, Dict[str, Any]] = field(default_factory=dict)
+    robot_state: Dict[str, Any] = field(default_factory=dict)
+    timestamp: float = 0.0
+    
+    def copy(self) -> 'WorldState':
+        """深拷贝"""
+        new_state = WorldState(timestamp=self.timestamp)
+        new_state.objects = {k: v.copy() for k, v in self.objects.items()}
+        new_state.robot_state = self.robot_state.copy()
+        return new_state
+    
+    def apply_action(self, action: str, params: Dict[str, Any]):
+        """应用动作，更新状态"""
+        # TODO: 实现动作效果应用
+        self.timestamp = time.time()
+
+
+class Action:
+    """动作"""
+    
+    def __init__(
+        self,
+        name: str,
+        precondition: Callable[[WorldState], bool],
+        effect: Callable[[WorldState, Dict[str, Any]], None],
+        cost: float = 1.0
+    ):
+        self.name = name
+        self.precondition = precondition
+        self.effect = effect
+        self.cost = cost
+    
+    def applicable(self, state: WorldState, params: Dict) -> bool:
+        """检查动作是否可执行"""
+        return self.precondition(state)
+    
+    def execute(self, state: WorldState, params: Dict):
+        """执行动作"""
+        self.effect(state, params)
+
+
+class TaskPlanner:
+    """
+    任务规划器
+    
+    使用层次化分解 + 搜索规划
+    """
+    
+    def __init__(
+        self,
+        action_library: Optional[Dict[str, Action]] = None,
+        skill_dispatcher: Optional[Any] = None
+    ):
+        """
+        Args:
+            action_library: 可用动作库
+            skill_dispatcher: 技能调度器
+        """
+        self.action_library = action_library or {}
+        self.skill_dispatcher = skill_dispatcher
+        
+        # 任务队列
+        self._task_queue: List[Task] = []
+        self._current_task: Optional[Task] = None
+        
+        # 规划状态
+        self._world_state: Optional[WorldState] = None
+        self._plan_history: List[List[str]] = []
+        
+    def set_world_state(self, state: WorldState):
+        """设置当前世界状态"""
+        self._world_state = state
+    
+    def add_task(self, task: Task):
+        """添加任务到队列"""
+        self._task_queue.append(task)
+        # 按优先级排序
+        self._task_queue.sort(key=lambda t: t.priority.value, reverse=True)
+    
+    def get_next_task(self) -> Optional[Task]:
+        """获取下一个待执行任务"""
+        if not self._task_queue:
+            return None
+        
+        task = self._task_queue.pop(0)
+        task.status = TaskStatus.RUNNING
+        task.start_time = time.time()
+        self._current_task = task
+        return task
+    
+    def plan(
+        self,
+        task_spec: TaskSpec,
+        initial_state: Optional[WorldState] = None
+    ) -> List[str]:
+        """
+        规划动作序列
+        
+        Args:
+            task_spec: 任务规格
+            initial_state: 初始状态
+            
+        Returns:
+            action_sequence: 动作序列
+        """
+        if initial_state is not None:
+            self._world_state = initial_state.copy()
+        
+        # 简化: 使用贪心规划
+        # TODO: 实现完整 HTN 规划器
+        plan = self._greedy_plan(task_spec.goal_state)
+        
+        self._plan_history.append(plan)
+        return plan
+    
+    def _greedy_plan(self, goal_state: Dict[str, Any]) -> List[str]:
+        """贪心规划"""
+        plan = []
+        state = self._world_state.copy() if self._world_state else WorldState()
+        
+        remaining_goals = goal_state.copy()
+        max_iterations = 20
+        iteration = 0
+        
+        while remaining_goals and iteration < max_iterations:
+            iteration += 1
+            
+            # 找最接近目标的动作
+            best_action = None
+            best_score = -1
+            
+            for name, action in self.action_library.items():
+                if action.applicable(state, {}):
+                    score = self._score_action(action, remaining_goals)
+                    if score > best_score:
+                        best_score = score
+                        best_action = action
+            
+            if best_action is None:
+                break
+            
+            # 执行动作
+            best_action.execute(state, {})
+            plan.append(best_action.name)
+            
+            # 更新目标
+            for key in list(remaining_goals.keys()):
+                if self._goal_satisfied(state, key, remaining_goals[key]):
+                    del remaining_goals[key]
+        
+        return plan
+    
+    def _score_action(self, action: Action, goals: Dict) -> float:
+        """评估动作对目标的贡献"""
+        # 简化评分
+        return action.cost
+    
+    def _goal_satisfied(self, state: WorldState, key: str, value: Any) -> bool:
+        """检查目标是否满足"""
+        parts = key.split('.')
+        obj = state.objects.get(parts[0], {})
+        
+        for part in parts[1:]:
+            if isinstance(obj, dict):
+                obj = obj.get(part, {})
+            else:
+                return False
+        
+        return obj == value
+    
+    def monitor_and_replan(
+        self,
+        current_state: WorldState,
+        failed_action: Optional[str] = None
+    ) -> Optional[List[str]]:
+        """
+        监控并重规划
+        
+        当执行失败时，重新规划
+        """
+        if failed_action:
+            # 分析失败原因
+            print(f"[TaskPlanner] Action failed: {failed_action}")
+        
+        # 简单策略: 从当前状态重新规划
+        if self._current_task:
+            goal = self._current_task.parameters.get("goal_state", {})
+            return self._greedy_plan(goal)
+        
+        return None
+    
+    def cancel_current_task(self):
+        """取消当前任务"""
+        if self._current_task:
+            self._current_task.status = TaskStatus.CANCELLED
+            self._current_task.end_time = time.time()
+            self._current_task = None
+
+
+class HierarchicalPlanner(TaskPlanner):
+    """
+    层次化任务网络 (HTN) 规划器
+    """
+    
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        
+        # 方法库
+        self._methods: Dict[str, List[Callable]] = {}
+        
+        # 注册默认方法
+        self._register_default_methods()
+    
+    def _register_default_methods(self):
+        """注册默认分解方法"""
+        
+        def pickup_method(task_params: Dict) -> List[Task]:
+            """拾取方法分解"""
+            return [
+                Task(id="approach", name="move_near", parameters={"target": task_params.get("object")}),
+                Task(id="grasp", name="grasp", parameters={"object": task_params.get("object")}),
+                Task(id="lift", name="move_up", parameters={})
+            ]
+        
+        def place_method(task_params: Dict) -> List[Task]:
+            """放置方法分解"""
+            return [
+                Task(id="move_to_place", name="move_to", parameters={"target": task_params.get("location")}),
+                Task(id="release", name="release", parameters={}),
+                Task(id="retract", name="move_back", parameters={})
+            ]
+        
+        self._methods["pickup"] = [pickup_method]
+        self._methods["place"] = [place_method]
+    
+    def decompose_task(
+        self,
+        task: Task,
+        depth: int = 0,
+        max_depth: int = 5
+    ) -> List[Task]:
+        """
+        分解任务为子任务
+        
+        Args:
+            task: 待分解任务
+            depth: 当前深度
+            max_depth: 最大深度
+            
+        Returns:
+            叶子任务列表
+        """
+        if depth >= max_depth:
+            return [task]
+        
+        methods = self._methods.get(task.name, [])
+        if not methods:
+            return [task]
+        
+        # 选择第一个适用方法
+        for method in methods:
+            subtasks = method(task.parameters)
+            if subtasks:
+                flat_subtasks = []
+                for st in subtasks:
+                    flat_subtasks.extend(self.decompose_task(st, depth + 1, max_depth))
+                return flat_subtasks
+        
+        return [task]
+    
+    def plan_hierarchical(self, task_spec: TaskSpec) -> List[Task]:
+        """
+        层次化规划
+        
+        1. 创建根任务
+        2. 递归分解为叶子任务
+        3. 返回叶子任务序列
+        """
+        root_task = Task(
+            id="root",
+            name=task_spec.name,
+            parameters={"goal_state": task_spec.goal_state}
+        )
+        
+        # 分解
+        leaf_tasks = self.decompose_task(root_task, max_depth=task_spec.max_depth)
+        
+        # 分配ID
+        for i, task in enumerate(leaf_tasks):
+            if not task.id or task.id == "root":
+                task.id = f"task_{i}"
+        
+        return leaf_tasks
