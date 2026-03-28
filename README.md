@@ -21,10 +21,57 @@
 | `fusion/` | 跨模态注意力融合网络 | ✅ 完成 |
 | `perception/` | 多模态特征提取与统一表示 | ✅ 完成 |
 | `learning/` | 自主学习框架 (对比学习/世界模型/好奇心) | ✅ 完成 |
+| `learning/world_model.py` | **Dreamer-style World Model** (RSSM/想象训练) | ✅ 完成 |
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
 | `tests/` | 全套单元测试 (126项 + World Model专项8项全部通过) | ✅ 完成 |
+
+## 🌟 World Model (世界模型)
+
+实现 Dreamer 风格的世界模型，包含 RSSM (Recurrent State Space Model)：
+
+```python
+from learning.world_model import create_world_model_agent, get_world_model_spec
+
+# 创建 M 级世界模型智能体
+agent = create_world_model_agent('M', obs_dims, action_dim)
+
+# 选择动作
+action = agent.select_action(observations, deterministic=True)
+
+# 存储经验
+agent.store_transition(obs, action, reward, next_obs, done)
+
+# 训练
+losses = agent.train_step(batch_size=64)
+```
+
+### World Model 架构
+
+```
+观测 o_t → [Encoder] → obs_embed
+                          ↓
+动作 a_{t-1} + 隐状态 h_{t-1} + z_{t-1} → [RSSM] → h_t, z_t
+                          ↓                              ↓
+                     [先验 p]                      [后验 q]
+                          ↓                              ↓
+                     z_t 的分布 ←————— obs_embed ——→ z_t 的分布
+                          ↓
+                       [Decoder] → 预测观测
+                          ↓
+                       [Reward] → 预测奖励
+```
+
+### AGV 五级 World Model 配置
+
+| 等级 | 隐状态维度 | 隐藏维度 | 想象步数 | 参数量 |
+|------|-----------|----------|----------|--------|
+| S | 128 | 256 | 10 | ~1M |
+| M | 256 | 512 | 15 | ~5M |
+| L | 512 | 1024 | 20 | ~20M |
+| XL | 768 | 1536 | 25 | ~50M |
+| XXL | 1024 | 2048 | 30 | ~100M |
 
 ## AGV五级规格体系
 
