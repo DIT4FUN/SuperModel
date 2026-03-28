@@ -349,6 +349,162 @@ class PhysicsEngine:
         return self.simulator.get_state()
 
 
+class SceneManager:
+    """
+    仿真场景管理器
+    
+    管理多物体场景，支持:
+    - 物体添加/删除/移动
+    - 碰撞查询
+    - 抓取/放置操作
+    """
+    
+    def __init__(self):
+        self.objects: Dict[str, Dict] = {}
+        self.grasp_target: Optional[str] = None
+        self._object_counter = 0
+    
+    def add_object(
+        self,
+        name: str,
+        obj_type: str,
+        position: np.ndarray,
+        orientation: Optional[np.ndarray] = None,
+        size: Optional[np.ndarray] = None,
+        mass: float = 0.1,
+        friction: float = 0.5,
+        color: Optional[np.ndarray] = None
+    ) -> str:
+        """添加物体到场景"""
+        if name is None:
+            name = f"object_{self._object_counter}"
+            self._object_counter += 1
+        
+        self.objects[name] = {
+            'type': obj_type,
+            'position': position.copy() if isinstance(position, np.ndarray) else np.array(position),
+            'orientation': orientation.copy() if orientation is not None else np.array([1, 0, 0, 0]),
+            'size': size,
+            'mass': mass,
+            'friction': friction,
+            'color': color,
+            'grasped': False,
+            'grasped_by': None
+        }
+        return name
+    
+    def remove_object(self, name: str) -> bool:
+        """从场景移除物体"""
+        if name in self.objects:
+            del self.objects[name]
+            return True
+        return False
+    
+    def move_object(self, name: str, position: np.ndarray) -> bool:
+        """移动场景中的物体"""
+        if name in self.objects and not self.objects[name]['grasped']:
+            self.objects[name]['position'] = np.array(position)
+            return True
+        return False
+    
+    def grasp(self, object_name: str) -> bool:
+        """尝试抓取物体"""
+        if object_name in self.objects and not self.objects[object_name]['grasped']:
+            self.objects[object_name]['grasped'] = True
+            self.grasp_target = object_name
+            return True
+        return False
+    
+    def release(self) -> Optional[str]:
+        """释放当前抓取的物体"""
+        if self.grasp_target:
+            name = self.grasp_target
+            self.objects[name]['grasped'] = False
+            self.grasp_target = None
+            return name
+        return None
+    
+    def get_object(self, name: str) -> Optional[Dict]:
+        """获取物体信息"""
+        return self.objects.get(name)
+    
+    def get_all_objects(self) -> List[Dict]:
+        """获取所有物体"""
+        return list(self.objects.values())
+    
+    def get_object_positions(self) -> Dict[str, np.ndarray]:
+        """获取所有物体位置"""
+        return {name: obj['position'].copy() for name, obj in self.objects.items()}
+
+
+class TrajectoryRecorder:
+    """
+    轨迹记录器
+    
+    记录机器人运动轨迹，支持回放和可视化
+    """
+    
+    def __init__(self):
+        self.joint_trajectory: List[np.ndarray] = []
+        self.cartesian_trajectory: List[np.ndarray] = []
+        self.wrench_history: List[np.ndarray] = []
+        self.timestamps: List[float] = []
+        self._start_time = None
+    
+    def record(
+        self,
+        joint_positions: np.ndarray,
+        cartesian_position: Optional[np.ndarray] = None,
+        wrench: Optional[np.ndarray] = None
+    ):
+        """记录一个数据点"""
+        if self._start_time is None:
+            self._start_time = time.time()
+        
+        self.joint_trajectory.append(joint_positions.copy())
+        if cartesian_position is not None:
+            self.cartesian_trajectory.append(np.array(cartesian_position))
+        if wrench is not None:
+            self.wrench_history.append(np.array(wrench))
+        self.timestamps.append(time.time() - self._start_time)
+    
+    def get_joint_trajectory(self) -> np.ndarray:
+        """获取关节轨迹"""
+        if not self.joint_trajectory:
+            return np.zeros((0, 6))
+        return np.array(self.joint_trajectory)
+    
+    def get_cartesian_trajectory(self) -> Optional[np.ndarray]:
+        """获取笛卡尔轨迹"""
+        if not self.cartesian_trajectory:
+            return None
+        return np.array(self.cartesian_trajectory)
+    
+    def get_duration(self) -> float:
+        """获取记录总时长"""
+        if not self.timestamps:
+            return 0.0
+        return self.timestamps[-1] - self.timestamps[0]
+    
+    def clear(self):
+        """清空记录"""
+        self.joint_trajectory.clear()
+        self.cartesian_trajectory.clear()
+        self.wrench_history.clear()
+        self.timestamps.clear()
+        self._start_time = None
+    
+    def export(self, path: str):
+        """导出为 numpy 文件"""
+        data = {
+            'joint_trajectory': self.get_joint_trajectory(),
+            'cartesian_trajectory': self.get_cartesian_trajectory(),
+            'wrench_history': np.array(self.wrench_history) if self.wrench_history else np.zeros((0, 6)),
+            'timestamps': np.array(self.timestamps)
+        }
+        np.savez_compressed(path, **data)
+
+
 # 仿真场景预设
 PRESET_SCENES = {
     "tabletop": {
