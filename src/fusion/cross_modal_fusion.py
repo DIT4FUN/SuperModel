@@ -112,6 +112,8 @@ class CrossModalAttention(nn.Module):
         attn = (Q @ K.transpose(-2, -1)) / (self.head_dim ** 0.5)  # B x H x N x M
         
         if mask is not None:
+            # mask: B x N x M -> B x 1 x N x M for broadcast to B x H x N x M
+            mask = mask.unsqueeze(1)
             attn = attn.masked_fill(mask == 0, float('-inf'))
             
         attn = torch.softmax(attn, dim=-1)
@@ -186,15 +188,12 @@ class CrossModalFusion(nn.Module):
             config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
         )
         
-        # 融合层
-        self.fusion_proj = nn.Sequential(
-            nn.Linear(config.hidden_dim * len(self._get_active_mods()), config.hidden_dim * 2),
-            nn.LayerNorm(config.hidden_dim * 2),
-            nn.GELU(),
-            nn.Dropout(config.dropout),
-            nn.Linear(config.hidden_dim * 2, config.hidden_dim),
-            nn.LayerNorm(config.hidden_dim)
-        )
+        # 融合层 (预建不同模态数量的投影，运行时选取)
+        self.fusion_proj_1 = nn.Linear(config.hidden_dim, config.hidden_dim)
+        self.fusion_proj_2 = nn.Linear(config.hidden_dim * 2, config.hidden_dim)
+        self.fusion_proj_3 = nn.Linear(config.hidden_dim * 3, config.hidden_dim)
+        self.fusion_proj_4 = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
+        self.fusion_proj_5 = nn.Linear(config.hidden_dim * 5, config.hidden_dim)
         
     def _get_active_mods(self) -> List[str]:
         return ['vision', 'audio', 'tactile', 'force', 'imu']
@@ -233,24 +232,44 @@ class CrossModalFusion(nn.Module):
             raise ValueError("No modalities available")
         
         # 跨模态交互
+        # 确保特征是3D: B x N x D (N=1 for single token features)
+        def ensure_3d(t: torch.Tensor) -> torch.Tensor:
+            if t.dim() == 2:
+                return t.unsqueeze(1)
+            return t
+        
+        def squeeze_2d(t: torch.Tensor) -> torch.Tensor:
+            if t.dim() == 3 and t.shape[1] == 1:
+                return t.squeeze(1)
+            return t
+        
         if 'vision' in features and 'audio' in features:
-            features['vision'] = features['vision'] + self.vision_audio_attn(
-                features['vision'], features['audio'], features['audio']
-            )
+            q = ensure_3d(features['vision'])
+            k = ensure_3d(features['audio'])
+            v = ensure_3d(features['audio'])
+            out = self.vision_audio_attn(q, k, v)
+            features['vision'] = features['vision'] + squeeze_2d(out)
             
         if 'vision' in features and 'tactile' in features:
-            features['vision'] = features['vision'] + self.vision_tactile_attn(
-                features['vision'], features['tactile'], features['tactile']
-            )
+            q = ensure_3d(features['vision'])
+            k = ensure_3d(features['tactile'])
+            v = ensure_3d(features['tactile'])
+            out = self.vision_tactile_attn(q, k, v)
+            features['vision'] = features['vision'] + squeeze_2d(out)
             
         if 'audio' in features and 'tactile' in features:
-            features['audio'] = features['audio'] + self.audio_tactile_attn(
-                features['audio'], features['tactile'], features['tactile']
-            )
+            q = ensure_3d(features['audio'])
+            k = ensure_3d(features['tactile'])
+            v = ensure_3d(features['tactile'])
+            out = self.audio_tactile_attn(q, k, v)
+            features['audio'] = features['audio'] + squeeze_2d(out)
         
-        # 串联融合
+        # 串联融合 (根据实际模态数量选择投影)
+        num_modalities = len(features)
         fused = torch.cat(list(features.values()), dim=-1)
-        fused = self.fusion_proj(fused)
+        proj_map = {1: self.fusion_proj_1, 2: self.fusion_proj_2, 3: self.fusion_proj_3,
+                    4: self.fusion_proj_4, 5: self.fusion_proj_5}
+        fused = proj_map[num_modalities](fused)
         
         return fused
 
