@@ -99,14 +99,26 @@ imu_data = sensor_sim.get_imu_data()
 ## 运行测试
 
 ```bash
-# 所有测试
+# 所有测试 (150 tests)
 python3 -m pytest tests/ -v
 
-# 传感器测试 (43 tests)
+# 传感器测试 (34 tests)
 python3 -m pytest tests/sensor_tests.py -v
 
-# 融合测试 (24 tests)
+# 融合测试 (33 tests)
 python3 -m pytest tests/fusion_tests.py -v
+
+# 控制模块测试 (8 tests)
+python3 -m pytest tests/control_tests.py -v
+
+# Dreamer Agent 测试 (7 tests)
+python3 -m pytest tests/test_dreamer.py -v
+
+# 编码器测试 (9 tests)
+python3 -m pytest tests/test_encoders.py -v
+
+# World Model 测试 (8 tests)
+python3 -m pytest tests/test_world_model.py -v
 ```
 
 ## 配置 AGV 等级
