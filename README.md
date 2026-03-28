@@ -151,6 +151,41 @@ lib = SkillLibrary()
 skill = lib.create_skill("move_to", {"target": [0.5, 0.0, 0.3]})
 ```
 
+### 世界模型 (Dreamer-style)
+
+```python
+from src.learning.world_model import (
+    create_world_model_agent, get_world_model_spec,
+    WORLD_MODEL_GRADES, ReplayBuffer
+)
+
+# 创建 AGV-M 级世界模型智能体
+obs_dims = {
+    'vision': 512, 'audio': 128,
+    'tactile': 64, 'force': 32, 'imu': 64
+}
+agent = create_world_model_agent('M', obs_dims, action_dim=6)
+
+# 与环境交互
+obs = {
+    'vision': np.random.randn(512),
+    'audio': np.random.randn(128),
+    'tactile': np.random.randn(64),
+    'force': np.random.randn(32),
+    'imu': np.random.randn(64)
+}
+action = agent.select_action(obs)
+agent.store_transition(obs, action, reward=0.5, next_obs=obs, done=False)
+
+# 训练步骤
+losses = agent.train_step(batch_size=32)
+
+# AGV 五级配置预览
+for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+    spec = get_world_model_spec(grade)
+    print(f"{grade}: latent={spec.latent_dim}, hidden={spec.hidden_dim}")
+```
+
 ### 仿真环境
 
 ```python
@@ -182,6 +217,8 @@ SuperModel/
 │   │   └── cross_modal_fusion.py
 │   ├── fusion/          # 跨模态融合网络
 │   ├── learning/        # 自主学习框架
+│   │   ├── self_supervised.py  # 对比学习/好奇心/自主学习
+│   │   └── world_model.py      # Dreamer-style 世界模型
 │   ├── control/         # 运动控制
 │   │   ├── motion.py    # PID + 轨迹控制
 │   │   ├── impedance.py # 阻抗/导纳/协作控制
@@ -190,7 +227,9 @@ SuperModel/
 │   └── simulation/      # 仿真环境
 ├── tests/
 │   ├── sensor_tests.py  # 传感器单元测试 (43 tests)
-│   └── fusion_tests.py   # 融合网络测试 (24 tests)
+│   ├── fusion_tests.py  # 融合网络测试 (24 tests)
+│   ├── control_tests.py # 控制模块测试 (59 tests)
+│   └── test_world_model.py # 世界模型专项测试 (8 tests)
 ├── configs/
 │   └── default.yaml     # 项目配置
 └── docs/
