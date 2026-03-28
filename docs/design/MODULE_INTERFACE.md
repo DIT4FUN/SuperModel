@@ -553,6 +553,166 @@ AGV五级规格体系定义于 [AGV_GRADE_SPEC.md](AGV_GRADE_SPEC.md)，与模�
 
 各等级对应的规格参数（分辨率、采样率、维度等）详见 `AGV_GRADE_SPEC.md`。
 
+### 9.1 AGV五级功能矩阵
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **传感器驱动** |
+| 双目视觉 | ○ | ✅ | ✅ | ✅ | ✅ |
+| 双耳声学 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 触觉阵列 | ○ | ✅ | ✅ | ✅ | ✅ |
+| 六维力矩 | ○ | ✅ | ✅ | ✅ | ✅ |
+| IMU | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 接近觉 | ✗ | ○ | ✅ | ✅ | ✅ |
+| 事件相机 | ✗ | ✗ | ✗ | ✅ | ✅ |
+| **融合网络** |
+| 晚期融合 | ✅ | ✅ | ○ | ○ | ○ |
+| 中期融合 | ✗ | ✅ | ✅ | ✅ | ○ |
+| 早期融合 | ✗ | ✗ | ○ | ✅ | ✅ |
+| 混合融合 | ✗ | ○ | ✅ | ✅ | ✅ |
+| CrossModalAttention | ✗ | ✅ | ✅ | ✅ | ✅ |
+| 统一表示分离 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| **认知学习** |
+| 世界模型 | ✗ | ○ | ✅ | ✅ | ✅ |
+| Dreamer Agent | ✗ | ✗ | ✅ | ✅ | ✅ |
+| 对比学习 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| 好奇心驱动 | ✗ | ✗ | ✅ | ✅ | ✅ |
+| **控制执行** |
+| 关节PID控制 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 笛卡尔速度控制 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| 阻抗控制 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| 力位混合控制 | ✗ | ○ | ✅ | ✅ | ✅ |
+| 协作安全控制 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| 技能库调度 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| HTN任务规划 | ✗ | ○ | ✅ | ✅ | ✅ |
+| **仿真环境** |
+| 自定义物理仿真 | ✅ | ✅ | ✅ | ✅ | ✅ |
+| PyBullet引擎 | ○ | ○ | ✅ | ✅ | ✅ |
+| MuJoCo引擎 | ○ | ○ | ✅ | ✅ | ✅ |
+| 场景管理器 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| 轨迹记录器 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| **编码器** |
+| CNN视觉编码器 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| RNN时序编码器 | ✗ | ✅ | ✅ | ✅ | ✅ |
+| Transformer编码器 | ✗ | ○ | ✅ | ✅ | ✅ |
+| 多模态统一编码 | ✗ | ✅ | ✅ | ✅ | ✅ |
+
+**图例**: ✅ 支持　○ 可选/简化　✗ 不支持
+
+### 9.2 模块接口依赖关系
+
+```
+sensors/
+├── vision.py       → sensors/encoders.py → fusion/
+├── audio.py       → sensors/encoders.py → fusion/
+├── tactile.py     → sensors/encoders.py → fusion/
+├── force.py       → sensors/encoders.py → fusion/
+└── imu.py        → sensors/encoders.py → fusion/
+
+fusion/
+└── cross_modal_fusion.py → perception/ → learning/
+                                        → control/planner.py
+                                        → control/skill.py
+
+control/
+├── motion.py      → simulation/
+├── impedance.py   ← sensors/force.py (external_wrench)
+├── skill.py       → control/motion.py
+└── planner.py    → control/skill.py
+```
+
+### 9.3 快速启动示例
+
+```python
+# === 完整流程示例 ===
+import numpy as np
+import torch
+from sensors.vision import BinocularCamera
+from sensors.audio import BinauralMic
+from sensors.tactile import TactileArray
+from sensors.force import ForceTorqueSensor
+from sensors.imu import IMUSensor, PoseEstimator
+from fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+from control.motion import MotionController, JointState
+from simulation.environment import RobotSimulator, SimConfig
+
+# 1. 初始化传感器
+camera = BinocularCamera(resolution=(1280, 720), fps=30)
+mic = BinauralMic(sample_rate=16000)
+tactile = TactileArray(array_size=(16, 16))
+force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+
+# 2. 初始化融合网络
+config = FusionConfig(vision_dim=512, audio_dim=128, tactile_dim=64, force_dim=32, imu_dim=64)
+fusion = CrossModalFusion(config)
+
+# 3. 初始化控制器
+controller = MotionController(num_joints=6, control_rate=100.0)
+
+# 4. 主循环
+for step in range(1000):
+    # 感知
+    stereo = camera.capture()
+    audio = mic.capture()
+    tactile_frame = tactile.capture()
+    wrench = force.capture()
+    imu_frame = imu.capture()
+
+    # 融合
+    multimodal = MultimodalInput(
+        vision=torch.randn(1, 512),
+        audio=torch.randn(1, 128),
+        tactile=torch.randn(1, 64),
+        force=torch.randn(1, 32),
+        imu=torch.randn(1, 64)
+    )
+    unified = fusion(multimodal)
+
+    # 控制
+    state = JointState(
+        position=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        velocity=np.zeros(6),
+        torque=np.zeros(6)
+    )
+    controller.update_joint_state(state)
+    torque = controller.compute_joint_torque(target_position=np.array([0.5, 0.3, -0.2, 0.1, 0.0, 0.0]))
+```
+
+### 9.4 数据流时序图
+
+```
+t=0ms      t=10ms     t=20ms     t=30ms     t=40ms     t=50ms
+   │          │          │          │          │          │
+   ▼          ▼          ▼          ▼          ▼          ▼
+┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐
+│Camera│  │Mic   │  │Tactil│  │Force │  │ IMU │  │Process│
+│Capture│ │Capture│  │Capture│  │Capture│  │Capture│  │& Fuse│
+└──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘
+   │          │          │          │          │          │
+   └──────────┴──────────┴──────────┴──────────┴──────────┘
+                              │
+                              ▼
+                      CrossModalFusion
+                         unified
+                              │
+              ┌───────────────┼───────────────┐
+              ▼               ▼               ▼
+         World Model     Task Planner    Skill Library
+              │               │               │
+              ▼               ▼               ▼
+         Action           Plan           Skill Execute
+              │               │               │
+              └───────────────┴───────────────┘
+                              │
+                              ▼
+                    MotionController
+                         torque
+                              │
+                              ▼
+                    RobotSimulator.step()
+```
+
 ---
 
 ## 10. 版本历史
@@ -562,4 +722,12 @@ AGV五级规格体系定义于 [AGV_GRADE_SPEC.md](AGV_GRADE_SPEC.md)，与模�
 | v0.2.0 | 2026-03-28 | 新增编码器接口章节、AGV五级规格对照 |
 | v0.1.0 | 2026-03-28 | 初始接口设计文档 |
 
-*文档版本: v0.2.0*
+## 11. 版本历史
+
+| 版本 | 日期 | 描述 |
+|------|------|------|
+| v0.3.0 | 2026-03-28 | 新增AGV五级功能矩阵、模块依赖关系图、快速启动示例、数据流时序图 |
+| v0.2.0 | 2026-03-28 | 新增编码器接口章节、AGV五级规格对照 |
+| v0.1.0 | 2026-03-28 | 初始接口设计文档 |
+
+*文档版本: v0.3.0*
