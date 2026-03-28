@@ -1,0 +1,114 @@
+# SuperModel 项目配置
+# 超模态机器人具身智能大脑
+
+project:
+  name: "SuperModel"
+  version: "0.1.0"
+  description: "超模态机器人具身智能大脑"
+  author: "DIT4FUN"
+  github: "https://github.com/DIT4FUN/SuperModel"
+
+# AGV等级配置
+agv_grade: "M"  # S/M/L/XL/XXL
+
+# 传感器配置
+sensors:
+  vision:
+    enabled: true
+    type: "RealSense D435i"
+    resolution: [640, 480]
+    fps: 30
+    baseline_mm: 50
+    
+  audio:
+    enabled: true
+    type: "ReSpeaker 4-Mic"
+    sample_rate: 16000
+    channels: 2
+    
+  tactile:
+    enabled: true
+    type: "Digi Sensing Array"
+    array_size: [16, 16]
+    resolution_bits: 12
+    
+  force:
+    enabled: true
+    type: "ATI Force/Torque"
+    axes: 6
+    sampling_hz: 100
+    
+  imu:
+    enabled: true
+    type: "BMI088"
+    accel_range: 16  # g
+    gyro_range: 2000  # deg/s
+
+# 模型配置
+model:
+  # 融合模块
+  fusion:
+    hidden_dim: 256
+    num_heads: 4
+    num_layers: 2
+    dropout: 0.1
+    
+  # 世界模型
+  world_model:
+    hidden_dim: 256
+    imagination_horizon: 5
+    
+  # 学习配置
+  learning:
+    lr: 1e-4
+    batch_size: 32
+    temperature: 0.1
+    curiosity_weight: 0.2
+    world_model_weight: 0.5
+
+# 硬件配置
+hardware:
+  platform: "Jetson AGX Orin"
+  compute_device: "cuda"
+  memory_gb: 32
+  
+# 部署配置
+deployment:
+  realtime: true
+  ros_version: "humble"
+  control_rate_hz: 100
+
+# 开发路线
+roadmap:
+  phase1:
+    name: "基础感知"
+    duration: "1-2月"
+    goals:
+      - "双目视觉感知"
+      - "双耳听觉感知"
+      - "触觉传感阵列"
+      - "力觉感知系统"
+      
+  phase2:
+    name: "融合模型"
+    duration: "2-3月"
+    goals:
+      - "多模态特征提取"
+      - "跨模态注意力融合"
+      - "统一表示学习"
+      
+  phase3:
+    name: "认知与决策"
+    duration: "3-4月"
+    goals:
+      - "世界模型构建"
+      - "自主学习框架"
+      - "动作规划与控制"
+      
+  phase4:
+    name: "集成与优化"
+    duration: "4-6月"
+    goals:
+      - "硬件集成"
+      - "实时性优化"
+      - "场景测试与迭代"
