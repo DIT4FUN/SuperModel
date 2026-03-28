@@ -18,14 +18,16 @@
 | 模块 | 描述 | 状态 |
 |------|------|------|
 | `sensors/` | 多模态传感器接口 (视觉/听觉/触觉/力觉/IMU) | ✅ 完成 |
+| `sensors/encoders.py` | **神经网络编码器** (CNN/RNN/注意力) | ✅ 完成 |
 | `fusion/` | 跨模态注意力融合网络 | ✅ 完成 |
 | `perception/` | 多模态特征提取与统一表示 | ✅ 完成 |
 | `learning/` | 自主学习框架 (对比学习/世界模型/好奇心) | ✅ 完成 |
-| `learning/world_model.py` | **Dreamer-style World Model** (RSSM/想象训练) | ✅ 完成 |
+| `learning/world_model.py` | **Dreamer-style World Model** (RSSM) | ✅ 完成 |
+| `learning/dreamer_agent.py` | **Dreamer Actor-Critic** (想象训练) | ✅ 完成 |
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (126项 + World Model专项8项全部通过) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**24项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -72,6 +74,65 @@ losses = agent.train_step(batch_size=64)
 | L | 512 | 1024 | 20 | ~20M |
 | XL | 768 | 1536 | 25 | ~50M |
 | XXL | 1024 | 2048 | 30 | ~100M |
+
+## 🎯 传感器编码器
+
+将原始传感器数据编码为特征向量：
+
+```python
+from sensors.encoders import create_sensor_encoder
+
+# 创建编码器
+encoder = create_sensor_encoder(obs_dims, grade='M')
+
+# 编码观测
+encoded = encoder({
+    'vision': torch.randn(1, 3, 224, 224),
+    'audio': torch.randn(1, 100, 64),
+    'tactile': torch.randn(1, 1, 16, 16),
+    'force': torch.randn(1, 10, 6),
+    'imu': torch.randn(1, 10, 6)
+})
+# encoded['fused'] - 融合特征
+```
+
+### 编码器架构
+
+| 编码器 | 输入 | 架构 |
+|--------|------|------|
+| VisionEncoder | (B, 3, H, W) | CNN + 残差块 |
+| AudioEncoder | (B, T, n_mels) | LSTM + 双向GRU |
+| TactileEncoder | (B, 1, H, W) | CNN + 残差块 |
+| ForceEncoder | (B, T, 6) | LSTM |
+| IMUEncoder | (B, T, 6) | 双向LSTM + 姿态估计 |
+
+## 🤖 Dreamer Agent
+
+基于想象轨迹的强化学习智能体：
+
+```python
+from learning.dreamer_agent import create_integrated_agent
+
+# 创建集成智能体
+agent = create_integrated_agent(obs_dims, action_dim=6, grade='M')
+
+# 选择动作
+action = agent.select_action(observations, deterministic=True)
+
+# 想象 rollout
+latent_seq, action_seq, reward_seq, value_seq = agent.imagine(
+    initial_deter, initial_stoch, horizon=15
+)
+```
+
+### Dreamer 训练流程
+
+```
+1. 世界模型学习: 预测下一个状态和奖励
+2. 想象 rollout: 在隐空间中模拟轨迹
+3. Actor 更新: 最大化期望回报
+4. Critic 更新: 最小化价值估计误差
+```
 
 ## AGV五级规格体系
 
