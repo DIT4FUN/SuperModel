@@ -99,8 +99,6 @@ def test_dreamer_agent():
     print(f"    动作序列: {action_seq.shape}")
     print(f"    奖励序列: {reward_seq.shape}")
     print("    ✅ Dreamer Agent 测试通过")
-    
-    return agent
 
 
 def test_actor_update():

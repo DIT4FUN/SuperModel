@@ -139,8 +139,6 @@ def test_world_model():
     
     print(f"    损失: total={losses['total'].item():.4f}, reward={losses['reward'].item():.4f}")
     print("    ✅ 完整世界模型测试通过")
-    
-    return model
 
 
 def test_world_model_agent():
