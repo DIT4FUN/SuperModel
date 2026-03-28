@@ -183,25 +183,31 @@ flowchart TB
 ## 6. 开发路线图
 
 ### Phase 1: 基础感知 (1-2月)
-- [ ] 双目视觉感知
-- [ ] 双耳听觉感知
-- [ ] 触觉传感阵列
-- [ ] 力觉感知系统
+- [x] 双目视觉感知 (`sensors/vision.py`)
+- [x] 双耳听觉感知 (`sensors/audio.py`)
+- [x] 触觉传感阵列 (`sensors/tactile.py`)
+- [x] 力觉感知系统 (`sensors/force.py`)
+- [x] IMU惯性测量 (`sensors/imu.py`)
 
 ### Phase 2: 融合模型 (2-3月)
-- [ ] 多模态特征提取
-- [ ] 跨模态注意力融合
-- [ ] 统一表示学习
+- [x] 多模态特征提取 (`fusion/cross_modal_fusion.py`)
+- [x] 跨模态注意力融合 (`CrossModalAttention`)
+- [x] 统一表示学习 (`UnifiedRepresentation`)
+- [ ] 时空图网络 (时序建模)
+- [ ] 特征对齐对比学习
 
 ### Phase 3: 认知与决策 (3-4月)
+- [x] 自主学习框架 (`learning/self_supervised.py`)
+- [x] 动作规划与控制 (`control/motion.py`, `control/impedance.py`)
+- [x] 技能库系统 (`control/skill.py`, `control/planner.py`)
 - [ ] 世界模型构建
-- [ ] 自主学习框架
-- [ ] 动作规划与控制
+- [ ] 在线强化学习
 
 ### Phase 4: 集成与优化 (4-6月)
 - [ ] 硬件集成
 - [ ] 实时性优化
 - [ ] 场景测试与迭代
+- [ ] 数字孪生接口
 
 ## 7. 硬件接口
 
