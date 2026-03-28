@@ -494,10 +494,72 @@ class SensorSimulator:
 
 ---
 
-## 8. 版本历史
+## 8. 编码器模块接口
+
+### 8.1 SensorEncoderWrapper
+
+```python
+class SensorEncoderWrapper:
+    def __init__(self, config: EncoderConfig)
+    def encode(self, sensor_type: str, data: np.ndarray) -> np.ndarray
+    def forward(self, sensor_type: str, data: np.ndarray) -> np.ndarray
+    def get_output_dim(self) -> int
+    def freeze()
+    def unfreeze()
+```
+
+### 8.2 各模态编码器
+
+```python
+class VisionEncoder(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor  # Bx3xHxW → Bx512
+
+class AudioEncoder(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor  # BxTx1 → Bx128
+
+class TactileEncoder(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor  # BxHxW → Bx64
+
+class ForceEncoder(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor  # Bx6 → Bx32
+
+class IMUEncoder(nn.Module):
+    def forward(self, x: torch.Tensor) -> torch.Tensor  # Bx6 → Bx32
+
+class MultimodalEncoder(nn.Module):
+    def forward(
+        self,
+        vision: Optional[torch.Tensor] = None,
+        audio: Optional[torch.Tensor] = None,
+        tactile: Optional[torch.Tensor] = None,
+        force: Optional[torch.Tensor] = None,
+        imu: Optional[torch.Tensor] = None
+    ) -> Dict[str, torch.Tensor]
+```
+
+---
+
+## 9. AGV五级规格对照
+
+AGV五级规格体系定义于 [AGV_GRADE_SPEC.md](AGV_GRADE_SPEC.md)，与模块接口的主要对应关系：
+
+| 等级 | 感知接口 | 控制频率 | 融合策略 | 典型平台 |
+|------|----------|----------|----------|----------|
+| **S** | 3模态 | 50Hz | 晚期融合 | Raspberry Pi 5 |
+| **M** | 5模态 | 100Hz | 中期融合 | Jetson Nano |
+| **L** | 5模态 | 200Hz | 中期融合 | Jetson Orin Nano |
+| **XL** | 5模态+事件相机 | 500Hz | 混合融合 | Jetson AGX Orin |
+| **XXL** | 多目+LiDAR | 1000Hz | 早期+中期+晚期 | NVIDIA DRIVE |
+
+各等级对应的规格参数（分辨率、采样率、维度等）详见 `AGV_GRADE_SPEC.md`。
+
+---
+
+## 10. 版本历史
 
 | 版本 | 日期 | 描述 |
 |------|------|------|
+| v0.2.0 | 2026-03-28 | 新增编码器接口章节、AGV五级规格对照 |
 | v0.1.0 | 2026-03-28 | 初始接口设计文档 |
 
-*文档版本: v0.1.0*
+*文档版本: v0.2.0*

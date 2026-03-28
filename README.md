@@ -27,7 +27,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**150项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**161项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -320,10 +320,12 @@ SuperModel/
 │   │   ├── audio.py     # 双耳麦克风 + 声源定位
 │   │   ├── tactile.py   # 电子皮肤 + 压力处理
 │   │   ├── force.py     # 六维力矩传感器
-│   │   └── imu.py       # IMU + 姿态估计
-│   ├── perception/      # 感知融合
-│   │   └── cross_modal_fusion.py
-│   ├── fusion/          # 跨模态融合网络
+│   │   ├── imu.py       # IMU + 姿态估计
+│   │   ├── encoders.py  # 神经网络编码器 (CNN/RNN/注意力)
+│   │   └── __init__.py   # 模块导出
+│   ├── perception/      # 感知处理
+│   └── fusion/          # 跨模态融合网络
+│       └── cross_modal_fusion.py  # 跨模态注意力融合
 │   ├── learning/        # 自主学习框架
 │   │   ├── self_supervised.py  # 对比学习/好奇心/自主学习
 │   │   └── world_model.py      # Dreamer-style 世界模型
@@ -334,24 +336,28 @@ SuperModel/
 │   │   └── planner.py   # HTN 任务规划
 │   └── simulation/      # 仿真环境
 ├── tests/
-│   ├── sensor_tests.py  # 传感器单元测试 (43 tests)
-│   ├── fusion_tests.py  # 融合网络测试 (24 tests)
-│   ├── control_tests.py # 控制模块测试 (59 tests)
-│   └── test_world_model.py # 世界模型专项测试 (8 tests)
+│   ├── sensor_tests.py      # 传感器单元测试 (43 tests)
+│   ├── fusion_tests.py      # 融合网络测试 (24 tests)
+│   ├── control_tests.py     # 控制模块测试 (59 tests)
+│   ├── integration_tests.py # 集成测试 (11 tests)
+│   ├── test_encoders.py     # 编码器测试 (9 tests)
+│   ├── test_dreamer.py      # Dreamer Agent测试 (7 tests)
+│   └── test_world_model.py  # 世界模型测试 (8 tests)
 ├── configs/
-│   └── default.yaml     # 项目配置
+│   └── project_config.yaml  # 项目配置
 └── docs/
     ├── architecture/    # 架构设计
-    └── design/          # 详细设计文档
-        ├── AGV_GRADE_SPEC.md   # AGV五级规格表
-        └── MODULE_INTERFACE.md # 模块接口设计
+    └── design/         # 详细设计文档
+        ├── AGV_GRADE_SPEC.md    # AGV五级规格表
+        ├── MODULE_INTERFACE.md  # 模块接口设计
+        └── SYSTEM_ARCHITECTURE.md # 系统架构
 ```
 
 ## 接口文档
 
 - [模块接口设计](docs/design/MODULE_INTERFACE.md) — 完整的API接口定义
-- [AGV五级规格表](docs/design/AGV_GRADE_SPEC.md) — S/ML/XL/XXL各等级参数
-- [架构设计](docs/architecture/SUPER_MODEL_ARCHITECTURE.md) — 整体架构图
+- [AGV五级规格表](docs/design/AGV_GRADE_SPEC.md) — S/M/L/XL/XXL各等级参数
+- [系统架构设计](docs/design/SYSTEM_ARCHITECTURE.md) — 整体架构图
 
 ## 测试状态
 
@@ -359,6 +365,12 @@ SuperModel/
 |----------|--------|------|
 | sensor_tests.py | 43 | ✅ 全部通过 |
 | fusion_tests.py | 24 | ✅ 全部通过 |
+| control_tests.py | 59 | ✅ 全部通过 |
+| integration_tests.py | 11 | ✅ 全部通过 |
+| test_encoders.py | 9 | ✅ 全部通过 |
+| test_dreamer.py | 7 | ✅ 全部通过 |
+| test_world_model.py | 8 | ✅ 全部通过 |
+| **总计** | **161** | ✅ **全部通过** |
 
 ## 技术栈
 
