@@ -37,9 +37,9 @@ class JointState:
 class JointTrajectory:
     """关节轨迹点序列"""
     positions: np.ndarray    # N x num_joints
+    timestamps: np.ndarray   # N, 时间戳
     velocities: Optional[np.ndarray] = None  # N x num_joints
     accelerations: Optional[np.ndarray] = None  # N x num_joints
-    timestamps: np.ndarray   # N, 时间戳
     
     def __post_init__(self):
         if isinstance(self.positions, list):

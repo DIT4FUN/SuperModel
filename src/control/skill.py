@@ -95,17 +95,17 @@ class Skill:
         return (time.time() - self.start_time) > self.config.timeout
 
 
-@dataclass
 class PrimitiveSkill(Skill):
     """原子技能 - 不可再分的基础动作"""
     pass
 
 
-@dataclass
 class CompositeSkill(Skill):
     """组合技能 - 由多个子技能组成"""
-    sub_skills: List[Skill] = field(default_factory=list)
-    execution_policy: str = "sequential"  # "sequential" / "parallel"
+    def __init__(self, config: SkillConfig, sub_skills: Optional[List[Skill]] = None, execution_policy: str = "sequential"):
+        super().__init__(config)
+        self.sub_skills = sub_skills or []
+        self.execution_policy = execution_policy
     
     def execute(self, context: Dict[str, Any]) -> SkillResult:
         """顺序或并行执行子技能"""

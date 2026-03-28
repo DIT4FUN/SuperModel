@@ -124,9 +124,9 @@ class ImpedanceController:
         # 阻抗方程: M*Xdd + D*Xd + K*X = F
         # 稳态: F = K*X + D*Xd (忽略惯性)
         
-        # 计算阻抗力
+        # 计算阻抗力 (使用前3维的阻抗参数)
         impedance_force = (
-            self.params.K @ error[:3] +
+            self.params.K[:3, :3] @ error[:3] +
             self.params.D[:3, :3] @ error_dot[:3]
         )
         
