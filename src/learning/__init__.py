@@ -8,17 +8,51 @@ SuperModel 学习模块
 from .self_supervised import (
     LearningConfig,
     ContrastiveLoss,
-    WorldModel,
+    WorldModel as SimpleWorldModel,
     IntrinsicCuriosity,
     AutonomousLearning,
     get_learning_spec
 )
 
+from .world_model import (
+    WorldModelConfig,
+    WorldModel,
+    ObservationEncoder,
+    TransitionModel,
+    RewardModel,
+    ValueModel,
+    ActorModel,
+    ModelState,
+    ModelOutput,
+    WorldModelAgent,
+    ReplayBuffer,
+    create_world_model_agent,
+    get_world_model_spec,
+    WORLD_MODEL_GRADES
+)
+
 __all__ = [
+    # 自监督学习
     'LearningConfig',
     'ContrastiveLoss',
-    'WorldModel',
+    'SimpleWorldModel',
     'IntrinsicCuriosity',
     'AutonomousLearning',
-    'get_learning_spec'
+    'get_learning_spec',
+    
+    # World Model (Dreamer-style)
+    'WorldModelConfig',
+    'WorldModel',
+    'ObservationEncoder',
+    'TransitionModel',
+    'RewardModel',
+    'ValueModel',
+    'ActorModel',
+    'ModelState',
+    'ModelOutput',
+    'WorldModelAgent',
+    'ReplayBuffer',
+    'create_world_model_agent',
+    'get_world_model_spec',
+    'WORLD_MODEL_GRADES'
 ]
