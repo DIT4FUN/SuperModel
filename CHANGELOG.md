@@ -5,6 +5,15 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.3] - 2026-03-30
+
+### Verified
+- 全量测试套件 522 项测试全部通过（sensor_tests.py 74项、fusion_tests.py 51项、control_tests.py 96项等）
+- 触觉/力觉/IMU 模块功能完整：接触检测、滑移检测、抓取质量评估、六维力矩、姿态估计、轨迹仿真
+- 控制模块完整：AGV运动控制、MPC、阻抗控制、安全监控、ROS2接口
+- 仿真环境完整：RobotSimulator、SuperModelGymEnv、虚拟传感器全套
+- 设计文档完整：AGV五级规格表（AGV_GRADE_SPEC.md）、模块接口设计（MODULE_INTERFACE.md）
+
 ## [1.0.2] - 2026-03-30
 
 ### Added
