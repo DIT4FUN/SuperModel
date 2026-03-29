@@ -742,5 +742,173 @@ class TestAGVTrajectorySpecs(unittest.TestCase):
         self.assertTrue(spec['jerk_limit'])
 
 
+class TestROS2Interface(unittest.TestCase):
+    """测试 ROS2 接口模块"""
+    
+    def test_ros2_joint_trajectory_init(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface, ControlInterfaceMode
+        iface = ROS2JointTrajectoryInterface(
+            joint_names=['joint1', 'joint2', 'joint3'],
+            interface_mode=ControlInterfaceMode.POSITION
+        )
+        self.assertEqual(iface.num_joints, 3)
+        self.assertEqual(iface.mode, ControlInterfaceMode.POSITION)
+    
+    def test_ros2_joint_trajectory_activate_deactivate(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface
+        iface = ROS2JointTrajectoryInterface(['j1', 'j2'])
+        self.assertFalse(iface._is_active)
+        iface.activate()
+        self.assertTrue(iface._is_active)
+        iface.deactivate()
+        self.assertFalse(iface._is_active)
+    
+    def test_ros2_joint_trajectory_send_point(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface, JointCommand
+        import numpy as np
+        iface = ROS2JointTrajectoryInterface(['j1', 'j2', 'j3'])
+        iface.activate()
+        
+        cmd = JointCommand(positions=np.array([0.1, 0.2, 0.3]))
+        result = iface.send_point(cmd)
+        self.assertTrue(result)
+    
+    def test_ros2_joint_trajectory_send_trajectory(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface, JointCommand
+        import numpy as np
+        iface = ROS2JointTrajectoryInterface(['j1', 'j2'])
+        iface.activate()
+        
+        traj = [
+            JointCommand(positions=np.array([0.1, 0.2])),
+            JointCommand(positions=np.array([0.3, 0.4])),
+            JointCommand(positions=np.array([0.5, 0.6])),
+        ]
+        result = iface.send_trajectory(traj)
+        self.assertTrue(result)
+    
+    def test_ros2_joint_trajectory_cancel(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface, JointCommand
+        import numpy as np
+        iface = ROS2JointTrajectoryInterface(['j1'])
+        iface.activate()
+        
+        traj = [JointCommand(positions=np.array([0.5]))]
+        iface.send_trajectory(traj)
+        result = iface.cancel()
+        self.assertTrue(result)
+    
+    def test_ros2_joint_trajectory_update(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface, JointCommand, JointState
+        import numpy as np
+        iface = ROS2JointTrajectoryInterface(['j1', 'j2'])
+        iface.activate()
+        
+        # 发送轨迹
+        traj = [JointCommand(positions=np.array([0.1, 0.2]))]
+        iface.send_trajectory(traj)
+        
+        # 更新状态
+        state = JointState(
+            positions=np.array([0.1, 0.2]),
+            velocities=np.zeros(2),
+            efforts=np.zeros(2)
+        )
+        result = iface.update(state)
+        # 应该返回 None 因为点已到达
+        self.assertIsNone(result)
+    
+    def test_ros2_topic_interface_init(self):
+        from control.ros2_interface import ROS2TopicInterface
+        iface = ROS2TopicInterface(node_name="test_node")
+        self.assertEqual(iface.node_name, "test_node")
+    
+    def test_ros2_topic_publish_subscribe(self):
+        from control.ros2_interface import ROS2TopicInterface
+        iface = ROS2TopicInterface()
+        
+        received = []
+        def callback(data):
+            received.append(data)
+        
+        iface.create_subscription('/test', 'std_msgs/String', callback)
+        iface.create_publisher('/test', 'std_msgs/String')
+        iface.publish('/test', {'message': 'hello'})
+        
+        self.assertEqual(len(received), 0)  # 模拟不自动触发
+    
+    def test_ros2_service_interface_init(self):
+        from control.ros2_interface import ROS2ServiceInterface
+        svc = ROS2ServiceInterface(node_name="test_service")
+        self.assertEqual(svc.node_name, "test_service")
+    
+    def test_ros2_service_create_and_call(self):
+        from control.ros2_interface import ROS2ServiceInterface
+        svc = ROS2ServiceInterface()
+        
+        def callback(request):
+            return {'success': True, 'result': request.get('value', 0) * 2}
+        
+        svc.create_service('/double', 'std_srvs/srv/Double', callback)
+        result = svc.call_service('/double', {'value': 5})
+        self.assertTrue(result['success'])
+        self.assertEqual(result['result'], 10)
+    
+    def test_ros2_topic_interface_get_data(self):
+        from control.ros2_interface import ROS2TopicInterface
+        import numpy as np
+        iface = ROS2TopicInterface()
+        
+        data = np.array([1.0, 2.0, 3.0])
+        iface.create_publisher('/sensor', 'sensor_msgs/Float64MultiArray')
+        iface.publish('/sensor', data)
+        
+        retrieved = iface.get_topic_data('/sensor')
+        np.testing.assert_array_equal(retrieved, data)
+    
+    def test_ros2_joint_trajectory_stats(self):
+        from control.ros2_interface import ROS2JointTrajectoryInterface, JointCommand
+        import numpy as np
+        iface = ROS2JointTrajectoryInterface(['j1'])
+        iface.activate()
+        
+        # Set command callback so send_point increments counter
+        iface.set_command_callback(lambda cmd: None)
+        
+        for _ in range(5):
+            iface.send_point(JointCommand(positions=np.array([0.1])))
+        
+        stats = iface.get_stats()
+        self.assertEqual(stats['sent_commands'], 5)
+        self.assertEqual(stats['failed_commands'], 0)
+        self.assertEqual(stats['success_rate'], 1.0)
+    
+    def test_ros2_ros_topics_constants(self):
+        from control.ros2_interface import ROSTopics, ROSServices, ROSParams
+        
+        self.assertEqual(ROSTopics.JOINT_TRAJECTORY_CMD, '/supermodel/joint_trajectory/command')
+        self.assertEqual(ROSServices.PERCEPTION, '/supermodel/perception')
+        self.assertEqual(ROSParams.CONTROL_RATE, 'control.rate')
+    
+    def test_get_ros2_spec(self):
+        from control.ros2_interface import get_ros2_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_ros2_spec(grade)
+            self.assertIn('topics', spec)
+            self.assertIn('services', spec)
+            self.assertIn('max_freq_hz', spec)
+            self.assertIn('realtime', spec)
+            self.assertIn('qos_depth', spec)
+    
+    def test_ros2_spec_lxxl_realtime(self):
+        from control.ros2_interface import get_ros2_spec
+        
+        # L 级以上需要实时性
+        for grade in ['L', 'XL', 'XXL']:
+            spec = get_ros2_spec(grade)
+            self.assertTrue(spec['realtime'])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

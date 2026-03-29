@@ -8,6 +8,7 @@ SuperModel 控制模块
 - skill: 技能库调度
 - planner: 任务规划器
 - impedance: 阻抗控制
+- ros2_interface: ROS2 Humble 集成接口
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand
@@ -19,6 +20,11 @@ from .trajectory import (
 from .skill import SkillLibrary, Skill, SkillRegistry
 from .planner import TaskPlanner, Task, TaskStatus
 from .impedance import ImpedanceController
+from .ros2_interface import (
+    ROS2JointTrajectoryInterface, ROS2TopicInterface, ROS2ServiceInterface,
+    JointCommand, JointState, ControlInterfaceMode,
+    ROSTopics, ROSServices, ROSParams, get_ros2_spec
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand',
@@ -27,5 +33,8 @@ __all__ = [
     'PlanningAlgorithm', 'get_trajectory_spec',
     'SkillLibrary', 'Skill', 'SkillRegistry',
     'TaskPlanner', 'Task', 'TaskStatus',
-    'ImpedanceController'
+    'ImpedanceController',
+    'ROS2JointTrajectoryInterface', 'ROS2TopicInterface', 'ROS2ServiceInterface',
+    'JointCommand', 'JointState', 'ControlInterfaceMode',
+    'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec'
 ]
