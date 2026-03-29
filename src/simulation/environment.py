@@ -321,7 +321,37 @@ class PhysicsEngine:
         try:
             import pybullet as p
             self.pybullet = p
-            # TODO: PyBullet 初始化
+            
+            # 连接物理引擎
+            cid = p.connect(p.SHARED_MEMORY_SERVER if self.config.get('shared_memory', False) else p.DIRECT)
+            if cid < 0:
+                cid = p.connect(p.DIRECT)
+            
+            # 设置重力
+            gravity = self.config.get('gravity', [0, 0, -9.81])
+            p.setGravity(*gravity, physicsClientId=cid)
+            
+            # 设置时间步
+            dt = self.config.get('dt', 0.01)
+            p.setTimeStep(dt, physicsClientId=cid)
+            
+            # 创建地面
+            plane_id = p.loadURDF("plane.urdf", [0, 0, 0], physicsClientId=cid)
+            
+            # 创建机器人 (如果提供了 URDF 路径)
+            robot_urdf = self.config.get('robot_urdf')
+            if robot_urdf:
+                base_pos = self.config.get('robot_base_pos', [0, 0, 0])
+                base_orn = self.config.get('robot_base_orn', [0, 0, 0, 1])
+                self.robot_id = p.loadURDF(robot_urdf, base_pos, base_orn, physicsClientId=cid)
+            else:
+                self.robot_id = -1
+            
+            self._client_id = cid
+            self.simulator = None  # PyBullet 自己管理状态
+            
+            print(f"[PhysicsEngine] PyBullet initialized (client={cid}, robot={self.robot_id})")
+            
         except ImportError:
             print("[PhysicsEngine] PyBullet not installed, falling back to custom")
             self.engine = "custom"
@@ -333,7 +363,44 @@ class PhysicsEngine:
         try:
             import mujoco
             self.mujoco = mujoco
-            # TODO: MuJoCo 初始化
+            
+            # 创建默认模型或加载 MJCF
+            model_path = self.config.get('model_xml')
+            if model_path:
+                self._model = mujoco.MjModel.from_xml_path(model_path)
+            else:
+                # 创建简单的双连杆模型
+                xml_string = """
+                <mujoco model="simple_arm">
+                    <option timestep="0.01" gravity="0 0 -9.81"/>
+                    <worldbody>
+                        <body name="base" pos="0 0 0">
+                            <geom type="box" size="0.1 0.1 0.05"/>
+                            <joint type="free"/>
+                            <body name="link1" pos="0 0 0.1">
+                                <geom type="cylinder" size="0.03 0.1"/>
+                                <joint type="hinge" axis="0 1 0"/>
+                                <body name="link2" pos="0.2 0 0">
+                                    <geom type="cylinder" size="0.025 0.15"/>
+                                    <joint type="hinge" axis="0 1 0"/>
+                                </body>
+                            </body>
+                        </body>
+                    </worldbody>
+                    <actuator>
+                        <motor joint="hinge" gear="100"/>
+                    </actuator>
+                </mujoco>
+                """
+                self._model = mujoco.MjModel.from_xml_string(xml_string)
+            
+            self._data = mujoco.MjData(self._model)
+            
+            # 设置控制
+            self._num_joints = self._model.nu
+            
+            print(f"[PhysicsEngine] MuJoCo initialized ({self._num_joints} actuators)")
+            
         except ImportError:
             print("[PhysicsEngine] MuJoCo not installed, falling back to custom")
             self.engine = "custom"

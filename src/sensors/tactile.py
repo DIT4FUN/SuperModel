@@ -219,12 +219,32 @@ class TactileArray:
         if frame is None:
             return np.zeros(self.array_size)
         
-        # TODO: 实现滑移检测算法
-        # - 压力梯度变化
-        # - 纹理追踪
-        # - 频域分析
-        slip = np.zeros_like(frame.pressure_map)
-        return slip
+        # 如果有历史帧，进行滑移检测
+        if len(self._frame_buffer) >= 2:
+            prev_frame = self._frame_buffer[-1]
+            
+            # 1. 压力梯度变化检测
+            pressure_diff = frame.pressure_map - prev_frame.pressure_map
+            
+            # 2. 计算局部梯度 (使用Sobel算子模拟)
+            from scipy.ndimage import convolve
+            sobel_x = np.array([[-1, 0, 1], [-2, 0, 2], [-1, 0, 1]]) / 8.0
+            sobel_y = sobel_x.T
+            
+            grad_x = convolve(frame.pressure_map, sobel_x)
+            grad_y = convolve(frame.pressure_map, sobel_y)
+            grad_magnitude = np.sqrt(grad_x**2 + grad_y**2)
+            
+            # 3. 高频成分检测 (滑移产生高频振动)
+            # 简化: 使用梯度变化率作为滑移信号
+            slip = np.abs(pressure_diff) * (1 + grad_magnitude * 5.0)
+            
+            # 归一化
+            slip = np.clip(slip, 0, 1)
+            
+            return slip.astype(np.float32)
+        
+        return np.zeros(self.array_size, dtype=np.float32)
     
     def calibrate(
         self,

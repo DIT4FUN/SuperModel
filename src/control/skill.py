@@ -122,10 +122,99 @@ class CompositeSkill(Skill):
                 result = skill.execute(context)
                 if not result.success:
                     return result
-                    
-        # TODO: parallel execution
+        
+        elif self.execution_policy == "parallel":
+            return ParallelExecutor.execute_parallel(
+                self.sub_skills, context, timeout=self.config.timeout
+            )
+        
+        elif self.execution_policy == "parallel_any":
+            # 任意一个成功即可
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=len(self.sub_skills)) as executor:
+                futures = {executor.submit(s.execute, context): s for s in self.sub_skills}
+                for future in as_completed(futures, timeout=self.config.timeout):
+                    try:
+                        result = future.result()
+                        if result.success:
+                            return result
+                    except Exception:
+                        continue
         
         return SkillResult(True, SkillStatus.SUCCEEDED, duration=time.time()-start)
+
+
+class ParallelExecutor:
+    """并行执行器"""
+    
+    @staticmethod
+    def execute_parallel(skills: List[Skill], context: Dict[str, Any], timeout: float = 30.0) -> SkillResult:
+        """
+        并行执行多个技能
+        
+        Args:
+            skills: 技能列表
+            context: 执行上下文
+            timeout: 超时时间
+            
+        Returns:
+            汇总的执行结果
+        """
+        import threading
+        import queue
+        
+        results = {}
+        errors = {}
+        
+        def run_skill(skill, result_queue, error_queue):
+            try:
+                if skill.can_execute(context):
+                    result = skill.execute(context)
+                    result_queue.put((skill.config.name, result))
+                else:
+                    result_queue.put((skill.config.name, SkillResult(False, SkillStatus.FAILED, error_message="Prerequisites not met")))
+            except Exception as e:
+                error_queue.put((skill.config.name, str(e)))
+        
+        result_queue = queue.Queue()
+        error_queue = queue.Queue()
+        threads = []
+        
+        start_time = time.time()
+        
+        # 启动所有线程
+        for skill in skills:
+            t = threading.Thread(target=run_skill, args=(skill, result_queue, error_queue))
+            t.daemon = True
+            t.start()
+            threads.append(t)
+        
+        # 等待完成或超时
+        for t in threads:
+            remaining = max(0.1, timeout - (time.time() - start_time))
+            t.join(timeout=remaining)
+            if time.time() - start_time > timeout:
+                break
+        
+        # 收集结果
+        while not result_queue.empty():
+            name, result = result_queue.get_nowait()
+            results[name] = result
+        
+        while not error_queue.empty():
+            name, error = error_queue.get_nowait()
+            errors[name] = error
+        
+        duration = time.time() - start_time
+        
+        # 判断整体成功
+        if errors:
+            return SkillResult(False, SkillStatus.FAILED, output={'errors': errors}, duration=duration)
+        
+        all_success = all(r.success for r in results.values()) if results else False
+        status = SkillStatus.SUCCEEDED if all_success else SkillStatus.FAILED
+        
+        return SkillResult(all_success, status, output=results, duration=duration)
 
 
 class SkillLibrary:

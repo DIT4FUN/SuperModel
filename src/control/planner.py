@@ -82,7 +82,33 @@ class WorldState:
     
     def apply_action(self, action: str, params: Dict[str, Any]):
         """应用动作，更新状态"""
-        # TODO: 实现动作效果应用
+        # 预定义动作效果库
+        action_effects = {
+            'move_to': lambda s, p: s.robot_state.update({
+                'position': p.get('position', s.robot_state.get('position', np.zeros(3))),
+                'status': 'moved'
+            }),
+            'grasp': lambda s, p: s.objects.get(p.get('object', ''), {}).update({'grasped': True}),
+            'release': lambda s, p: s.objects.update({
+                name: {**obj, 'grasped': False} 
+                for name, obj in s.objects.items() 
+                if obj.get('grasped', False)
+            }),
+            'lift': lambda s, p: s.robot_state.update({'height': p.get('height', 0.2)}),
+            'place': lambda s, p: s.objects.get(p.get('object', ''), {}).update({
+                'position': p.get('position', s.objects.get(p.get('object', {}).get('position', np.zeros(3))))
+            }),
+            'push': lambda s, p: s.objects.get(p.get('object', ''), {}).update({
+                'position': s.objects.get(p.get('object'), {}).get('position', np.zeros(3)) + np.array(p.get('direction', [0.1, 0, 0]))
+            }),
+            'open_gripper': lambda s, p: s.robot_state.update({'gripper_open': True}),
+            'close_gripper': lambda s, p: s.robot_state.update({'gripper_open': False}),
+        }
+        
+        effect_fn = action_effects.get(action)
+        if effect_fn:
+            effect_fn(self, params)
+        
         self.timestamp = time.time()
 
 
