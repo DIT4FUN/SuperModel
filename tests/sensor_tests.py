@@ -23,15 +23,15 @@ from sensors.vision import BinocularCamera, DepthProcessor, CameraIntrinsics, St
 from sensors.audio import BinauralMic, SoundLocalizer, AudioFrame, SoundSource, get_audio_spec
 from sensors.tactile import (
     TactileArray, TactileFrame, TactileContact, TactileCalibration, PressureProcessor,
-    TactileSensorType, get_tactile_spec
+    TactileSensorType, get_tactile_spec, VirtualTactileSensor
 )
 from sensors.force import (
     ForceTorqueSensor, ForceCalibration, Wrench, ContactState, WrenchProcessor,
-    ForceSensorType, get_force_spec
+    ForceSensorType, get_force_spec, VirtualForceSensor
 )
 from sensors.imu import (
     IMUSensor, IMUFrame, Pose, PoseEstimator, IMUCalibration, IMUSensorType,
-    get_imu_spec
+    get_imu_spec, VirtualIMUSensor
 )
 
 
@@ -705,14 +705,141 @@ class TestSensorPerformance(unittest.TestCase):
     def test_force_wrench_processor_performance(self):
         """测试力矩处理器性能"""
         import time
-        
+
         proc = WrenchProcessor(filter_alpha=0.3)
         wrench = np.array([10.0, 0.0, -9.81, 0.1, -0.1, 0.05])
-        
+
         start = time.time()
         for _ in range(10000):
             proc.filter(wrench)
         elapsed = time.time() - start
-        
+
         # 10000次处理应在0.5秒内完成
         self.assertLess(elapsed, 0.5)
+
+
+class TestVirtualTactileSensor(unittest.TestCase):
+    """测试虚拟触觉传感器"""
+    
+    def test_virtual_tactile_open_close(self):
+        vt = VirtualTactileSensor(array_size=(16, 16))
+        self.assertTrue(vt.open())
+        self.assertTrue(vt._is_opened)
+        vt.close()
+        self.assertFalse(vt._is_opened)
+    
+    def test_simulate_contact(self):
+        with VirtualTactileSensor(array_size=(16, 16)) as vt:
+            frame = vt.simulate_contact(
+                contact_pos=(0.5, 0.5),
+                contact_radius=0.2,
+                contact_force=10.0
+            )
+            self.assertIsInstance(frame, TactileFrame)
+            self.assertEqual(frame.pressure_map.shape, (16, 16))
+            self.assertTrue(np.max(frame.pressure_map) > 0)
+    
+    def test_simulate_sliding(self):
+        with VirtualTactileSensor(array_size=(16, 16)) as vt:
+            vt._last_contact_pos = (0.5, 0.5)
+            frames = vt.simulate_sliding(
+                direction=(1.0, 0.0),
+                speed=0.05,
+                duration_frames=10
+            )
+            self.assertEqual(len(frames), 10)
+            for f in frames:
+                self.assertIsInstance(f, TactileFrame)
+    
+    def test_context_manager(self):
+        with VirtualTactileSensor(array_size=(8, 8)) as vt:
+            frame = vt.simulate_contact((0.5, 0.5), 0.2, 5.0)
+            self.assertIsNotNone(frame)
+
+
+class TestVirtualForceSensor(unittest.TestCase):
+    """测试虚拟力觉传感器"""
+    
+    def test_virtual_force_open_close(self):
+        vf = VirtualForceSensor(sensor_id="test_force")
+        self.assertTrue(vf.open())
+        self.assertTrue(vf._is_opened)
+        vf.close()
+        self.assertFalse(vf._is_opened)
+    
+    def test_simulate_contact(self):
+        with VirtualForceSensor() as vf:
+            wrench = vf.simulate_contact(
+                force=(10.0, 0.0, 0.0),
+                torque=(0.0, 0.0, 0.0)
+            )
+            self.assertIsInstance(wrench, Wrench)
+            self.assertEqual(wrench.force.shape, (3,))
+            self.assertEqual(wrench.torque.shape, (3,))
+    
+    def test_simulate_payload(self):
+        with VirtualForceSensor() as vf:
+            wrench = vf.simulate_payload(mass=1.0, com_offset=(0.01, 0.0, 0.0))
+            self.assertIsInstance(wrench, Wrench)
+            # 检查力的大小在合理范围内（考虑噪声）
+            self.assertTrue(-15 < wrench.force[2] < -5)
+    
+    def test_simulate_collision(self):
+        with VirtualForceSensor() as vf:
+            frames = vf.simulate_collision(
+                direction=(1.0, 0.0, 0.0),
+                peak_force=50.0,
+                duration_ms=50.0
+            )
+            self.assertGreater(len(frames), 0)
+            self.assertTrue(all(isinstance(f, Wrench) for f in frames))
+    
+    def test_context_manager(self):
+        with VirtualForceSensor(sensor_id="ctx_test") as vf:
+            wrench = vf.simulate_contact((5.0, 0.0, 0.0), (0.1, 0.0, 0.0))
+            self.assertIsNotNone(wrench)
+
+
+class TestVirtualIMUSensor(unittest.TestCase):
+    """测试虚拟IMU传感器"""
+    
+    def test_virtual_imu_open_close(self):
+        vi = VirtualIMUSensor(sensor_id="test_imu")
+        self.assertTrue(vi.open())
+        self.assertTrue(vi._is_opened)
+        vi.close()
+        self.assertFalse(vi._is_opened)
+    
+    def test_simulate_static(self):
+        with VirtualIMUSensor() as vi:
+            frame = vi.simulate_static(orientation=(0.0, 0.0, 0.0))
+            self.assertIsInstance(frame, IMUFrame)
+            self.assertEqual(frame.accel.shape, (3,))
+            self.assertEqual(frame.gyro.shape, (3,))
+            # 静止时角速度应接近0
+            self.assertTrue(np.abs(frame.gyro).max() < 0.1)
+    
+    def test_simulate_motion(self):
+        with VirtualIMUSensor() as vi:
+            frame = vi.simulate_motion(
+                linear_accel=(0.0, 1.0, 0.0),
+                angular_vel=(0.0, 0.0, 0.1),
+                dt=0.01
+            )
+            self.assertIsInstance(frame, IMUFrame)
+            self.assertEqual(frame.accel.shape, (3,))
+    
+    def test_simulate_trajectory(self):
+        for traj_type in ["circle", "figure8", "linear", "sine"]:
+            with VirtualIMUSensor() as vi:
+                frames = vi.simulate_trajectory(
+                    trajectory_type=traj_type,
+                    duration_s=0.2,
+                    dt=0.01
+                )
+                self.assertGreater(len(frames), 5)
+    
+    def test_context_manager(self):
+        with VirtualIMUSensor() as vi:
+            frame = vi.simulate_static((0.0, 0.0, 0.0))
+            self.assertIsNotNone(frame)

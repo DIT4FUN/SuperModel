@@ -36,6 +36,10 @@ from .mpc import (
     MPCConfig, JointStateMP, DynamicsModel,
     JointSpaceMPC, CartesianMPC, get_mpc_spec
 )
+from .agv import (
+    AGVMotionController, AGVSpec, AGVPose, AGVTwist, DriveType, AGVGrade,
+    DifferentialKinematics, MecanumKinematics, get_agv_spec
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand',
@@ -52,5 +56,7 @@ __all__ = [
     'SafetyCheckResult', 'get_safety_spec',
     'ROS2JointTrajectoryInterface', 'ROS2TopicInterface', 'ROS2ServiceInterface',
     'JointCommand', 'JointState', 'ControlInterfaceMode',
-    'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec'
+    'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec',
+    'AGVMotionController', 'AGVSpec', 'AGVPose', 'AGVTwist', 'DriveType', 'AGVGrade',
+    'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec'
 ]

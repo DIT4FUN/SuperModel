@@ -14,9 +14,9 @@ SuperModel 超模态感知模块
 
 from .vision import BinocularCamera, DepthProcessor
 from .audio import BinauralMic, SoundLocalizer
-from .tactile import TactileArray, PressureProcessor
-from .force import ForceTorqueSensor, WrenchProcessor
-from .imu import IMUSensor, PoseEstimator
+from .tactile import TactileArray, PressureProcessor, VirtualTactileSensor
+from .force import ForceTorqueSensor, WrenchProcessor, VirtualForceSensor
+from .imu import IMUSensor, PoseEstimator, VirtualIMUSensor
 from .encoders import (
     VisionEncoder, AudioEncoder, TactileEncoder, ForceEncoder,
     IMUEncoder, LanguageEncoder, SensorEncoderWrapper, EncoderConfig,
@@ -26,9 +26,9 @@ from .encoders import (
 __all__ = [
     'BinocularCamera', 'DepthProcessor',
     'BinauralMic', 'SoundLocalizer',
-    'TactileArray', 'PressureProcessor',
-    'ForceTorqueSensor', 'WrenchProcessor',
-    'IMUSensor', 'PoseEstimator',
+    'TactileArray', 'PressureProcessor', 'VirtualTactileSensor',
+    'ForceTorqueSensor', 'WrenchProcessor', 'VirtualForceSensor',
+    'IMUSensor', 'PoseEstimator', 'VirtualIMUSensor',
     'VisionEncoder', 'AudioEncoder', 'TactileEncoder', 'ForceEncoder',
     'IMUEncoder', 'LanguageEncoder', 'SensorEncoderWrapper', 'EncoderConfig',
     'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config'

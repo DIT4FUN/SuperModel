@@ -21,6 +21,10 @@ from control.motion import (
     MotionController, ControlMode, JointState, JointTrajectory,
     TwistCommand, TwistToJoint
 )
+from control.agv import (
+    AGVMotionController, AGVSpec, AGVGrade, AGVPose, AGVTwist,
+    DriveType, DifferentialKinematics, MecanumKinematics, get_agv_spec
+)
 from control.impedance import (
     ImpedanceController, ImpedanceParams, AdmittanceController,
     ForceImpedanceController, CollaborativeController
@@ -1159,3 +1163,123 @@ class TestROS2Interface(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class TestAGVMotionController(unittest.TestCase):
+    """AGV运动控制器测试"""
+    
+    def test_agv_spec_from_grade(self):
+        from control.agv import AGVSpec, AGVGrade, get_agv_spec
+        
+        for grade in AGVGrade:
+            spec = AGVSpec.from_grade(grade)
+            self.assertIsInstance(spec, AGVSpec)
+            self.assertEqual(spec.grade, grade)
+            self.assertGreater(spec.max_linear_speed, 0)
+            self.assertGreater(spec.control_frequency, 0)
+    
+    def test_get_agv_spec(self):
+        from control.agv import get_agv_spec
+        
+        for grade_str in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_agv_spec(grade_str)
+            self.assertIsInstance(spec, AGVSpec)
+            self.assertEqual(spec.grade.value, grade_str)
+    
+    def test_agv_pose_operations(self):
+        from control.agv import AGVPose
+        
+        pose = AGVPose(x=1.0, y=2.0, theta=0.5)
+        vec = pose.to_vector()
+        self.assertEqual(vec.shape, (3,))
+        self.assertEqual(vec[0], 1.0)
+        
+        pose2 = AGVPose.from_vector(vec)
+        self.assertEqual(pose2.x, pose.x)
+        self.assertEqual(pose2.y, pose.y)
+        self.assertEqual(pose2.theta, pose.theta)
+    
+    def test_agv_twist_operations(self):
+        from control.agv import AGVTwist
+        
+        twist = AGVTwist(vx=0.5, vy=0.3, omega=0.1)
+        vec = twist.to_vector()
+        self.assertEqual(vec.shape, (3,))
+        
+        twist2 = AGVTwist.from_vector(vec)
+        self.assertEqual(twist2.vx, twist.vx)
+    
+    def test_differential_kinematics(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVTwist
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        agv = AGVMotionController(spec)
+        
+        # 差速驱动: 直行时左右轮速相同
+        twist = AGVTwist(vx=1.0, vy=0.0, omega=0.0)
+        wheel_vel = agv.inverse_kinematics(twist)
+        self.assertEqual(len(wheel_vel), 2)
+        
+        # 正运动学: 左右轮速相同时为直行
+        body_twist = agv.forward_kinematics(np.array([1.0, 1.0]))
+        self.assertAlmostEqual(body_twist.vy, 0.0, places=5)
+    
+    def test_mecanum_kinematics(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVTwist
+        
+        spec = AGVSpec.from_grade(AGVGrade.L)
+        spec.drive_type = DriveType.MECANUM
+        agv = AGVMotionController(spec)
+        
+        # 全向移动: 斜向
+        twist = AGVTwist(vx=0.0, vy=1.0, omega=0.0)
+        wheel_vel = agv.inverse_kinematics(twist)
+        self.assertEqual(len(wheel_vel), 4)
+        
+        # 回环检验
+        body_twist = agv.forward_kinematics(wheel_vel)
+        self.assertAlmostEqual(body_twist.vx, 0.0, places=3)
+        self.assertAlmostEqual(body_twist.vy, 1.0, places=3)
+    
+    def test_agv_pose_update(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        agv = AGVMotionController(spec)
+        
+        new_pose = AGVPose(x=2.0, y=1.5, theta=0.3)
+        agv.update_pose(new_pose)
+        
+        self.assertEqual(agv.pose.x, 2.0)
+        self.assertEqual(agv.pose.y, 1.5)
+        self.assertEqual(agv.pose.theta, 0.3)
+    
+    def test_agv_safety_limits(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        agv = AGVMotionController(spec)
+        
+        # 超速命令应被限幅
+        max_vel = spec.max_linear_speed / spec.wheel_radius
+        large_cmd = np.array([max_vel * 5, max_vel * 5])
+        limited = agv.apply_safety_limits(large_cmd)
+        
+        self.assertTrue(np.all(np.abs(limited) <= max_vel))
+    
+    def test_wheel_commands_computation(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        agv = AGVMotionController(spec)
+        
+        # 初始位姿
+        agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+        
+        # 目标位姿
+        target = AGVPose(x=0.1, y=0.0, theta=0.0)
+        cmds = agv.compute_wheel_commands(target, dt=0.01)
+        
+        self.assertEqual(len(cmds), 2)
+        # 前进命令
+        self.assertTrue(cmds[0] > 0 or cmds[1] > 0)

@@ -547,6 +547,124 @@ class Task:
     result: Optional[Dict]
 ```
 
+### 5.5 AGV运动控制 — AGVMotionController
+
+```python
+class AGVMotionController:
+    """
+    AGV专用运动控制器
+    
+    支持:
+    - 差速驱动 (Differential)
+    - 全向移动 (Omnidirectional)
+    - 麦克纳姆轮 (Mecanum)
+    - 轨迹跟踪与PID纠正
+    """
+    
+    def __init__(self, spec: AGVSpec)
+    
+    def forward_kinematics(self, wheel_velocities: np.ndarray) -> AGVTwist
+    def inverse_kinematics(self, twist: AGVTwist) -> np.ndarray
+    def update_pose(self, new_pose: AGVPose)
+    def update_twist(self, new_twist: AGVTwist)
+    def compute_wheel_commands(self, target_pose: AGVPose, dt: float) -> np.ndarray
+    def apply_safety_limits(self, wheel_commands: np.ndarray) -> np.ndarray
+    
+    @property
+    def pose(self) -> AGVPose
+    @property
+    def twist(self) -> AGVTwist
+```
+
+**关键数据结构:**
+```python
+class DriveType(Enum):
+    DIFFERENTIAL = "differential"
+    OMNIDIRECTIONAL = "omnidirectional"
+    MECANUM = "mecanum"
+    ACKERMANN = "ackermann"
+
+class AGVGrade(Enum):
+    S = "S"    # 教育/实验
+    M = "M"    # 标准助手
+    L = "L"    # 专业工业
+    XL = "XL"  # 高性能
+    XXL = "XXL"  # 旗舰全功能
+
+@dataclass
+class AGVSpec:
+    grade: AGVGrade
+    max_linear_speed: float      # m/s
+    max_angular_speed: float     # rad/s
+    max_linear_accel: float     # m/s^2
+    max_angular_accel: float    # rad/s^2
+    wheelbase: float            # m
+    track_width: float          # m
+    wheel_radius: float         # m
+    drive_type: DriveType
+    control_frequency: float     # Hz
+
+@dataclass
+class AGVPose:
+    x: float      # 世界X (m)
+    y: float      # 世界Y (m)
+    theta: float  # 朝向角 (rad)
+
+@dataclass
+class AGVTwist:
+    vx: float     # X线速度 (m/s)
+    vy: float     # Y线速度 (m/s)
+    omega: float  # 角速度 (rad/s)
+```
+
+**AGVSpec 工厂方法:**
+```python
+AGVSpec.from_grade(AGVGrade.M)  # 获取M级标准规格
+get_agv_spec("L")               # 获取L级标准规格
+```
+
+**使用示例:**
+```python
+from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose
+
+# 创建M级AGV控制器
+spec = AGVSpec.from_grade(AGVGrade.M)
+agv = AGVMotionController(spec)
+
+# 跟踪目标位姿
+target = AGVPose(x=1.0, y=0.5, theta=0.0)
+wheel_cmds = agv.compute_wheel_commands(target, dt=0.01)
+
+# 应用安全限制
+safe_cmds = agv.apply_safety_limits(wheel_cmds)
+```
+
+**虚拟传感器接口:**
+```python
+class VirtualTactileSensor:
+    """虚拟触觉传感器 (仿真)"""
+    def open(self) -> bool
+    def close()
+    def simulate_contact(contact_pos, contact_radius, contact_force, noise_level) -> TactileFrame
+    def simulate_sliding(direction, speed, duration_frames) -> List[TactileFrame]
+
+class VirtualForceSensor:
+    """虚拟力觉传感器 (仿真)"""
+    def open(self) -> bool
+    def close()
+    def simulate_contact(force, torque, add_noise) -> Wrench
+    def simulate_payload(mass, com_offset, gravity) -> Wrench
+    def simulate_collision(direction, peak_force, duration_ms) -> List[Wrench]
+
+class VirtualIMUSensor:
+    """虚拟IMU传感器 (仿真)"""
+    def open(self) -> bool
+    def close()
+    def simulate_static(orientation) -> IMUFrame
+    def simulate_motion(linear_accel, angular_vel, dt) -> IMUFrame
+    def simulate_trajectory(trajectory_type, duration_s, dt) -> List[IMUFrame]
+```
+
 ---
 
 ## 6. 仿真层接口 (Simulation)

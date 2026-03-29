@@ -432,3 +432,130 @@ AGV_TACTILE_GRADES = {
 def get_tactile_spec(grade: str) -> dict:
     """获取AGV指定等级的触觉规格"""
     return AGV_TACTILE_GRADES.get(grade, AGV_TACTILE_GRADES['M'])
+
+
+class VirtualTactileSensor:
+    """
+    虚拟触觉传感器 (仿真环境使用)
+    
+    模拟真实触觉感知，用于:
+    - 仿真环境中的触觉反馈
+    - 算法验证和调试
+    - 抓取/操作任务仿真
+    """
+    
+    def __init__(
+        self,
+        array_size: Tuple[int, int] = (16, 16),
+        sensor_id: str = "virtual_tactile"
+    ):
+        self.array_size = array_size
+        self.sensor_id = sensor_id
+        self.rows, self.cols = array_size
+        self._is_opened = False
+        self._frame_id = 0
+        self._last_contact_pos: Optional[Tuple[float, float]] = None
+    
+    def open(self) -> bool:
+        self._is_opened = True
+        return True
+    
+    def close(self):
+        self._is_opened = False
+    
+    def simulate_contact(
+        self,
+        contact_pos: Tuple[float, float],
+        contact_radius: float = 0.3,
+        contact_force: float = 10.0,
+        noise_level: float = 0.05
+    ) -> TactileFrame:
+        """
+        模拟接触事件
+        
+        Args:
+            contact_pos: 接触中心位置 (归一化 0-1)
+            contact_radius: 接触半径 (归一化)
+            contact_force: 接触力 (N)
+            noise_level: 噪声水平
+            
+        Returns:
+            TactileFrame with simulated pressure map
+        """
+        h, w = self.array_size
+        
+        # 创建接触区域高斯分布
+        xx, yy = np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))
+        cx, cy = contact_pos
+        
+        dist = np.sqrt((xx - cx)**2 + (yy - cy)**2)
+        gaussian = np.exp(-dist**2 / (2 * contact_radius**2))
+        
+        # 压力值转换
+        pressure_map = gaussian * (contact_force / 100.0)
+        noise = np.random.randn(h, w) * noise_level
+        pressure_map = np.clip(pressure_map + noise, 0, 1).astype(np.float32)
+        
+        # 温度模拟
+        temperature_map = 25.0 + pressure_map * 5.0 + np.random.randn(h, w) * 0.3
+        
+        self._last_contact_pos = contact_pos
+        
+        frame = TactileFrame(
+            pressure_map=pressure_map,
+            temperature_map=temperature_map,
+            timestamp=0.0,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+        self._frame_id += 1
+        return frame
+    
+    def simulate_sliding(
+        self,
+        direction: Tuple[float, float],
+        speed: float = 0.1,
+        duration_frames: int = 30
+    ) -> List[TactileFrame]:
+        """
+        模拟滑移动作
+        
+        Args:
+            direction: 滑动方向 (dx, dy) 归一化
+            speed: 滑动速度 (归一化/帧)
+            duration_frames: 持续帧数
+            
+        Returns:
+            List of TactileFrame
+        """
+        frames = []
+        current_pos = self._last_contact_pos or (0.5, 0.5)
+        
+        for i in range(duration_frames):
+            new_pos = (
+                current_pos[0] + direction[0] * speed,
+                current_pos[1] + direction[1] * speed
+            )
+            # 边界约束
+            new_pos = (
+                max(0.05, min(0.95, new_pos[0])),
+                max(0.05, min(0.95, new_pos[1]))
+            )
+            
+            frame = self.simulate_contact(
+                new_pos,
+                contact_radius=0.25,
+                contact_force=8.0 + np.random.randn() * 2.0,
+                noise_level=0.08
+            )
+            frames.append(frame)
+            current_pos = new_pos
+        
+        return frames
+    
+    def __enter__(self):
+        self.open()
+        return self
+    
+    def __exit__(self, *args):
+        self.close()

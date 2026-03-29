@@ -539,3 +539,202 @@ AGV_IMU_GRADES = {
 def get_imu_spec(grade: str) -> dict:
     """获取AGV指定等级的IMU规格"""
     return AGV_IMU_GRADES.get(grade, AGV_IMU_GRADES['M'])
+
+
+class VirtualIMUSensor:
+    """
+    虚拟IMU传感器 (仿真环境使用)
+    
+    模拟惯性测量单元，用于:
+    - 仿真环境中的姿态反馈
+    - 运动轨迹验证
+    - 传感器融合算法测试
+    """
+    
+    def __init__(
+        self,
+        sensor_id: str = "virtual_imu",
+        accel_noise: float = 0.01,
+        gyro_noise: float = 0.001,
+        gyro_bias: float = 0.0005
+    ):
+        self.sensor_id = sensor_id
+        self.accel_noise = accel_noise
+        self.gyro_noise = gyro_noise
+        self.gyro_bias = gyro_bias
+        self._is_opened = False
+        self._frame_id = 0
+        self._current_pose = Pose(
+            position=np.zeros(3),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0])
+        )
+        self._velocity = np.zeros(3)
+        self._gyro_bias = np.zeros(3)
+    
+    def open(self) -> bool:
+        self._is_opened = True
+        self._gyro_bias = np.random.randn(3) * self.gyro_bias
+        return True
+    
+    def close(self):
+        self._is_opened = False
+    
+    def simulate_static(
+        self,
+        orientation: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    ) -> IMUFrame:
+        """
+        模拟静止状态
+        
+        Args:
+            orientation: 欧拉角 (roll, pitch, yaw) rad
+            
+        Returns:
+            IMUFrame with gravity-aligned acceleration
+        """
+        roll, pitch, yaw = orientation
+        gravity = np.array([0.0, 0.0, 9.81])
+        
+        # 旋转重力向量
+        R = self._euler_to_rot(roll, pitch, yaw)
+        accel = R.T @ gravity
+        
+        noise_accel = np.random.randn(3) * self.accel_noise
+        noise_gyro = np.random.randn(3) * self.gyro_noise
+        
+        frame = IMUFrame(
+            accel=(accel + noise_accel).astype(np.float32),
+            gyro=(noise_gyro + self._gyro_bias).astype(np.float32),
+            mag=None,
+            temperature=25.0 + np.random.randn() * 0.5,
+            timestamp=0.0,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+        self._frame_id += 1
+        return frame
+    
+    def simulate_motion(
+        self,
+        linear_accel: Tuple[float, float, float],
+        angular_vel: Tuple[float, float, float],
+        dt: float = 0.01
+    ) -> IMUFrame:
+        """
+        模拟运动状态
+        
+        Args:
+            linear_accel: 线性加速度 (m/s^2)
+            angular_vel: 角速度 (rad/s)
+            dt: 时间步长
+            
+        Returns:
+            IMUFrame with simulated motion
+        """
+        accel = np.array(linear_accel, dtype=np.float32) + np.array([0, 0, 9.81])
+        gyro = np.array(angular_vel, dtype=np.float32)
+        
+        noise_accel = np.random.randn(3) * self.accel_noise
+        noise_gyro = np.random.randn(3) * self.gyro_noise
+        
+        frame = IMUFrame(
+            accel=(accel + noise_accel).astype(np.float32),
+            gyro=(gyro + noise_gyro + self._gyro_bias).astype(np.float32),
+            mag=None,
+            temperature=25.0 + np.random.randn() * 0.5,
+            timestamp=dt * self._frame_id,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+        
+        # 更新速度和位置
+        linear_accel_np = np.array(linear_accel, dtype=np.float32)
+        self._velocity += linear_accel_np * dt
+        self._current_pose.position += self._velocity * dt
+        
+        self._frame_id += 1
+        return frame
+    
+    def simulate_trajectory(
+        self,
+        trajectory_type: str = "circle",
+        duration_s: float = 2.0,
+        dt: float = 0.01
+    ) -> List[IMUFrame]:
+        """
+        模拟典型轨迹
+        
+        Args:
+            trajectory_type: 'circle', 'figure8', 'linear', 'sine'
+            duration_s: 持续时间
+            dt: 时间步长
+            
+        Returns:
+            List of IMUFrame
+        """
+        frames = []
+        n_frames = int(duration_s / dt)
+        t = np.linspace(0, duration_s, n_frames)
+        
+        for i, ti in enumerate(t):
+            if trajectory_type == "circle":
+                x = np.cos(2 * np.pi * ti)
+                y = np.sin(2 * np.pi * ti)
+                vx = -2 * np.pi * np.sin(2 * np.pi * ti)
+                vy = 2 * np.pi * np.cos(2 * np.pi * ti)
+                ax = -(2 * np.pi)**2 * np.cos(2 * np.pi * ti)
+                ay = -(2 * np.pi)**2 * np.sin(2 * np.pi * ti)
+            elif trajectory_type == "figure8":
+                x = np.sin(2 * np.pi * ti)
+                y = np.sin(4 * np.pi * ti) / 2
+                vx = 2 * np.pi * np.cos(2 * np.pi * ti)
+                vy = 2 * np.pi * np.cos(4 * np.pi * ti)
+                ax = -(2 * np.pi)**2 * np.sin(2 * np.pi * ti)
+                ay = -(2 * np.pi)**2 * np.sin(4 * np.pi * ti)
+            elif trajectory_type == "linear":
+                x = ti
+                y = 0.0
+                vx, vy = 1.0, 0.0
+                ax, ay = 0.0, 0.0
+            elif trajectory_type == "sine":
+                x = ti
+                y = np.sin(2 * np.pi * ti)
+                vx = 1.0
+                vy = 2 * np.pi * np.cos(2 * np.pi * ti)
+                ax = 0.0
+                ay = -(2 * np.pi)**2 * np.sin(2 * np.pi * ti)
+            else:
+                raise ValueError(f"Unknown trajectory: {trajectory_type}")
+            
+            # 在惯性坐标系下
+            accel = np.array([ax, ay, 0.0])
+            omega = np.array([0.0, 0.0, 0.0])  # 简化，不考虑旋转
+            
+            frame = self.simulate_motion(
+                (ax, ay, 0.0),
+                (0.0, 0.0, 0.0),
+                dt
+            )
+            frames.append(frame)
+        
+        return frames
+    
+    def _euler_to_rot(self, roll: float, pitch: float, yaw: float) -> np.ndarray:
+        """欧拉角转旋转矩阵"""
+        cr, sr = np.cos(roll), np.sin(roll)
+        cp, sp = np.cos(pitch), np.sin(pitch)
+        cy, sy = np.cos(yaw), np.sin(yaw)
+        
+        R = np.array([
+            [cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr],
+            [sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr],
+            [-sp, cp * sr, cp * cr]
+        ])
+        return R
+    
+    def __enter__(self):
+        self.open()
+        return self
+    
+    def __exit__(self, *args):
+        self.close()

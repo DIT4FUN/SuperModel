@@ -415,3 +415,162 @@ AGV_FORCE_GRADES = {
 def get_force_spec(grade: str) -> dict:
     """获取AGV指定等级的力觉规格"""
     return AGV_FORCE_GRADES.get(grade, AGV_FORCE_GRADES['M'])
+
+
+class VirtualForceSensor:
+    """
+    虚拟力觉传感器 (仿真环境使用)
+    
+    模拟六维力矩传感器，用于:
+    - 仿真环境中的力反馈
+    - 接触力预测和验证
+    - 阻抗控制算法测试
+    """
+    
+    def __init__(
+        self,
+        sensor_id: str = "virtual_force",
+        noise_level: float = 0.02,
+        bias_range: float = 0.1
+    ):
+        self.sensor_id = sensor_id
+        self.noise_level = noise_level
+        self.bias_range = bias_range
+        self._is_opened = False
+        self._frame_id = 0
+        self._current_wrench = Wrench(
+            force=np.zeros(3),
+            torque=np.zeros(3),
+            timestamp=0.0,
+            frame_id=0,
+            sensor_id=sensor_id
+        )
+        self._bias = np.zeros(6)
+    
+    def open(self) -> bool:
+        self._is_opened = True
+        # 随机初始化偏置
+        self._bias = np.random.randn(6) * self.bias_range
+        return True
+    
+    def close(self):
+        self._is_opened = False
+    
+    def simulate_contact(
+        self,
+        force: Tuple[float, float, float],
+        torque: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        add_noise: bool = True
+    ) -> Wrench:
+        """
+        模拟接触力
+        
+        Args:
+            force: 力向量 (Fx, Fy, Fz) in N
+            torque: 力矩向量 (Tx, Ty, Tz) in N·m
+            add_noise: 是否添加噪声
+            
+        Returns:
+            Wrench with simulated force/torque
+        """
+        f = np.array(force, dtype=np.float32)
+        t = np.array(torque, dtype=np.float32)
+        
+        if add_noise:
+            noise_f = np.random.randn(3) * self.noise_level * 10
+            noise_t = np.random.randn(3) * self.noise_level * 0.5
+            f = f + noise_f
+            t = t + noise_t
+        
+        wrench = Wrench(
+            force=f + self._bias[:3],
+            torque=t + self._bias[3:],
+            timestamp=0.0,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+        self._current_wrench = wrench
+        self._frame_id += 1
+        return wrench
+    
+    def simulate_payload(
+        self,
+        mass: float = 1.0,
+        com_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        gravity: float = 9.81
+    ) -> Wrench:
+        """
+        模拟负载重力
+        
+        Args:
+            mass: 负载质量 (kg)
+            com_offset: 重心偏移 (x, y, z) in m
+            gravity: 重力加速度 (m/s^2)
+            
+        Returns:
+            Wrench with payload gravity
+        """
+        fz = -mass * gravity  # 向下为负
+        tx = mass * gravity * com_offset[1]
+        ty = -mass * gravity * com_offset[0]
+        tz = 0.0
+        
+        return self.simulate_contact(
+            force=(0.0, 0.0, fz),
+            torque=(tx, ty, tz),
+            add_noise=False
+        )
+    
+    def simulate_collision(
+        self,
+        direction: Tuple[float, float, float],
+        peak_force: float = 50.0,
+        duration_ms: float = 100.0,
+        decay: str = "exponential"
+    ) -> List[Wrench]:
+        """
+        模拟碰撞事件
+        
+        Args:
+            direction: 碰撞方向 (归一化)
+            peak_force: 峰值力 (N)
+            duration_ms: 持续时间 (毫秒)
+            decay: 衰减模式 ('exponential' or 'linear')
+            
+        Returns:
+            List of Wrench measurements during collision
+        """
+        frames = []
+        n_frames = int(duration_ms / 10)  # 假设10ms一帧
+        direction = np.array(direction, dtype=np.float32)
+        direction = direction / (np.linalg.norm(direction) + 1e-6)
+        
+        for i in range(n_frames):
+            t = i / n_frames
+            
+            if decay == "exponential":
+                amplitude = peak_force * np.exp(-5 * t)
+            else:
+                amplitude = peak_force * (1 - t)
+            
+            force = direction * amplitude + np.random.randn(3) * self.noise_level * 10
+            torque = np.random.randn(3) * self.noise_level * 0.5
+            
+            wrench = Wrench(
+                force=force.astype(np.float32),
+                torque=torque.astype(np.float32),
+                timestamp=i * 0.01,
+                frame_id=self._frame_id,
+                sensor_id=self.sensor_id
+            )
+            frames.append(wrench)
+            self._frame_id += 1
+        
+        return frames
+    
+    def __enter__(self):
+        self.open()
+        return self
+    
+    def __exit__(self, *args):
+        self.close()
