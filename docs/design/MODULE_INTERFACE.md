@@ -654,195 +654,6 @@ class MultimodalEncoder(nn.Module):
 
 ---
 
-## 9. AGV五级规格对照
-
-AGV五级规格体系定义于 [AGV_GRADE_SPEC.md](AGV_GRADE_SPEC.md)，与模块接口的主要对应关系：
-
-| 等级 | 感知接口 | 控制频率 | 融合策略 | 典型平台 |
-|------|----------|----------|----------|----------|
-| **S** | 3模态 | 50Hz | 晚期融合 | Raspberry Pi 5 |
-| **M** | 5模态 | 100Hz | 中期融合 | Jetson Nano |
-| **L** | 5模态 | 200Hz | 中期融合 | Jetson Orin Nano |
-| **XL** | 5模态+事件相机 | 500Hz | 混合融合 | Jetson AGX Orin |
-| **XXL** | 多目+LiDAR | 1000Hz | 早期+中期+晚期 | NVIDIA DRIVE |
-
-各等级对应的规格参数（分辨率、采样率、维度等）详见 `AGV_GRADE_SPEC.md`。
-
-### 9.1 AGV五级功能矩阵
-
-| 功能 | S | M | L | XL | XXL |
-|------|---|---|---|---|-----|
-| **传感器驱动** |
-| 双目视觉 | ○ | ✅ | ✅ | ✅ | ✅ |
-| 双耳声学 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 触觉阵列 | ○ | ✅ | ✅ | ✅ | ✅ |
-| 六维力矩 | ○ | ✅ | ✅ | ✅ | ✅ |
-| IMU | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 接近觉 | ✗ | ○ | ✅ | ✅ | ✅ |
-| 事件相机 | ✗ | ✗ | ✗ | ✅ | ✅ |
-| **融合网络** |
-| 晚期融合 | ✅ | ✅ | ○ | ○ | ○ |
-| 中期融合 | ✗ | ✅ | ✅ | ✅ | ○ |
-| 早期融合 | ✗ | ✗ | ○ | ✅ | ✅ |
-| 混合融合 | ✗ | ○ | ✅ | ✅ | ✅ |
-| CrossModalAttention | ✗ | ✅ | ✅ | ✅ | ✅ |
-| 统一表示分离 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| **认知学习** |
-| 世界模型 | ✗ | ○ | ✅ | ✅ | ✅ |
-| Dreamer Agent | ✗ | ✗ | ✅ | ✅ | ✅ |
-| 对比学习 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| 好奇心驱动 | ✗ | ✗ | ✅ | ✅ | ✅ |
-| **控制执行** |
-| 关节PID控制 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 笛卡尔速度控制 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 阻抗控制 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| 力位混合控制 | ✗ | ○ | ✅ | ✅ | ✅ |
-| 协作安全控制 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| 技能库调度 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| HTN任务规划 | ✗ | ○ | ✅ | ✅ | ✅ |
-| **仿真环境** |
-| 自定义物理仿真 | ✅ | ✅ | ✅ | ✅ | ✅ |
-| PyBullet引擎 | ○ | ○ | ✅ | ✅ | ✅ |
-| MuJoCo引擎 | ○ | ○ | ✅ | ✅ | ✅ |
-| 场景管理器 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| 轨迹记录器 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| **编码器** |
-| CNN视觉编码器 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| RNN时序编码器 | ✗ | ✅ | ✅ | ✅ | ✅ |
-| Transformer编码器 | ✗ | ○ | ✅ | ✅ | ✅ |
-| 多模态统一编码 | ✗ | ✅ | ✅ | ✅ | ✅ |
-
-**图例**: ✅ 支持　○ 可选/简化　✗ 不支持
-
-### 9.2 模块接口依赖关系
-
-```
-sensors/
-├── vision.py       → sensors/encoders.py → fusion/
-├── audio.py       → sensors/encoders.py → fusion/
-├── tactile.py     → sensors/encoders.py → fusion/
-├── force.py       → sensors/encoders.py → fusion/
-└── imu.py        → sensors/encoders.py → fusion/
-
-fusion/
-└── cross_modal_fusion.py → perception/ → learning/
-                                        → control/planner.py
-                                        → control/skill.py
-
-control/
-├── motion.py      → simulation/
-├── impedance.py   ← sensors/force.py (external_wrench)
-├── skill.py       → control/motion.py
-└── planner.py    → control/skill.py
-```
-
-### 9.3 快速启动示例
-
-```python
-# === 完整流程示例 ===
-import numpy as np
-import torch
-from sensors.vision import BinocularCamera
-from sensors.audio import BinauralMic
-from sensors.tactile import TactileArray
-from sensors.force import ForceTorqueSensor
-from sensors.imu import IMUSensor, PoseEstimator
-from fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
-from control.motion import MotionController, JointState
-from simulation.environment import RobotSimulator, SimConfig
-
-# 1. 初始化传感器
-camera = BinocularCamera(resolution=(1280, 720), fps=30)
-mic = BinauralMic(sample_rate=16000)
-tactile = TactileArray(array_size=(16, 16))
-force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
-imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
-
-# 2. 初始化融合网络
-config = FusionConfig(vision_dim=512, audio_dim=128, tactile_dim=64, force_dim=32, imu_dim=64)
-fusion = CrossModalFusion(config)
-
-# 3. 初始化控制器
-controller = MotionController(num_joints=6, control_rate=100.0)
-
-# 4. 主循环
-for step in range(1000):
-    # 感知
-    stereo = camera.capture()
-    audio = mic.capture()
-    tactile_frame = tactile.capture()
-    wrench = force.capture()
-    imu_frame = imu.capture()
-
-    # 融合
-    multimodal = MultimodalInput(
-        vision=torch.randn(1, 512),
-        audio=torch.randn(1, 128),
-        tactile=torch.randn(1, 64),
-        force=torch.randn(1, 32),
-        imu=torch.randn(1, 64)
-    )
-    unified = fusion(multimodal)
-
-    # 控制
-    state = JointState(
-        position=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
-        velocity=np.zeros(6),
-        torque=np.zeros(6)
-    )
-    controller.update_joint_state(state)
-    torque = controller.compute_joint_torque(target_position=np.array([0.5, 0.3, -0.2, 0.1, 0.0, 0.0]))
-```
-
-### 9.4 数据流时序图
-
-```
-t=0ms      t=10ms     t=20ms     t=30ms     t=40ms     t=50ms
-   │          │          │          │          │          │
-   ▼          ▼          ▼          ▼          ▼          ▼
-┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐  ┌──────┐
-│Camera│  │Mic   │  │Tactil│  │Force │  │ IMU │  │Process│
-│Capture│ │Capture│  │Capture│  │Capture│  │Capture│  │& Fuse│
-└──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘  └──┬───┘
-   │          │          │          │          │          │
-   └──────────┴──────────┴──────────┴──────────┴──────────┘
-                              │
-                              ▼
-                      CrossModalFusion
-                         unified
-                              │
-              ┌───────────────┼───────────────┐
-              ▼               ▼               ▼
-         World Model     Task Planner    Skill Library
-              │               │               │
-              ▼               ▼               ▼
-         Action           Plan           Skill Execute
-              │               │               │
-              └───────────────┴───────────────┘
-                              │
-                              ▼
-                    MotionController
-                         torque
-                              │
-                              ▼
-                    RobotSimulator.step()
-```
-
----
-
-## 10. 版本历史
-
-| 版本 | 日期 | 描述 |
-|------|------|------|
-| v0.4.0 | 2026-03-29 | 新增轨迹规划接口、扩展阻抗/导纳控制接口 |
-| v0.3.0 | 2026-03-28 | 新增AGV五级功能矩阵、模块依赖关系图、快速启动示例、数据流时序图 |
-| v0.2.0 | 2026-03-28 | 新增编码器接口章节、AGV五级规格对照 |
-| v0.1.0 | 2026-03-28 | 初始接口设计文档 |
-
-*文档版本: v0.4.0*
-
----
-
 ## 9. 仿真模块接口 (Simulation)
 
 ### 9.1 仿真环境 — RobotSimulator
@@ -964,13 +775,13 @@ string message
 
 ---
 
-## 13. 安全控制器接口 (Safety Controller)
+## 12. 安全控制器接口 (Safety Controller)
 
-### 13.1 概述
+### 12.1 概述
 
 安全控制器是 AGV 五级安全体系的核心实现，提供从 S 级（基础限位）到 XXL 级（故障容忍）的安全监控能力。
 
-### 13.2 安全等级对照
+### 12.2 安全等级对照
 
 | 等级 | 核心功能 | 响应时间 | 冗余度 |
 |------|----------|----------|--------|
@@ -980,7 +791,7 @@ string message
 | XL | + 看门狗、实时故障诊断 | 5ms | 双通道+独立监控 |
 | XXL | + 故障容忍、自动恢复、预测性维护 | 1ms | 全冗余 |
 
-### 13.3 SafetyController 类
+### 12.3 SafetyController 类
 
 ```python
 class SafetyController:
@@ -1013,7 +824,7 @@ class SafetyController:
     def get_safety_status(self) -> Dict[str, Any]
 ```
 
-### 13.4 SafetyConfig 配置
+### 12.4 SafetyConfig 配置
 
 ```python
 @dataclass
@@ -1034,7 +845,7 @@ class SafetyConfig:
     recovery_timeout: float            # 恢复超时 (s)
 ```
 
-### 13.5 安全事件类型
+### 12.5 安全事件类型
 
 ```python
 class SafetyEvent(Enum):
@@ -1049,7 +860,7 @@ class SafetyEvent(Enum):
     POWER_EXCEPTION = "power_exception"  # 电源异常
 ```
 
-### 13.6 安全响应策略
+### 12.6 安全响应策略
 
 ```python
 class SafetyResponse(Enum):
@@ -1060,7 +871,7 @@ class SafetyResponse(Enum):
     FAULT_TOLERANT = "fault_tolerant"  # 故障容忍
 ```
 
-### 13.7 使用示例
+### 12.7 使用示例
 
 ```python
 from control.safety_controller import (
@@ -1106,7 +917,7 @@ print(f"总检查次数: {status['total_checks']}")
 print(f"近期违规: {status['total_violations']}")
 ```
 
-### 13.8 等级特征表
+### 12.8 等级特征表
 
 ```python
 SafetyController.LEVEL_FEATURES = {
@@ -1122,7 +933,7 @@ SafetyController.LEVEL_FEATURES = {
 
 ---
 
-## 12. 错误处理规范
+## 13. 错误处理规范
 
 所有模块应遵循以下错误处理约定：
 
@@ -1150,9 +961,9 @@ class ControlError(Exception):
 
 ---
 
-## 13. 触觉/力觉/IMU传感器详细接口
+## 14. 触觉/力觉/IMU传感器详细接口
 
-### 13.1 触觉传感器 — TactileArray
+### 12.1 触觉传感器 — TactileArray
 
 ```python
 from sensors.tactile import (
@@ -1201,7 +1012,7 @@ print(f"热力图均值: {processed['mean_pressure']:.2f}")
 sensor.close()
 ```
 
-### 13.2 力觉传感器 — ForceTorqueSensor
+### 12.2 力觉传感器 — ForceTorqueSensor
 
 ```python
 from sensors.force import (
@@ -1246,7 +1057,7 @@ print(f"滤波后合力: {filtered.force_magnitude:.2f}N")
 sensor.close()
 ```
 
-### 13.3 IMU传感器 — IMUSensor & PoseEstimator
+### 12.3 IMU传感器 — IMUSensor & PoseEstimator
 
 ```python
 from sensors.imu import (
@@ -1295,7 +1106,7 @@ print(f"旋转矩阵:\n{pose.rotation_matrix}")
 imu.close()
 ```
 
-### 13.4 触觉/力觉/IMU接口规格表
+### 12.4 触觉/力觉/IMU接口规格表
 
 | 参数 | 触觉 TactileArray | 力觉 ForceTorqueSensor | IMU IMUSensor |
 |------|-------------------|------------------------|---------------|
@@ -1308,7 +1119,7 @@ imu.close()
 
 ---
 
-## 14. 跨模态融合网络详细接口
+## 15. 跨模态融合网络详细接口
 
 ### 14.1 融合配置与输入
 
@@ -1436,7 +1247,7 @@ mmi = create_multimodal_input(
 
 ---
 
-## 15. AGV五级规格对照 (增强)
+## 16. AGV五级规格对照 (增强)
 
 ### 15.1 传感器等级配置
 
@@ -1449,7 +1260,7 @@ mmi = create_multimodal_input(
 
 ---
 
-## 16. 执行控制系统 AGV 五级规格汇总
+## 17. 执行控制系统 AGV 五级规格汇总
 
 本文档汇总所有执行控制相关的 AGV 五级规格，提供快速参考。
 
@@ -1563,7 +1374,9 @@ spec_ros2 = get_ros2_spec('XL')
 *文档版本: v0.7.0*
 *最后更新: 2026-03-29*
 
-## 17. 传感器 AGV 五级规格速查
+**2026-03-29 v1.0.0**: 文档去重重构，整合为单一完整版本 (Sections 1-21)
+
+## 18. 传感器 AGV 五级规格速查
 
 ### 17.1 触觉传感器 TactileArray 规格表
 
@@ -1710,7 +1523,7 @@ for s in [cam, mic, tactile, force, imu]:
 
 ---
 
-## 18. 模型预测控制 (MPC)
+## 19. 模型预测控制 (MPC)
 
 ### 18.1 关节空间 MPC — JointSpaceMPC
 
@@ -1802,7 +1615,7 @@ Ad, Bd = model.discrete_matrices(q, qd, dt=0.01)
 
 ---
 
-## 19. Gymnasium RL 环境
+## 20. Gymnasium RL 环境
 
 ### 19.1 Gymnasium 环境 — SuperModelGymEnv
 
@@ -1896,7 +1709,7 @@ imu_accel(3) + imu_gyro(3) + wrench(6) + tactile(16) + target(6) = 53
 
 ---
 
-## 20. 完整系统集成示例
+## 21. 完整系统集成示例
 
 ```python
 """
@@ -1993,6 +1806,8 @@ print("系统正常退出")
 
 ---
 
-*文档版本: v0.9.0*
+*文档版本: v1.0.0*
 *最后更新: 2026-03-29*
+
+**2026-03-29 v1.0.0**: 文档去重重构，整合为单一完整版本 (Sections 1-21)
 
