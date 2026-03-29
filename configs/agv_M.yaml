@@ -1,0 +1,142 @@
+# SuperModel AGV-M 级配置
+# 标准助手级 - 室内服务/轻工业，算力 5-20 TOPS
+# 价格: ¥15,000-50,000
+
+project:
+  name: "SuperModel-AGV-M"
+  version: "0.1.0"
+  grade: "M"
+  description: "标准助手级超模态机器人具身智能大脑"
+
+# 感知系统配置
+sensors:
+  vision:
+    enabled: true
+    type: "Intel RealSense D435i"
+    resolution: [1280, 720]
+    fps: 30
+    baseline_mm: 50
+    depth_range_m: [0.2, 5.0]
+    fov_deg: 85
+    depth_accuracy_cm: 1.0  # @ 2m
+    
+  audio:
+    enabled: true
+    type: "ReSpeaker 4-Mic 阵列"
+    sample_rate: 16000
+    channels: 2  # 双耳
+    beamforming: true
+    pickup_range_m: 3.0
+    source_localization_accuracy_deg: 15
+    
+  tactile:
+    enabled: true
+    type: "电容式触觉阵列"
+    array_size: [16, 16]
+    resolution_bits: 12
+    pressure_range_kpa: [0, 1000]
+    sampling_hz: 100
+    temperature: true
+    proximity: false
+    
+  force:
+    enabled: true
+    type: "ATI Force/Torque"
+    axes: 6
+    force_range: 200  # N
+    torque_range: 20  # N·m
+    resolution_n: 0.05
+    sampling_hz: 500
+    interface: "USB/Ethernet"
+    
+  imu:
+    enabled: true
+    type: "BMI088"
+    accel_range: 16   # g
+    gyro_range: 2000  # deg/s
+    sampling_hz: 200
+    noise_density: 120  # μg/√Hz
+    bias_stability_deg_s: 0.5
+
+# 融合系统配置
+fusion:
+  strategy: "middle"  # 中期融合
+  hidden_dim: 256
+  num_heads: 4
+  num_layers: 2
+  dropout: 0.1
+  feature_dim: 128
+  inference_latency_ms: 20
+
+# 认知系统配置
+model:
+  # 世界模型 - 简化版
+  world_model:
+    enabled: true
+    grade: "M"
+    latent_dim: 256
+    hidden_dim: 512
+    imagination_horizon: 15
+    parameters: "~5M"
+    
+  # 学习配置
+  learning:
+    enabled: true
+    lr: 1e-4
+    batch_size: 32
+    temperature: 0.1
+    curiosity_weight: 0.2
+    world_model_weight: 0.5
+    reinforcement_learning: "online_q"  # 在线Q学习
+    self_supervised: true
+
+# 执行系统配置
+control:
+  control_rate_hz: 100
+  position_precision_mm: 1.0
+  force_precision_n: 0.5
+  impedance_control: true
+  impedance_type: "basic"  # 基础阻抗
+  max_payload_kg: 5
+  
+  # 安全配置
+  safety:
+    soft_limits: true
+    hard_limits: true
+    collision_detection: true
+    force_limited: true
+    emergency_stop: true
+    safety_zone_monitoring: true
+
+# 硬件平台配置
+hardware:
+  platform: "NVIDIA Jetson Nano"
+  compute_device: "cuda"
+  cpu: "4核 A57"
+  gpu_tops: 5
+  memory_gb: 8
+  power_w: 15
+  protection_class: "IP30"
+
+# 通信接口
+communication:
+  wired: "USB3.0/GigE"
+  wireless: "WiFi 5"
+  control_api: "ROS2"
+  realtime: "soft"  # 软实时
+
+# 软件功能
+software:
+  slam: "2D+3D"
+  object_recognition: "100类"
+  scene_understanding: "基础"
+  voice_interaction: "多轮对话"
+  visual_servo: "basic"
+  autonomous_navigation: "动态避障"
+  digital_twin: false
+
+# 尺寸与重量
+dimensions:
+  typical_cm: [40, 30, 50]
+  weight_kg: 15
+  installation: "移动平台"

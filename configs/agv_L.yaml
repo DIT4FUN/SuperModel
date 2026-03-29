@@ -1,0 +1,147 @@
+# SuperModel AGV-L 级配置
+# 专业工业级 - 工业制造/物流，算力 20-100 TOPS
+# 价格: ¥50,000-150,000
+
+project:
+  name: "SuperModel-AGV-L"
+  version: "0.1.0"
+  grade: "L"
+  description: "专业工业级超模态机器人具身智能大脑"
+
+# 感知系统配置
+sensors:
+  vision:
+    enabled: true
+    type: "Intel RealSense D455"
+    resolution: [1280, 720]
+    fps: 60
+    baseline_mm: 50
+    depth_range_m: [0.2, 8.0]
+    fov_deg: 87
+    depth_accuracy_mm: 5.0  # @ 2m
+    
+  audio:
+    enabled: true
+    type: "4-Mic 阵列"
+    sample_rate: 22050
+    channels: 4
+    beamforming: true
+    pickup_range_m: 5.0
+    source_localization_accuracy_deg: 5
+    
+  tactile:
+    enabled: true
+    type: "高精度触觉阵列"
+    array_size: [24, 24]
+    resolution_bits: 14
+    pressure_range_kpa: [0, 2000]
+    sampling_hz: 200
+    temperature: true
+    proximity: true
+    
+  force:
+    enabled: true
+    type: "ATI Force/Torque (工业级)"
+    axes: 6
+    force_range: 500  # N
+    torque_range: 50  # N·m
+    resolution_n: 0.02
+    sampling_hz: 1000
+    interface: "Ethernet"
+    
+  imu:
+    enabled: true
+    type: "BMI088 (工业级)"
+    accel_range: 24   # g
+    gyro_range: 4000  # deg/s
+    sampling_hz: 500
+    noise_density: 60  # μg/√Hz
+    bias_stability_deg_s: 0.2
+
+# 融合系统配置
+fusion:
+  strategy: "middle"  # 中期融合
+  hidden_dim: 512
+  num_heads: 8
+  num_layers: 4
+  dropout: 0.1
+  feature_dim: 256
+  inference_latency_ms: 10
+
+# 认知系统配置
+model:
+  # 世界模型 - 完整版
+  world_model:
+    enabled: true
+    grade: "L"
+    latent_dim: 512
+    hidden_dim: 1024
+    imagination_horizon: 20
+    parameters: "~20M"
+    
+  # 学习配置
+  learning:
+    enabled: true
+    lr: 1e-4
+    batch_size: 64
+    temperature: 0.1
+    curiosity_weight: 0.3
+    world_model_weight: 0.6
+    reinforcement_learning: "ppo_sac"  # PPO/SAC
+    self_supervised: true
+    knowledge_graph: "simplified"
+
+# 执行系统配置
+control:
+  control_rate_hz: 200
+  position_precision_mm: 0.5
+  force_precision_n: 0.2
+  impedance_control: true
+  impedance_type: "full"  # 完整阻抗控制
+  admittance_control: true
+  force_position_hybrid: true
+  max_payload_kg: 20
+  
+  # 安全配置
+  safety:
+    soft_limits: true
+    hard_limits: true
+    collision_detection: true
+    force_limited: true
+    emergency_stop: true
+    safety_zone_monitoring: true
+    human_robot_collaboration: true
+
+# 硬件平台配置
+hardware:
+  platform: "NVIDIA Jetson Orin Nano"
+  compute_device: "cuda"
+  cpu: "6核 Cortex-A78"
+  gpu_tops: 40
+  memory_gb: 16
+  power_w: 30
+  protection_class: "IP54"
+
+# 通信接口
+communication:
+  wired: "GigE/EtherCAT"
+  wireless: "WiFi 6"
+  control_api: "ROS2"
+  realtime: "hard_xenomai"  # 硬实时 (Xenomai)
+
+# 软件功能
+software:
+  slam: "3D"
+  object_recognition: "1000类"
+  scene_understanding: "语义地图"
+  voice_interaction: "多轮+情感"
+  visual_servo: "PBVS"
+  autonomous_navigation: "多层规划"
+  digital_twin: "simplified"
+  remote_operation: true
+
+# 尺寸与重量
+dimensions:
+  typical_cm: [60, 50, 80]
+  weight_kg: 50
+  installation: "协作臂集成"

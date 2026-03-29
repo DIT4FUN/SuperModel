@@ -1,0 +1,156 @@
+# SuperModel AGV-XL 级配置
+# 高性能级 - 复杂装配/精密操作，算力 100-300 TOPS
+# 价格: ¥150,000-500,000
+
+project:
+  name: "SuperModel-AGV-XL"
+  version: "0.1.0"
+  grade: "XL"
+  description: "高性能超模态机器人具身智能大脑"
+
+# 感知系统配置
+sensors:
+  vision:
+    enabled: true
+    type: "双目 + 事件相机"
+    resolution: [1920, 1080]
+    fps: 90
+    baseline_mm: 75
+    depth_range_m: [0.1, 10.0]
+    fov_deg: 91
+    depth_accuracy_mm: 2.0  # @ 2m
+    event_camera: true
+    
+  audio:
+    enabled: true
+    type: "6-Mic 阵列"
+    sample_rate: 32000
+    channels: 6
+    beamforming: true
+    multi_beam: true
+    pickup_range_m: 8.0
+    source_localization_accuracy_deg: 2
+    
+  tactile:
+    enabled: true
+    type: "高精度触觉阵列"
+    array_size: [32, 32]
+    resolution_bits: 14
+    pressure_range_kpa: [0, 5000]
+    sampling_hz: 500
+    temperature: true
+    proximity: true
+    
+  force:
+    enabled: true
+    type: "ATI Force/Torque (高性能)"
+    axes: 6
+    force_range: 1000  # N
+    torque_range: 100  # N·m
+    resolution_n: 0.01
+    sampling_hz: 2000
+    interface: "EtherCAT"
+    
+  imu:
+    enabled: true
+    type: "ADIS16470"
+    accel_range: 40   # g
+    gyro_range: 4000  # deg/s
+    sampling_hz: 1000
+    noise_density: 20  # μg/√Hz
+    bias_stability_deg_s: 0.05
+
+# 融合系统配置
+fusion:
+  strategy: "hybrid"  # 混合融合
+  hidden_dim: 768
+  num_heads: 12
+  num_layers: 6
+  dropout: 0.1
+  feature_dim: 512
+  inference_latency_ms: 5
+
+# 认知系统配置
+model:
+  # 世界模型 - 完整版
+  world_model:
+    enabled: true
+    grade: "XL"
+    latent_dim: 768
+    hidden_dim: 1536
+    imagination_horizon: 25
+    parameters: "~50M"
+    
+  # 学习配置
+  learning:
+    enabled: true
+    lr: 1e-4
+    batch_size: 128
+    temperature: 0.1
+    curiosity_weight: 0.4
+    world_model_weight: 0.7
+    reinforcement_learning: "ppo_sac_her"  # PPO/SAC+HER
+    self_supervised: true
+    knowledge_graph: true
+    active_learning: true
+    continual_learning: false
+
+# 执行系统配置
+control:
+  control_rate_hz: 500
+  position_precision_mm: 0.1
+  force_precision_n: 0.1
+  impedance_control: true
+  impedance_type: "full_adaptive"  # 自适应阻抗
+  admittance_control: true
+  force_position_hybrid: true
+  predictive_control: true
+  max_payload_kg: 50
+  
+  # 安全配置
+  safety:
+    soft_limits: true
+    hard_limits: true
+    collision_detection_visual: true
+    collision_detection_force: true
+    predictive_collision: true
+    force_limited: true
+    emergency_stop: true
+    safety_zone_monitoring: true
+    human_robot_collaboration: true
+    predictive_safety: true
+
+# 硬件平台配置
+hardware:
+  platform: "NVIDIA Jetson AGX Orin"
+  compute_device: "cuda"
+  cpu: "8核 Cortex-A78"
+  gpu_tops: 275
+  memory_gb: 32
+  power_w: 60
+  protection_class: "IP65"
+
+# 通信接口
+communication:
+  wired: "EtherCAT"
+  wireless: "WiFi 6 / 5G"
+  control_api: "ROS2 + 自定义"
+  realtime: "hard"
+
+# 软件功能
+software:
+  slam: "3D+语义"
+  object_recognition: "10000类+细粒"
+  scene_understanding: "知识图谱"
+  voice_interaction: "多模态对话"
+  visual_servo: "IBVS"
+  autonomous_navigation: "群体协作"
+  digital_twin: true
+  remote_operation: true
+  edge_computing: true
+
+# 尺寸与重量
+dimensions:
+  typical_cm: [80, 70, 120]
+  weight_kg: 150
+  installation: "工业臂集成"

@@ -1,0 +1,120 @@
+# SuperModel AGV-S 级配置
+# 教育/实验级 - 预算优先，算力 < 5 TOPS
+# 价格: ¥5,000-15,000
+
+project:
+  name: "SuperModel-AGV-S"
+  version: "0.1.0"
+  grade: "S"
+  description: "教育/实验级超模态机器人具身智能大脑"
+
+# 感知系统配置
+sensors:
+  vision:
+    enabled: true
+    type: "USB 单目摄像头"
+    resolution: [640, 480]
+    fps: 30
+    # 无深度感知，无立体基线
+    
+  audio:
+    enabled: true
+    type: "单声道麦克风"
+    sample_rate: 16000
+    channels: 1
+    
+  tactile:
+    enabled: true
+    type: "电阻式触觉阵列"
+    array_size: [8, 8]
+    resolution_bits: 12
+    pressure_range_kpa: [0, 500]
+    sampling_hz: 50
+    temperature: false
+    
+  force:
+    enabled: false
+    type: "三维力传感器"
+    axes: 3
+    force_range: 100  # N
+    torque_range: 10  # N·m
+    sampling_hz: 100
+    
+  imu:
+    enabled: true
+    type: "MPU6050"
+    accel_range: 8   # g
+    gyro_range: 1000  # deg/s
+    sampling_hz: 100
+    noise_density: 400  # μg/√Hz
+
+# 融合系统配置
+fusion:
+  strategy: "late"  # 晚期融合
+  hidden_dim: 128
+  num_heads: 2
+  num_layers: 1
+  dropout: 0.1
+  feature_dim: 64
+  inference_latency_ms: 50
+
+# 认知系统配置
+model:
+  # 世界模型 - 不支持
+  world_model:
+    enabled: false
+    
+  # 学习配置
+  learning:
+    enabled: false
+    lr: 1e-4
+    batch_size: 16
+    # 仅支持被动监督学习
+    supervised_only: true
+
+# 执行系统配置
+control:
+  control_rate_hz: 50
+  position_precision_mm: 5.0
+  force_precision_n: 1.0
+  impedance_control: false
+  max_payload_kg: 2
+  
+  # 安全配置
+  safety:
+    soft_limits_only: true
+    collision_detection: false
+    emergency_stop: true
+
+# 硬件平台配置
+hardware:
+  platform: "Raspberry Pi 5"
+  compute_device: "cpu"
+  cpu: "4核 A76"
+  gpu_tops: 1.5
+  memory_gb: 4
+  power_w: 5
+  protection_class: "IP20"
+
+# 通信接口
+communication:
+  wired: "USB3.0"
+  wireless: "WiFi 5"
+  control_api: "REST API"
+  realtime: false
+
+# 软件功能
+software:
+  slam: "2D"
+  object_recognition: "基础"
+  scene_understanding: false
+  voice_interaction: "语音命令"
+  visual_servo: false
+  autonomous_navigation: "简单路径"
+  digital_twin: false
+
+# 尺寸与重量
+dimensions:
+  typical_cm: [20, 15, 25]
+  weight_kg: 3
+  installation: "台式"

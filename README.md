@@ -27,7 +27,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**317项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**358项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -347,9 +347,20 @@ SuperModel/
 │   ├── test_encoders.py     # 编码器测试 (10 tests)
 │   ├── test_dreamer.py      # Dreamer Agent测试 (7 tests)
 │   ├── test_world_model.py  # 世界模型测试 (8 tests)
-│   └── simulation_tests.py  # 仿真环境测试 (44 tests)
+│   ├── simulation_tests.py  # 仿真环境测试 (44 tests)
+│   ├── benchmark_tests.py   # 性能基准测试 (16 tests)
+│   └── mpc_tests.py         # MPC控制器测试 (51 tests)
 ├── configs/
-│   └── project_config.yaml  # 项目配置
+│   ├── project_config.yaml  # 项目默认配置
+│   ├── agv_S.yaml           # AGV-S 教育级配置
+│   ├── agv_M.yaml           # AGV-M 标准助手级配置
+│   ├── agv_L.yaml           # AGV-L 专业工业级配置
+│   ├── agv_XL.yaml          # AGV-XL 高性能级配置
+│   └── agv_XXL.yaml         # AGV-XXL 旗舰全功能级配置
+├── scripts/
+│   ├── demo.py              # 基础演示脚本
+│   ├── demo_full_pipeline.py # 全系统演示脚本
+│   └── multi_sensor_data_collection.py # 多传感器数据采集
 └── docs/
     ├── architecture/    # 架构设计
     └── design/         # 详细设计文档
@@ -377,7 +388,9 @@ SuperModel/
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
 | simulation_tests.py | 44 | ✅ 全部通过 |
-| **总计** | **291** | ✅ **全部通过** |
+| benchmark_tests.py | 16 | ✅ 全部通过 |
+| mpc_tests.py | 51 | ✅ 全部通过 |
+| **总计** | **358** | ✅ **全部通过** |
 
 ## 技术栈
 
