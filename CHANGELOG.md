@@ -5,6 +5,14 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.2] - 2026-03-30
+
+### Added
+- **虚拟传感器接口文档**: 新增 MODULE_INTERFACE.md 第22节，涵盖 VirtualTactileSensor、VirtualForceSensor、VirtualIMUSensor 完整API、集成示例和规格对照表
+- 触觉仿真：接触事件模拟、滑移动作模拟、高斯压力分布
+- 力觉仿真：接触力模拟、负载重力模拟、碰撞事件力曲线
+- IMU仿真：静止/运动状态模拟、典型轨迹仿真（圆/8字/正弦/线性）
+
 ## [1.0.1] - 2026-03-29
 
 ### Fixed

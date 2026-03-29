@@ -2019,8 +2019,180 @@ print("系统正常退出")
 
 ---
 
-*文档版本: v1.1.0*
-*最后更新: 2026-03-29*
+## 22. 虚拟传感器接口 (Virtual Sensors)
 
-**2026-03-29 v1.1.0**: 新增第11节 AGV 控制等级规格 (Sections 1-11)，包含控制、MPC、安全、ROS2、技能库五个子系统的等级化规格速查表
+虚拟传感器用于仿真环境中的离线算法验证和测试，无需硬件即可模拟完整感知流程。
+
+### 22.1 虚拟触觉传感器 — VirtualTactileSensor
+
+```python
+from sensors.tactile import VirtualTactileSensor, TactileFrame
+
+# 初始化
+vt = VirtualTactileSensor(array_size=(16, 16), sensor_id="virtual_tactile")
+
+# 模拟接触事件
+frame = vt.simulate_contact(
+    contact_pos=(0.5, 0.5),    # 归一化接触中心 (x, y)
+    contact_radius=0.3,         # 接触半径
+    contact_force=10.0,         # 接触力 (N)
+    noise_level=0.05            # 噪声水平
+)
+
+# 模拟滑移动作 (返回多帧)
+frames = vt.simulate_sliding(
+    direction=(1.0, 0.0),     # 滑动方向 (dx, dy)
+    speed=0.1,                  # 滑动速度
+    duration_frames=30          # 持续帧数
+)
+
+# 上下文管理器用法
+with VirtualTactileSensor((24, 24)) as vt:
+    frame = vt.simulate_contact((0.5, 0.5), contact_force=5.0)
+    print(f"触觉帧: {frame.frame_id}, 压力范围: [{frame.pressure_map.min():.3f}, {frame.pressure_map.max():.3f}]")
+```
+
+### 22.2 虚拟力觉传感器 — VirtualForceSensor
+
+```python
+from sensors.force import VirtualForceSensor, Wrench
+
+# 初始化
+vf = VirtualForceSensor(
+    sensor_id="virtual_force",
+    noise_level=0.02,
+    bias_range=0.1
+)
+
+# 模拟接触力
+wrench = vf.simulate_contact(
+    force=(0.0, 0.0, -10.0),   # 力向量 (Fx, Fy, Fz) N
+    torque=(0.0, 0.0, 0.0),     # 力矩向量 (Tx, Ty, Tz) N·m
+    add_noise=True
+)
+
+# 模拟负载重力
+wrench = vf.simulate_payload(
+    mass=1.0,                   # 负载质量 (kg)
+    com_offset=(0.0, 0.0, 0.1), # 重心偏移 (m)
+    gravity=9.81
+)
+
+# 模拟碰撞事件 (返回力曲线)
+collision_frames = vf.simulate_collision(
+    direction=(1.0, 0.0, 0.0), # 碰撞方向
+    peak_force=50.0,             # 峰值力 (N)
+    duration_ms=100.0,           # 持续时间 (ms)
+    decay="exponential"          # 衰减模式: exponential / linear
+)
+
+# 上下文管理器用法
+with VirtualForceSensor() as vf:
+    w = vf.simulate_contact(force=(0, 0, -5.0))
+    print(f"力: {w.force}, 力矩: {w.torque}")
+```
+
+### 22.3 虚拟IMU传感器 — VirtualIMUSensor
+
+```python
+from sensors.imu import VirtualIMUSensor, IMUFrame
+
+# 初始化
+vi = VirtualIMUSensor(
+    sensor_id="virtual_imu",
+    accel_noise=0.01,
+    gyro_noise=0.001,
+    gyro_bias=0.0005
+)
+
+# 模拟静止状态 (指定朝向)
+frame = vi.simulate_static(
+    orientation=(0.0, 0.0, 0.0)  # Euler角 (roll, pitch, yaw) rad
+)
+
+# 模拟运动状态
+frame = vi.simulate_motion(
+    linear_accel=(0.0, 0.0, 0.0), # 线性加速度 (m/s^2)
+    angular_vel=(0.0, 0.0, 1.0),   # 角速度 (rad/s)
+    dt=0.01
+)
+
+# 模拟典型轨迹 (返回IMU帧序列)
+frames = vi.simulate_trajectory(
+    trajectory_type="circle",   # 轨迹类型: circle / figure8 / linear / sine
+    duration_s=2.0,              # 持续时间
+    dt=0.01                      # 时间步长
+)
+
+# 上下文管理器用法
+with VirtualIMUSensor() as vi:
+    frame = vi.simulate_static((0.1, 0.1, 0.0))
+    print(f"加速度: {frame.accel}, 角速度: {frame.gyro}")
+```
+
+### 22.4 虚拟传感器在仿真环境中的集成
+
+```python
+# 完整的虚拟传感器集成示例
+from sensors.tactile import VirtualTactileSensor
+from sensors.force import VirtualForceSensor
+from sensors.imu import VirtualIMUSensor
+from simulation.environment import RobotSimulator, SimConfig
+
+# 创建仿真环境
+sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
+
+# 创建虚拟传感器
+tactile = VirtualTactileSensor((16, 16))
+force = VirtualForceSensor()
+imu = VirtualIMUSensor()
+
+# 仿真循环
+for step in range(100):
+    # 仿真器步进
+    state = sim.step(torques=np.zeros(6))
+    
+    # 采集虚拟传感器数据
+    tactile_frame = tactile.simulate_contact(
+        contact_pos=(0.5 + 0.01 * step, 0.5),
+        contact_force=5.0 + step * 0.1
+    )
+    
+    force_wrench = force.simulate_contact(
+        force=(0, 0, -state['joint_torques'][0])
+    )
+    
+    imu_frame = imu.simulate_motion(
+        linear_accel=[0, 0, -9.81],
+        angular_vel=[0, 0, 0.1 * np.sin(step * 0.1)]
+    )
+    
+    # 多模态融合
+    multimodal_data = {
+        'tactile': tactile_frame.pressure_map.flatten(),
+        'force': force_wrench.to_vector(),
+        'imu': np.concatenate([imu_frame.accel, imu_frame.gyro])
+    }
+    
+    print(f"Step {step}: tactile={tactile_frame.pressure_map.mean():.3f}, "
+          f"force={force_wrench.magnitude:.2f}N, "
+          f"accel={imu_frame.accel_magnitude:.2f}m/s^2")
+```
+
+### 22.5 虚拟传感器规格表
+
+| 参数 | VirtualTactileSensor | VirtualForceSensor | VirtualIMUSensor |
+|------|---------------------|-------------------|-----------------|
+| 模拟精度 | 高斯压力分布 | 噪声注入 | 噪声+偏置注入 |
+| 支持阵列 | 8×8 ~ 64×64 | N/A (单点) | N/A |
+| 轨迹仿真 | 接触/滑移 | 碰撞力曲线 | 圆/8字/正弦/线性 |
+| 噪声控制 | noise_level参数 | noise_level/bias_range | accel_noise/gyro_noise/gyro_bias |
+| 典型用例 | 抓取仿真 | 力控算法验证 | 姿态估计验证 |
+
+---
+
+*文档版本: v1.2.0*
+*最后更新: 2026-03-30*
+
+**2026-03-30 v1.2.0**: 新增第22节 虚拟传感器接口文档，涵盖 VirtualTactileSensor、VirtualForceSensor、VirtualIMUSensor 的完整API、集成示例和规格对照表，完善仿真层文档体系。
 
