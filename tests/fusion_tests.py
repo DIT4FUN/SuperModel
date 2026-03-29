@@ -461,3 +461,337 @@ if __name__ == '__main__':
     
     # 运行测试
     unittest.main(verbosity=2)
+
+
+class TestFusionRealWorldScenarios(unittest.TestCase):
+    """融合模块真实场景测试"""
+    
+    def setUp(self):
+        self.config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256,
+            num_heads=4, num_layers=2
+        )
+        self.fusion = CrossModalFusion(self.config)
+    
+    def test_pick_and_place_scenario(self):
+        """测试抓取放置场景 - 视觉+触觉+力觉融合"""
+        batch_size = 4
+        
+        # 模拟视觉特征: 目标检测 + 物体位置
+        vision = torch.randn(batch_size, 512)
+        
+        # 模拟触觉特征: 接触压力分布
+        tactile = torch.randn(batch_size, 64)
+        
+        # 模拟力觉特征: 抓取力
+        force = torch.randn(batch_size, 32)
+        
+        # 模拟IMU: 机械臂姿态
+        imu = torch.randn(batch_size, 64)
+        
+        multimodal = MultimodalInput(
+            vision=vision, tactile=tactile, force=force, imu=imu
+        )
+        
+        output = self.fusion(multimodal)
+        self.assertEqual(output.shape, (batch_size, 256))
+        
+        # 验证输出不为零
+        self.assertFalse(torch.allclose(output, torch.zeros_like(output)))
+    
+    def test_human_robot_collaboration(self):
+        """测试人机协作场景 - IMU+力觉+视觉"""
+        batch_size = 4
+        
+        # 人类动作检测
+        vision = torch.randn(batch_size, 512)
+        
+        # 接触力检测
+        force = torch.randn(batch_size, 32)
+        
+        # 人类运动姿态
+        imu = torch.randn(batch_size, 64)
+        
+        multimodal = MultimodalInput(
+            vision=vision, force=force, imu=imu
+        )
+        
+        output = self.fusion(multimodal)
+        self.assertEqual(output.shape, (batch_size, 256))
+    
+    def test_voice_command_with_context(self):
+        """测试语音指令理解 - 听觉+视觉+语言"""
+        batch_size = 4
+        
+        # 视觉上下文
+        vision = torch.randn(batch_size, 512)
+        
+        # 音频特征
+        audio = torch.randn(batch_size, 128)
+        
+        # 语言嵌入 (可选)
+        language = torch.randint(0, 1000, (batch_size, 20))
+        
+        multimodal = MultimodalInput(
+            vision=vision, audio=audio, language=language
+        )
+        
+        output = self.fusion(multimodal)
+        self.assertEqual(output.shape, (batch_size, 256))
+    
+    def test_grape_manipulation_precision(self):
+        """测试精细操作(葡萄抓取) - 全模态融合"""
+        batch_size = 2
+        
+        # 高分辨率视觉
+        vision = torch.randn(batch_size, 512)
+        
+        # 高密度触觉
+        tactile = torch.randn(batch_size, 64)
+        
+        # 精细力觉
+        force = torch.randn(batch_size, 32)
+        
+        # 高精度IMU
+        imu = torch.randn(batch_size, 64)
+        
+        # 语音反馈
+        audio = torch.randn(batch_size, 128)
+        
+        multimodal = MultimodalInput(
+            vision=vision, tactile=tactile, force=force, imu=imu, audio=audio
+        )
+        
+        output = self.fusion(multimodal)
+        self.assertEqual(output.shape, (batch_size, 256))
+        
+        # 验证所有模态都参与了融合
+        self.assertFalse(torch.allclose(output[:batch_size//2], output[batch_size//2:]))
+    
+    def test_degraded_modality_scenario(self):
+        """测试降级模态场景 - 部分传感器失效"""
+        batch_size = 4
+        
+        # 视觉正常
+        vision = torch.randn(batch_size, 512)
+        
+        # 触觉失效 (全零)
+        tactile = torch.zeros(batch_size, 64)
+        
+        # 力觉正常
+        force = torch.randn(batch_size, 32)
+        
+        # IMU正常
+        imu = torch.randn(batch_size, 64)
+        
+        multimodal = MultimodalInput(
+            vision=vision, tactile=tactile, force=force, imu=imu
+        )
+        
+        # 应该仍能正常工作
+        output = self.fusion(multimodal)
+        self.assertEqual(output.shape, (batch_size, 256))
+    
+    def test_batch_consistency(self):
+        """测试批量推理一致性"""
+        batch_size = 8
+        
+        vision = torch.randn(batch_size, 512)
+        audio = torch.randn(batch_size, 128)
+        
+        multimodal = MultimodalInput(vision=vision, audio=audio)
+        
+        # 设置eval模式关闭dropout
+        self.fusion.eval()
+        
+        # 单次批量处理
+        output_batch = self.fusion(multimodal)
+        
+        # 逐个样本处理
+        outputs_individual = []
+        for i in range(batch_size):
+            single = MultimodalInput(
+                vision=vision[i:i+1], audio=audio[i:i+1]
+            )
+            outputs_individual.append(self.fusion(single))
+        
+        # 合并结果
+        output_stacked = torch.cat(outputs_individual, dim=0)
+        
+        # 验证结果一致 (允许浮点误差)
+        self.assertTrue(torch.allclose(output_batch, output_stacked, atol=1e-5))
+    
+    def test_temporal_sequence_fusion(self):
+        """测试时序序列融合"""
+        seq_len = 10
+        batch_size = 4
+        
+        # 时序视觉特征
+        vision = torch.randn(seq_len, batch_size, 512)
+        
+        # 时序触觉
+        tactile = torch.randn(seq_len, batch_size, 64)
+        
+        multimodal_seq = MultimodalInput(vision=vision, tactile=tactile)
+        
+        # 使用序列融合
+        config_seq = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256,
+            num_heads=4, num_layers=2, strategy=FusionStrategy.HYBRID
+        )
+        
+        fusion_seq = CrossModalFusion(config_seq)
+        
+        # 展平处理
+        B, T, C = vision.shape
+        flat_vision = vision.reshape(B * T, C)
+        T2, B2, C2 = tactile.shape
+        flat_tactile = tactile.reshape(B2 * T2, C2)
+        
+        multimodal_flat = MultimodalInput(vision=flat_vision, tactile=flat_tactile)
+        output = fusion_seq(multimodal_flat)
+        self.assertEqual(output.shape[0], B * T)
+    
+    def test_emergency_stop_scenario(self):
+        """测试紧急停止场景 - 高速力觉响应"""
+        batch_size = 4
+        
+        # 正常视觉输入
+        vision = torch.randn(batch_size, 512)
+        
+        # 异常高力信号 (碰撞) - 在Fx方向施加大的力
+        force_base = torch.zeros(batch_size, 32)
+        force_base[:, 0] = 100.0  # Fx方向
+        force = torch.randn(batch_size, 32) * 10 + force_base
+        
+        # IMU 快速变化
+        imu = torch.randn(batch_size, 64)
+        
+        multimodal = MultimodalInput(vision=vision, force=force, imu=imu)
+        
+        output = self.fusion(multimodal)
+        self.assertEqual(output.shape, (batch_size, 256))
+        
+        # 输出应能检测异常 (非零梯度)
+        self.assertTrue(output.abs().max() > 0.1)
+
+
+class TestCrossModalAttentionAdvanced(unittest.TestCase):
+    """跨模态注意力高级功能测试"""
+    
+    def test_attention_score_distribution(self):
+        """测试注意力分数分布"""
+        B, N, M = 2, 10, 20
+        num_heads = 4
+        
+        attn = CrossModalAttention(query_dim=256, key_dim=256, value_dim=256, num_heads=num_heads)
+        attn.eval()  # 关闭dropout
+        
+        query = torch.randn(B, N, 256)
+        key = torch.randn(B, M, 256)
+        value = torch.randn(B, M, 256)
+        
+        out = attn(query, key, value)
+        
+        # 验证输出形状
+        self.assertEqual(out.shape, (B, N, 256))
+        
+        # 验证输出不为零
+        self.assertFalse(torch.allclose(out, torch.zeros_like(out)))
+    
+    def test_cross_modality_attention(self):
+        """测试跨模态注意力 (Q来自视觉, K/V来自其他模态)"""
+        B = 2
+        
+        attn_visual_to_all = CrossModalAttention(
+            query_dim=512, key_dim=512, value_dim=512, num_heads=8
+        )
+        attn_visual_to_all.eval()
+        
+        # 视觉作为查询
+        vision_q = torch.randn(B, 10, 512)
+        
+        # 模拟其他模态特征 (统一维度后)
+        other_modality_kv = torch.randn(B, 20, 512)
+        
+        # 跨模态注意力: 视觉查询关注其他模态
+        out = attn_visual_to_all(vision_q, other_modality_kv, other_modality_kv)
+        self.assertEqual(out.shape, (B, 10, 512))
+    
+    def test_attention_with_cosine_similarity(self):
+        """测试基于余弦相似度的注意力"""
+        B = 4
+        attn = CrossModalAttention(query_dim=128, key_dim=128, value_dim=128, num_heads=4)
+        attn.eval()
+        
+        # 创建相似的查询和键
+        base = torch.randn(B, 5, 128)
+        query = base + torch.randn_like(base) * 0.1  # 添加小噪声
+        key = base + torch.randn_like(base) * 0.1
+        value = torch.randn(B, 5, 128)
+        
+        out = attn(query, key, value)
+        
+        # 验证输出形状
+        self.assertEqual(out.shape, (B, 5, 128))
+        
+        # 验证输出不为零
+        self.assertFalse(torch.allclose(out, torch.zeros_like(out)))
+
+
+class TestUnifiedRepresentation(unittest.TestCase):
+    """统一表示测试"""
+    
+    def test_representation_shapes(self):
+        """测试不同模态组合的统一表示"""
+        from fusion.cross_modal_fusion import UnifiedRepresentation
+        
+        config = FusionConfig(hidden_dim=256, num_heads=4, num_layers=2)
+        
+        for num_modalities in [1, 2, 3, 4, 5, 6]:
+            batch_size = 4
+            
+            vision = torch.randn(batch_size, 512) if num_modalities >= 1 else None
+            audio = torch.randn(batch_size, 128) if num_modalities >= 2 else None
+            tactile = torch.randn(batch_size, 64) if num_modalities >= 3 else None
+            force = torch.randn(batch_size, 32) if num_modalities >= 4 else None
+            imu = torch.randn(batch_size, 64) if num_modalities >= 5 else None
+            language = torch.randint(0, 1000, (batch_size, 20)) if num_modalities >= 6 else None
+            
+            multimodal = MultimodalInput(
+                vision=vision, audio=audio, tactile=tactile,
+                force=force, imu=imu, language=language
+            )
+            
+            fusion = CrossModalFusion(config)
+            output = fusion(multimodal)
+            self.assertEqual(output.shape, (batch_size, 256))
+    
+    def test_representation_distance(self):
+        """测试不同输入产生的表示距离"""
+        config = FusionConfig(hidden_dim=256)
+        fusion = CrossModalFusion(config)
+        fusion.eval()  # 关闭dropout以保证确定性
+        
+        # 相同输入
+        vision1 = torch.randn(4, 512)
+        vision2 = vision1.clone()
+        
+        multimodal1 = MultimodalInput(vision=vision1)
+        multimodal2 = MultimodalInput(vision=vision2)
+        
+        out1 = fusion(multimodal1)
+        out2 = fusion(multimodal2)
+        
+        # 相同输入应产生相同输出
+        self.assertTrue(torch.allclose(out1, out2, atol=1e-6))
+        
+        # 不同输入应产生不同输出
+        vision3 = torch.randn(4, 512)
+        multimodal3 = MultimodalInput(vision=vision3)
+        out3 = fusion(multimodal3)
+        
+        distance = torch.norm(out1 - out3, dim=1).mean()
+        self.assertGreater(distance, 0.01)

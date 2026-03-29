@@ -840,3 +840,157 @@ t=0ms      t=10ms     t=20ms     t=30ms     t=40ms     t=50ms
 | v0.1.0 | 2026-03-28 | 初始接口设计文档 |
 
 *文档版本: v0.4.0*
+
+---
+
+## 9. 仿真模块接口 (Simulation)
+
+### 9.1 仿真环境 — RobotSimulator
+
+```python
+class RobotSimulator:
+    def __init__(self, config: Optional[SimConfig] = None)
+    def set_joint_positions(self, positions: np.ndarray)
+    def step(self, torque_command: np.ndarray) -> Dict[str, Any]
+    def get_state(self) -> Dict[str, Any]
+    def reset(self)
+    def add_callback(self, callback: Callable)
+```
+
+**SimConfig 配置:**
+```python
+@dataclass
+class SimConfig:
+    dt: float = 0.01              # 时间步长 (s)
+    num_joints: int = 6          # 关节数
+    gravity: np.ndarray = field(default_factory=lambda: np.array([0, 0, -9.81]))
+    position_noise: float = 0.001   # m
+    velocity_noise: float = 0.01    # m/s
+    sensor_delay: float = 0.0       # s
+    control_delay: float = 0.0      # s
+    engine: str = "custom"         # "custom" / "pybullet" / "mujoco"
+```
+
+---
+
+## 10. ROS2 集成接口
+
+### 10.1 ROS2 通信配置
+
+```python
+class ROS2Interface:
+    """ROS2 话题/服务接口"""
+    
+    def __init__(
+        self,
+        namespace: str = "/supermodel",
+        sensor_topics: Dict[str, str] = None,
+        control_topic: str = "/joint_commands"
+    )
+    
+    # 传感器话题
+    #   /supermodel/camera/left      → sensor_msgs/Image
+    #   /supermodel/camera/right     → sensor_msgs/Image
+    #   /supermodel/audio             → audio_common_msgs/AudioData
+    #   /supermodel/tactile          → geometry_msgs/WrenchStamped
+    #   /supermodel/imu               → sensor_msgs/Imu
+    #   /supermodel/joint_states      → sensor_msgs/JointState
+    
+    # 控制话题
+    #   /supermodel/joint_commands   → trajectory_msgs/JointTrajectory
+    #   /supermodel/gripper_command   → std_msgs/Float64
+    
+    # 服务
+    #   /supermodel/perception        → supermodel_interfaces/srv/Perceive
+    #   /supermodel/planning          → supermodel_interfaces/srv/Plan
+    #   /supermodel/execute_skill     → supermodel_interfaces/srv/ExecuteSkill
+```
+
+### 10.2 ROS2 消息类型
+
+```yaml
+# supermodel_interfaces/msg/PerceptionResult.msg
+std_msgs/Header header
+string[] detected_objects
+geometry_msgs/Pose[] object_poses
+float64[] confidences
+sensor_msgs/PointCloud point_cloud
+
+# supermodel_interfaces/srv/Perceive.srv
+sensor_msgs/Image image
+---
+PerceptionResult result
+
+# supermodel_interfaces/srv/ExecuteSkill.srv
+string skill_name
+string[] parameters
+---
+bool success
+string message
+```
+
+---
+
+## 11. 数据格式规范
+
+### 11.1 时间同步
+
+所有传感器数据必须带有时间戳，建议使用：
+- 硬件时间戳 (传感器原生)
+- NTP 同步 (网络传感器)
+- PTP 精确时间协议 (工业级)
+
+### 11.2 坐标系约定
+
+| 坐标系 | 说明 |
+|--------|------|
+| base_link | 机器人基座中心 |
+| tool0 / ee_link | 末端执行器 |
+| camera_color_optical_frame | 相机光心 (Z向前) |
+| camera_depth_optical_frame | 深度相机光心 |
+| world | 地图原点 |
+
+### 11.3 单位制
+
+| 物理量 | 单位 | 说明 |
+|--------|------|------|
+| 长度 | m (米) | 所有位置/距离 |
+| 角度 | rad (弧度) | 内部计算 |
+| 角速度 | rad/s | 角速度 |
+| 力 | N (牛顿) | 力/力矩 |
+| 质量 | kg | 质量/负载 |
+| 温度 | °C | 摄氏度 |
+| 磁场 | μT | 磁力计 |
+
+---
+
+## 12. 错误处理规范
+
+所有模块应遵循以下错误处理约定：
+
+```python
+class SensorError(Exception):
+    """传感器错误基类"""
+    pass
+
+class SensorTimeoutError(SensorError):
+    """传感器超时"""
+    pass
+
+class SensorCalibrationError(SensorError):
+    """传感器标定错误"""
+    pass
+
+class FusionError(Exception):
+    """融合错误基类"""
+    pass
+
+class ControlError(Exception):
+    """控制错误基类"""
+    pass
+```
+
+---
+
+*文档版本: v0.5.0*
+*最后更新: 2026-03-29*
