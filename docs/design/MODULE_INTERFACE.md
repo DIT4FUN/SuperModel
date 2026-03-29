@@ -964,6 +964,164 @@ string message
 
 ---
 
+## 13. 安全控制器接口 (Safety Controller)
+
+### 13.1 概述
+
+安全控制器是 AGV 五级安全体系的核心实现，提供从 S 级（基础限位）到 XXL 级（故障容忍）的安全监控能力。
+
+### 13.2 安全等级对照
+
+| 等级 | 核心功能 | 响应时间 | 冗余度 |
+|------|----------|----------|--------|
+| S | 关节位置限位、软件速度限幅 | 100ms | 无 |
+| M | + 速度监控、警告系统 | 50ms | 单通道 |
+| L | + 碰撞检测、力矩监控、自动减速 | 20ms | 双通道 |
+| XL | + 看门狗、实时故障诊断 | 5ms | 双通道+独立监控 |
+| XXL | + 故障容忍、自动恢复、预测性维护 | 1ms | 全冗余 |
+
+### 13.3 SafetyController 类
+
+```python
+class SafetyController:
+    def __init__(self, config: SafetyConfig)
+    
+    # 状态属性
+    @property
+    def safety_level(self) -> SafetyLevel
+    @property
+    def is_emergency_stopped(self) -> bool
+    @property
+    def fault_count(self) -> int
+    @property
+    def event_history(self) -> List[SafetyEventRecord]
+    
+    # 控制方法
+    def enable(self)
+    def disable(self)
+    def emergency_stop(self)        # 触发紧急停止
+    def reset(self)                 # 重置控制器
+    
+    # 核心检查
+    def check(self, state: JointStateSnapshot) -> SafetyCheckResult
+    def execute_response(self, result: SafetyCheckResult) -> SafetyResponse
+    def compute_safe_velocity(self, current_vel, desired_vel) -> np.ndarray
+    
+    # 辅助方法
+    def register_callback(self, event: SafetyEvent, 
+                         callback: Callable[[SafetyEventRecord], None])
+    def get_safety_status(self) -> Dict[str, Any]
+```
+
+### 13.4 SafetyConfig 配置
+
+```python
+@dataclass
+class SafetyConfig:
+    joint_limits_lower: np.ndarray    # 关节下限 (rad)
+    joint_limits_upper: np.ndarray    # 关节上限 (rad)
+    velocity_limits: np.ndarray       # rad/s
+    velocity_warning_ratio: float     # 警告阈值比例 (默认 0.8)
+    acceleration_limits: np.ndarray   # rad/s^2
+    torque_limits: np.ndarray         # Nm
+    force_limits: np.ndarray          # N
+    collision_threshold: float       # N, 碰撞力阈值
+    collision_time_threshold: float   # s, 碰撞判定时间
+    watchdog_timeout: float           # s, 看门狗超时
+    temperature_limits: Tuple[float, float]  # 摄氏度
+    safety_level: SafetyLevel         # 安全等级
+    max_fault_count: int              # 最大容错次数
+    recovery_timeout: float            # 恢复超时 (s)
+```
+
+### 13.5 安全事件类型
+
+```python
+class SafetyEvent(Enum):
+    JOINT_LIMIT = "joint_limit"         # 关节限位
+    VELOCITY_LIMIT = "velocity_limit"   # 速度超限
+    ACCELERATION_LIMIT = "acceleration_limit"  # 加速度超限
+    COLLISION_DETECTED = "collision_detected"  # 碰撞检测
+    EMERGENCY_STOP = "emergency_stop"  # 紧急停止
+    WATCHDOG_TIMEOUT = "watchdog_timeout"  # 看门狗超时
+    TORQUE_LIMIT = "torque_limit"      # 力矩超限
+    TEMPERATURE_HIGH = "temperature_high"  # 温度过高
+    POWER_EXCEPTION = "power_exception"  # 电源异常
+```
+
+### 13.6 安全响应策略
+
+```python
+class SafetyResponse(Enum):
+    WARNING = "warning"          # 仅警告
+    SLOWDOWN = "slowdown"        # 减速
+    STOP = "stop"               # 停止
+    EMERGENCY_STOP = "emergency_stop"  # 紧急停止
+    FAULT_TOLERANT = "fault_tolerant"  # 故障容忍
+```
+
+### 13.7 使用示例
+
+```python
+from control.safety_controller import (
+    SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+)
+import numpy as np
+
+# 创建配置 (L级安全)
+config = SafetyConfig(
+    joint_limits_lower=np.array([-3.14, -2.5, -3.14, -3.14, -3.14, -3.14]),
+    joint_limits_upper=np.array([3.14, 2.5, 3.14, 3.14, 3.14, 3.14]),
+    velocity_limits=np.array([2.0, 2.0, 2.0, 3.0, 3.0, 3.0]),
+    torque_limits=np.array([100, 100, 80, 40, 40, 20]),
+    safety_level=SafetyLevel.L,
+)
+
+safety = SafetyController(config)
+
+# 定期安全检查 (控制循环中)
+state = JointStateSnapshot(
+    positions=joint_positions,    # 当前关节位置
+    velocities=joint_velocities,   # 当前关节速度
+    accelerations=joint_accels,    # 当前关节加速度
+    torques=joint_torques,         # 当前关节力矩
+    timestamp=time.time()
+)
+
+result = safety.check(state)
+
+if not result.safe:
+    response = safety.execute_response(result)
+    if response == SafetyResponse.EMERGENCY_STOP:
+        trigger_estop()
+    elif response == SafetyResponse.STOP:
+        stop_motion()
+    elif response == SafetyResponse.SLOWDOWN:
+        reduce_speed()
+
+# 获取安全状态
+status = safety.get_safety_status()
+print(f"安全等级: {status['safety_level']}")
+print(f"总检查次数: {status['total_checks']}")
+print(f"近期违规: {status['total_violations']}")
+```
+
+### 13.8 等级特征表
+
+```python
+SafetyController.LEVEL_FEATURES = {
+    SafetyLevel.S:  {"joint_limits", "velocity_limits"},
+    SafetyLevel.M: {"joint_limits", "velocity_limits", "velocity_monitoring"},
+    SafetyLevel.L: {"joint_limits", "velocity_limits", "collision_detection"},
+    SafetyLevel.XL: {"joint_limits", "velocity_limits", "collision_detection", 
+                    "watchdog"},
+    SafetyLevel.XXL: {"joint_limits", "velocity_limits", "collision_detection", 
+                     "watchdog", "fault_tolerance", "recovery"},
+}
+```
+
+---
+
 ## 12. 错误处理规范
 
 所有模块应遵循以下错误处理约定：

@@ -9,6 +9,7 @@ SuperModel 控制模块
 - planner: 任务规划器
 - impedance: 阻抗控制
 - ros2_interface: ROS2 Humble 集成接口
+- safety_controller: 安全监控与故障容忍
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand
@@ -20,6 +21,11 @@ from .trajectory import (
 from .skill import SkillLibrary, Skill, SkillRegistry
 from .planner import TaskPlanner, Task, TaskStatus
 from .impedance import ImpedanceController
+from .safety_controller import (
+    SafetyController, SafetyConfig, SafetyLevel, SafetyEvent,
+    SafetyResponse, SafetyEventRecord, JointStateSnapshot,
+    SafetyCheckResult, get_safety_spec
+)
 from .ros2_interface import (
     ROS2JointTrajectoryInterface, ROS2TopicInterface, ROS2ServiceInterface,
     JointCommand, JointState, ControlInterfaceMode,
@@ -34,6 +40,9 @@ __all__ = [
     'SkillLibrary', 'Skill', 'SkillRegistry',
     'TaskPlanner', 'Task', 'TaskStatus',
     'ImpedanceController',
+    'SafetyController', 'SafetyConfig', 'SafetyLevel', 'SafetyEvent',
+    'SafetyResponse', 'SafetyEventRecord', 'JointStateSnapshot',
+    'SafetyCheckResult', 'get_safety_spec',
     'ROS2JointTrajectoryInterface', 'ROS2TopicInterface', 'ROS2ServiceInterface',
     'JointCommand', 'JointState', 'ControlInterfaceMode',
     'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec'

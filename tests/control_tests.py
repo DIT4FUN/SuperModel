@@ -909,6 +909,253 @@ class TestROS2Interface(unittest.TestCase):
             spec = get_ros2_spec(grade)
             self.assertTrue(spec['realtime'])
 
+    # ========== 安全控制器测试 ==========
+
+    def test_safety_controller_init(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14, -2.5, -3.14, -3.14, -3.14, -3.14]),
+            joint_limits_upper=np.array([3.14, 2.5, 3.14, 3.14, 3.14, 3.14]),
+            velocity_limits=np.array([2.0, 2.0, 2.0, 3.0, 3.0, 3.0]),
+            torque_limits=np.array([100, 100, 80, 40, 40, 20]),
+            acceleration_limits=np.array([5.0, 5.0, 5.0, 8.0, 8.0, 8.0]),
+            safety_level=SafetyLevel.L,
+        )
+        safety = SafetyController(config)
+        self.assertEqual(safety.safety_level, SafetyLevel.L)
+        self.assertFalse(safety.is_emergency_stopped)
+    
+    def test_safety_joint_limit_check(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-1.0, -1.0, -1.0, -1.0, -1.0, -1.0]),
+            joint_limits_upper=np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0]),
+            velocity_limits=np.array([2.0, 2.0, 2.0, 3.0, 3.0, 3.0]),
+            acceleration_limits=np.array([5.0, 5.0, 5.0, 8.0, 8.0, 8.0]),
+            torque_limits=np.array([100, 100, 80, 40, 40, 20]),
+            safety_level=SafetyLevel.S,
+        )
+        safety = SafetyController(config)
+        
+        # 正常状态
+        state = JointStateSnapshot(
+            positions=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+            velocities=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        )
+        result = safety.check(state)
+        self.assertTrue(result.safe)
+        
+        # 超限状态
+        state_limit = JointStateSnapshot(
+            positions=np.array([2.0, 0.0, 0.0, 0.0, 0.0, 0.0]),  # 关节0超上限
+            velocities=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.0]),
+        )
+        result = safety.check(state_limit)
+        self.assertFalse(result.safe)
+        self.assertTrue(any(e.event_type == SafetyEvent.JOINT_LIMIT for e in result.events))
+    
+    def test_safety_velocity_limit_check(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([2.0, 2.0, 2.0, 3.0, 3.0, 3.0]),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([100, 100, 80, 40, 40, 20]),
+            safety_level=SafetyLevel.M,
+        )
+        safety = SafetyController(config)
+        
+        # 超速状态
+        state = JointStateSnapshot(
+            positions=np.array([0.0] * 6),
+            velocities=np.array([3.0, 0.0, 0.0, 0.0, 0.0, 0.0]),  # 关节0超速
+        )
+        result = safety.check(state)
+        self.assertFalse(result.safe)
+        self.assertTrue(any(e.event_type == SafetyEvent.VELOCITY_LIMIT for e in result.events))
+    
+    def test_safety_torque_limit_check(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([10.0, 10.0, 10.0, 10.0, 10.0, 10.0]),
+            safety_level=SafetyLevel.S,
+        )
+        safety = SafetyController(config)
+        
+        # 超力矩状态
+        state = JointStateSnapshot(
+            positions=np.array([0.0] * 6),
+            velocities=np.array([0.0] * 6),
+            torques=np.array([20.0, 5.0, 5.0, 5.0, 5.0, 5.0]),  # 关节0超力矩
+        )
+        result = safety.check(state)
+        self.assertFalse(result.safe)
+        self.assertTrue(any(e.event_type == SafetyEvent.TORQUE_LIMIT for e in result.events))
+    
+    def test_safety_emergency_stop(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([100] * 6),
+            safety_level=SafetyLevel.XXL,
+        )
+        safety = SafetyController(config)
+        
+        # 触发紧急停止
+        safety.emergency_stop()
+        self.assertTrue(safety.is_emergency_stopped)
+        
+        # 重置
+        safety.reset()
+        self.assertFalse(safety.is_emergency_stopped)
+    
+    def test_safety_watchdog_timeout(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        import time
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([100] * 6),
+            watchdog_timeout=0.05,  # 50ms
+            safety_level=SafetyLevel.XL,
+        )
+        safety = SafetyController(config)
+        
+        state = JointStateSnapshot(
+            positions=np.array([0.0] * 6),
+            velocities=np.array([0.0] * 6),
+        )
+        
+        # 第一次检查
+        safety.check(state)
+        time.sleep(0.06)  # 超过看门狗超时
+        
+        result = safety.check(state)
+        self.assertFalse(result.watchdog_ok)
+    
+    def test_safety_compute_safe_velocity(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-1.0] * 6),
+            joint_limits_upper=np.array([1.0] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([100] * 6),
+            safety_level=SafetyLevel.L,
+        )
+        safety = SafetyController(config)
+        
+        # 正常计算
+        current = np.array([0.0] * 6)
+        desired = np.array([3.0, 3.0, 3.0, 3.0, 3.0, 3.0])  # 超速
+        safe = safety.compute_safe_velocity(current, desired)
+        self.assertTrue(np.all(safe <= np.array([2.0] * 6)))
+    
+    def test_safety_callback_registration(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-1.0] * 6),
+            joint_limits_upper=np.array([1.0] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([100] * 6),
+            safety_level=SafetyLevel.S,
+        )
+        safety = SafetyController(config)
+        
+        callback_called = []
+        def my_callback(record):
+            callback_called.append(record)
+        
+        safety.register_callback(SafetyEvent.JOINT_LIMIT, my_callback)
+        
+        # 触发限位检查
+        state = JointStateSnapshot(
+            positions=np.array([5.0, 0.0, 0.0, 0.0, 0.0, 0.0]),  # 严重超限
+            velocities=np.array([0.0] * 6),
+        )
+        safety.check(state)
+        self.assertEqual(len(callback_called), 1)
+    
+    def test_safety_fault_tolerance(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([1.0] * 6),  # 很小的力矩限制
+            safety_level=SafetyLevel.XXL,
+            max_fault_count=2,
+        )
+        safety = SafetyController(config)
+        
+        # 多次触发故障
+        state = JointStateSnapshot(
+            positions=np.array([0.0] * 6),
+            velocities=np.array([0.0] * 6),
+            torques=np.array([5.0, 5.0, 5.0, 5.0, 5.0, 5.0]),  # 严重超力矩
+        )
+        
+        for i in range(3):
+            result = safety.check(state)
+            resp = safety.execute_response(result)
+        
+        # 验证紧急停止机制
+        safety.emergency_stop()
+        self.assertTrue(safety.is_emergency_stopped)
+        
+        # 重置后验证
+        safety.reset()
+        self.assertFalse(safety.is_emergency_stopped)
+        self.assertEqual(safety.fault_count, 0)
+    
+    def test_get_safety_spec(self):
+        from control.safety_controller import get_safety_spec, SafetyLevel
+        
+        for level in SafetyLevel:
+            spec = get_safety_spec(level)
+            self.assertIn('level', spec)
+            self.assertIn('features', spec)
+            self.assertEqual(spec['level'], level.value)
+    
+    def test_safety_status(self):
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([2.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([100] * 6),
+            safety_level=SafetyLevel.M,
+        )
+        safety = SafetyController(config)
+        
+        status = safety.get_safety_status()
+        self.assertIn('enabled', status)
+        self.assertIn('safety_level', status)
+        self.assertIn('fault_count', status)
+        self.assertEqual(status['safety_level'], 'M')
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
