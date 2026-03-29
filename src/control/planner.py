@@ -327,8 +327,137 @@ class HierarchicalPlanner(TaskPlanner):
                 Task(id="retract", name="move_back", parameters={})
             ]
         
+        def navigate_method(task_params: Dict) -> List[Task]:
+            """导航方法分解"""
+            return [
+                Task(id="plan_path", name="plan_route", parameters={"target": task_params.get("target")}),
+                Task(id="follow_path", name="follow_trajectory", parameters={}),
+                Task(id="reach_goal", name="reach_target", parameters={})
+            ]
+        
+        def inspect_method(task_params: Dict) -> List[Task]:
+            """检查方法分解"""
+            return [
+                Task(id="move_to_inspect", name="move_to", parameters={"target": task_params.get("location")}),
+                Task(id="sense", name="sense_environment", parameters={}),
+                Task(id="analyze", name="analyze_data", parameters={})
+            ]
+        
+        def transport_method(task_params: Dict) -> List[Task]:
+            """搬运方法分解 (pickup + navigate + place)"""
+            return [
+                Task(id="pickup_obj", name="pickup", parameters={"object": task_params.get("object")}),
+                Task(id="navigate_to_dest", name="navigate", parameters={"target": task_params.get("destination")}),
+                Task(id="place_obj", name="place", parameters={"location": task_params.get("destination")})
+            ]
+        
+        def open_door_method(task_params: Dict) -> List[Task]:
+            """开门方法分解"""
+            return [
+                Task(id="approach_door", name="move_to", parameters={"target": task_params.get("door_position")}),
+                Task(id="grasp_handle", name="grasp", parameters={"object": "door_handle"}),
+                Task(id="pull_door", name="pull", parameters={}),
+                Task(id="pass_through", name="move_to", parameters={"target": task_params.get("target_position")})
+            ]
+        
         self._methods["pickup"] = [pickup_method]
         self._methods["place"] = [place_method]
+        self._methods["navigate"] = [navigate_method]
+        self._methods["inspect"] = [inspect_method]
+        self._methods["transport"] = [transport_method]
+        self._methods["open_door"] = [open_door_method]
+    
+    def register_method(self, task_name: str, method: Callable[[Dict], List[Task]]):
+        """
+        注册自定义分解方法
+        
+        Args:
+            task_name: 任务名称
+            method: 分解方法函数
+        """
+        if task_name not in self._methods:
+            self._methods[task_name] = []
+        self._methods[task_name].append(method)
+    
+    def get_available_methods(self, task_name: str) -> int:
+        """获取任务可用的方法数量"""
+        return len(self._methods.get(task_name, []))
+    
+    def backtrack(self, task: Task, failed_subtasks: List[str]) -> List[Task]:
+        """
+        回溯搜索：当子任务失败时尝试替代方法
+        
+        Args:
+            task: 当前任务
+            failed_subtasks: 失败的子任务ID列表
+            
+        Returns:
+            替代子任务列表
+        """
+        methods = self._methods.get(task.name, [])
+        
+        # 尝试下一个方法
+        # 这里简化处理，实际应跟踪已尝试的方法
+        for method in methods:
+            try:
+                subtasks = method(task.parameters)
+                if subtasks:
+                    return subtasks
+            except Exception:
+                continue
+        
+        # 无法回溯，返回空
+        return []
+    
+    def estimate_plan_cost(self, tasks: List[Task]) -> float:
+        """
+        估计计划成本
+        
+        Args:
+            tasks: 任务列表
+            
+        Returns:
+            估计的总成本
+        """
+        total_cost = 0.0
+        for task in tasks:
+            action = self.action_library.get(task.name)
+            if action:
+                total_cost += action.cost
+            else:
+                total_cost += 1.0  # 默认成本
+        return total_cost
+    
+    def validate_plan(self, tasks: List[Task], initial_state: WorldState) -> Tuple[bool, str]:
+        """
+        验证计划可行性
+        
+        Args:
+            tasks: 任务列表
+            initial_state: 初始状态
+            
+        Returns:
+            (is_valid, reason)
+        """
+        if not tasks:
+            return False, "Empty plan"
+        
+        state = initial_state.copy()
+        
+        for i, task in enumerate(tasks):
+            action = self.action_library.get(task.name)
+            if action is None:
+                return False, f"Unknown action at step {i}: {task.name}"
+            
+            if not action.applicable(state, task.parameters):
+                return False, f"Action not applicable at step {i}: {task.name}"
+            
+            try:
+                action.execute(state, task.parameters)
+            except Exception as e:
+                return False, f"Action execution failed at step {i}: {task.name}, error: {e}"
+        
+        return True, "Plan is valid"
     
     def decompose_task(
         self,
@@ -365,13 +494,27 @@ class HierarchicalPlanner(TaskPlanner):
         
         return [task]
     
-    def plan_hierarchical(self, task_spec: TaskSpec) -> List[Task]:
+    def plan_hierarchical(
+        self,
+        task_spec: TaskSpec,
+        initial_state: Optional[WorldState] = None,
+        validate: bool = True
+    ) -> Tuple[List[Task], Dict[str, Any]]:
         """
         层次化规划
         
         1. 创建根任务
         2. 递归分解为叶子任务
-        3. 返回叶子任务序列
+        3. (可选) 验证计划可行性
+        4. 返回叶子任务序列及元数据
+        
+        Args:
+            task_spec: 任务规格
+            initial_state: 初始状态 (用于验证)
+            validate: 是否验证计划
+            
+        Returns:
+            (leaf_tasks, metadata): 叶子任务列表及元数据
         """
         root_task = Task(
             id="root",
@@ -387,4 +530,21 @@ class HierarchicalPlanner(TaskPlanner):
             if not task.id or task.id == "root":
                 task.id = f"task_{i}"
         
-        return leaf_tasks
+        # 估计成本
+        estimated_cost = self.estimate_plan_cost(leaf_tasks)
+        
+        # 验证计划
+        metadata = {
+            "num_tasks": len(leaf_tasks),
+            "estimated_cost": estimated_cost,
+            "task_names": [t.name for t in leaf_tasks],
+            "is_valid": False,
+            "validation_reason": ""
+        }
+        
+        if validate and initial_state is not None:
+            is_valid, reason = self.validate_plan(leaf_tasks, initial_state)
+            metadata["is_valid"] = is_valid
+            metadata["validation_reason"] = reason
+        
+        return leaf_tasks, metadata

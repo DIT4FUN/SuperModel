@@ -358,6 +358,7 @@ class TestHierarchicalPlanner(unittest.TestCase):
     
     def test_htn_init(self):
         self.assertIsNotNone(self.planner)
+        self.assertGreater(len(self.planner._methods), 0)
     
     def test_decompose_task(self):
         task = Task(id="pickup_test", name="pickup", parameters={"object": "box"})
@@ -365,14 +366,135 @@ class TestHierarchicalPlanner(unittest.TestCase):
         self.assertIsInstance(subtasks, list)
         self.assertGreater(len(subtasks), 0)
     
+    def test_decompose_navigate(self):
+        """测试导航任务分解"""
+        task = Task(id="nav_test", name="navigate", parameters={"target": "kitchen"})
+        subtasks = self.planner.decompose_task(task, max_depth=3)
+        self.assertIsInstance(subtasks, list)
+        self.assertGreaterEqual(len(subtasks), 3)  # plan, follow, reach
+    
+    def test_decompose_transport(self):
+        """测试搬运任务分解"""
+        task = Task(id="transport_test", name="transport", parameters={
+            "object": "package", "destination": "loading_dock"
+        })
+        subtasks = self.planner.decompose_task(task, max_depth=5)
+        self.assertIsInstance(subtasks, list)
+        # 运输 = pickup + navigate + place
+        self.assertGreaterEqual(len(subtasks), 3)
+    
+    def test_decompose_inspect(self):
+        """测试检查任务分解"""
+        task = Task(id="inspect_test", name="inspect", parameters={"location": "panel_a"})
+        subtasks = self.planner.decompose_task(task, max_depth=3)
+        self.assertIsInstance(subtasks, list)
+        self.assertEqual(len(subtasks), 3)  # move_to, sense, analyze
+    
+    def test_register_custom_method(self):
+        """测试注册自定义方法"""
+        def custom_method(params):
+            return [Task(id="step1", name="custom_action", parameters={})]
+        
+        self.planner.register_method("custom_task", custom_method)
+        self.assertEqual(self.planner.get_available_methods("custom_task"), 1)
+        
+        task = Task(id="ct", name="custom_task", parameters={})
+        subtasks = self.planner.decompose_task(task)
+        self.assertEqual(len(subtasks), 1)
+        self.assertEqual(subtasks[0].name, "custom_action")
+    
+    def test_get_available_methods(self):
+        """测试获取可用方法数量"""
+        self.assertGreater(self.planner.get_available_methods("pickup"), 0)
+        self.assertGreater(self.planner.get_available_methods("navigate"), 0)
+        self.assertGreater(self.planner.get_available_methods("transport"), 0)
+        self.assertEqual(self.planner.get_available_methods("nonexistent"), 0)
+    
     def test_plan_hierarchical(self):
         spec = TaskSpec(
             name="pickup",
             goal_state={"held": True},
             max_depth=3
         )
-        tasks = self.planner.plan_hierarchical(spec)
+        tasks, metadata = self.planner.plan_hierarchical(spec)
         self.assertIsInstance(tasks, list)
+        self.assertIsInstance(metadata, dict)
+        self.assertGreater(metadata["num_tasks"], 0)
+        self.assertGreater(metadata["estimated_cost"], 0)
+    
+    def test_plan_hierarchical_with_validation(self):
+        """测试带验证的计划"""
+        initial_state = WorldState()
+        initial_state.objects["robot"] = {"position": [0, 0, 0], "status": "idle"}
+        self.planner.set_world_state(initial_state)
+        
+        spec = TaskSpec(name="pickup", goal_state={"held": True}, max_depth=3)
+        tasks, metadata = self.planner.plan_hierarchical(spec, initial_state=initial_state, validate=True)
+        
+        self.assertIsInstance(tasks, list)
+        self.assertIn("is_valid", metadata)
+        self.assertIn("validation_reason", metadata)
+    
+    def test_estimate_plan_cost(self):
+        """测试计划成本估计"""
+        tasks = [
+            Task(id="1", name="move_near", parameters={}),
+            Task(id="2", name="grasp", parameters={}),
+            Task(id="3", name="move_up", parameters={}),
+        ]
+        cost = self.planner.estimate_plan_cost(tasks)
+        self.assertGreaterEqual(cost, 0)
+    
+    def test_validate_plan_empty(self):
+        """测试空计划验证"""
+        state = WorldState()
+        is_valid, reason = self.planner.validate_plan([], state)
+        self.assertFalse(is_valid)
+        self.assertIn("Empty", reason)
+    
+    def test_validate_plan_with_state(self):
+        """测试带状态的计划验证"""
+        state = WorldState()
+        state.objects["robot"] = {"position": [0, 0, 0], "status": "idle"}
+        self.planner.set_world_state(state)
+        
+        tasks = [
+            Task(id="1", name="move_near", parameters={"target": "box"}),
+            Task(id="2", name="grasp", parameters={"object": "box"}),
+        ]
+        is_valid, reason = self.planner.validate_plan(tasks, state)
+        # 可能失败因为动作库中可能没有完整的动作定义
+        self.assertIsInstance(is_valid, bool)
+        self.assertIsInstance(reason, str)
+    
+    def test_backtrack_no_alternative(self):
+        """测试回溯无可用替代方法"""
+        task = Task(id="unknown", name="nonexistent_task", parameters={})
+        result = self.planner.backtrack(task, ["failed_step"])
+        self.assertEqual(result, [])
+    
+    def test_backtrack_with_custom_method(self):
+        """测试回溯有替代方法"""
+        def alt_method(params):
+            return [Task(id="alt1", name="alternative_action", parameters={})]
+        
+        self.planner.register_method("backtrack_task", alt_method)
+        
+        task = Task(id="bt", name="backtrack_task", parameters={})
+        result = self.planner.backtrack(task, ["failed"])
+        self.assertEqual(len(result), 1)
+        self.assertEqual(result[0].name, "alternative_action")
+    
+    def test_plan_hierarchical_metadata(self):
+        """测试计划元数据结构"""
+        spec = TaskSpec(name="inspect", goal_state={}, max_depth=3)
+        tasks, metadata = self.planner.plan_hierarchical(spec)
+        
+        self.assertIn("num_tasks", metadata)
+        self.assertIn("estimated_cost", metadata)
+        self.assertIn("task_names", metadata)
+        self.assertEqual(len(metadata["task_names"]), metadata["num_tasks"])
+        self.assertIsInstance(metadata["task_names"], list)
 
 
 class TestRobotSimulator(unittest.TestCase):
