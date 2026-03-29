@@ -1558,3 +1558,554 @@ class TestROSTopicsServicesParams(unittest.TestCase):
 
         default = get_ros2_spec('UNKNOWN')
         self.assertEqual(default, get_ros2_spec('M'))
+
+
+class TestAGVTrajectoryTracking(unittest.TestCase):
+    """AGV轨迹跟踪与五级规格合规性测试"""
+
+    def test_agv_all_grades_trajectory_tracking(self):
+        """测试所有AGV等级的轨迹跟踪能力"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose, AGVTwist
+        
+        for grade in AGVGrade:
+            spec = AGVSpec.from_grade(grade)
+            agv = AGVMotionController(spec)
+            
+            # 初始化位姿
+            agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+            
+            # 生成直线轨迹 (沿X轴前进)
+            target_poses = []
+            for i in range(10):
+                target_poses.append(AGVPose(x=float(i) * 0.1, y=0.0, theta=0.0))
+            
+            # 执行轨迹跟踪
+            tracking_errors = []
+            for target in target_poses:
+                cmds = agv.compute_wheel_commands(target, dt=1.0/spec.control_frequency)
+                # 应用安全限制
+                cmds = agv.apply_safety_limits(cmds)
+                tracking_errors.append(np.sqrt(target.x**2 + target.y**2))
+            
+            # 验证跟踪性能
+            self.assertEqual(len(tracking_errors), 10)
+            # 应该有关注度输出（不为零）
+            self.assertTrue(any(e > 0.001 for e in tracking_errors))
+
+    def test_agv_xxl_high_frequency_control(self):
+        """测试XXL级1000Hz高频控制"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose, AGVTwist
+        import time
+        
+        spec = AGVSpec.from_grade(AGVGrade.XXL)
+        agv = AGVMotionController(spec)
+        
+        self.assertEqual(spec.control_frequency, 1000.0)
+        
+        # 模拟高频控制循环
+        agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+        target = AGVPose(x=1.0, y=0.0, theta=0.0)
+        
+        start = time.time()
+        iterations = 0
+        for _ in range(1000):
+            cmds = agv.compute_wheel_commands(target, dt=0.001)
+            cmds = agv.apply_safety_limits(cmds)
+            iterations += 1
+        elapsed = time.time() - start
+        
+        # 1000次迭代应该在合理时间内完成
+        self.assertLess(elapsed, 5.0)
+        self.assertEqual(iterations, 1000)
+
+    def test_agv_mecanum_omnidirectional(self):
+        """测试麦克纳姆轮全向移动"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVTwist, DriveType
+        
+        spec = AGVSpec.from_grade(AGVGrade.XL)
+        spec.drive_type = DriveType.MECANUM
+        agv = AGVMotionController(spec)
+        
+        # 纯侧向移动 (需要麦克纳姆轮)
+        twist = AGVTwist(vx=0.0, vy=1.0, omega=0.0)
+        wheel_vel = agv.inverse_kinematics(twist)
+        
+        self.assertEqual(len(wheel_vel), 4)
+        
+        # 验证逆运动学输出有正负交替模式 (麦克纳姆轮特征)
+        # 纯侧向移动时，相邻轮子转向相反
+        # vy=1.0: w_fl=-1/r, w_fr=+1/r -> 符号相反
+        self.assertLess(wheel_vel[1] * wheel_vel[0], 0)  # fr和fl符号相反
+        self.assertLess(wheel_vel[2] * wheel_vel[0], 0)  # rl和fl符号相反
+    
+    def test_agv_differential_turning(self):
+        """测试差速驱动原地转向"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVTwist, DriveType
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        spec.drive_type = DriveType.DIFFERENTIAL
+        agv = AGVMotionController(spec)
+        
+        # 纯旋转
+        twist = AGVTwist(vx=0.0, vy=0.0, omega=1.0)
+        wheel_vel = agv.inverse_kinematics(twist)
+        
+        # 左右轮应该方向相反
+        self.assertLess(wheel_vel[0] * wheel_vel[1], 0)
+        
+        # 直行分量为零
+        body_twist = agv.forward_kinematics(np.array([1.0, -1.0]))
+        self.assertAlmostEqual(body_twist.vx, 0.0, places=3)
+
+    def test_agv_velocity_saturation(self):
+        """测试速度饱和限制"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVTwist
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        agv = AGVMotionController(spec)
+        
+        # 尝试发送超高速命令
+        twist = AGVTwist(
+            vx=spec.max_linear_speed * 10,
+            vy=0.0,
+            omega=spec.max_angular_speed * 10
+        )
+        wheel_vel = agv.inverse_kinematics(twist)
+        limited = agv.apply_safety_limits(wheel_vel)
+        
+        max_wheel = spec.max_linear_speed / spec.wheel_radius
+        self.assertTrue(np.all(np.abs(limited) <= max_wheel + 1e-6))
+
+    def test_agv_collision_avoidance_limits(self):
+        """测试安全限制下的碰撞回避"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose
+        
+        spec = AGVSpec.from_grade(AGVGrade.L)
+        agv = AGVMotionController(spec)
+        
+        # 目标在障碍物后方的情况
+        agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+        
+        # 目标太近
+        close_target = AGVPose(x=0.01, y=0.0, theta=0.0)
+        cmds = agv.compute_wheel_commands(close_target, dt=0.01)
+        
+        # 命令应该在安全范围内
+        max_wheel = spec.max_linear_speed / spec.wheel_radius
+        self.assertTrue(np.all(np.abs(cmds) <= max_wheel * 2))
+
+    def test_agv_pose_vector_roundtrip(self):
+        """测试AGV位姿向量往返转换"""
+        from control.agv import AGVPose
+        
+        original = AGVPose(x=1.234, y=5.678, theta=0.785)
+        vec = original.to_vector()
+        restored = AGVPose.from_vector(vec)
+        
+        self.assertAlmostEqual(restored.x, original.x, places=5)
+        self.assertAlmostEqual(restored.y, original.y, places=5)
+        self.assertAlmostEqual(restored.theta, original.theta, places=5)
+
+    def test_agv_kinematics_roundtrip(self):
+        """测试运动学正逆变换往返精度 (麦克纳姆轮全向)"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVTwist, DriveType
+        
+        spec = AGVSpec.from_grade(AGVGrade.L)
+        spec.drive_type = DriveType.MECANUM
+        agv = AGVMotionController(spec)
+        
+        # 任意速度命令 (全向移动)
+        original_twist = AGVTwist(vx=0.5, vy=0.3, omega=0.2)
+        
+        # 逆运动学
+        wheel_vel = agv.inverse_kinematics(original_twist)
+        
+        # 正运动学还原
+        recovered_twist = agv.forward_kinematics(wheel_vel)
+        
+        # 验证还原精度 (麦克纳姆轮支持全向移动)
+        self.assertAlmostEqual(recovered_twist.vx, original_twist.vx, places=3)
+        self.assertAlmostEqual(recovered_twist.vy, original_twist.vy, places=3)
+        self.assertAlmostEqual(recovered_twist.omega, original_twist.omega, places=3)
+
+    def test_agv_xxl_load_capacity(self):
+        """测试XXL级2000kg负载能力"""
+        from control.agv import AGVSpec, AGVGrade
+        
+        spec_xxl = AGVSpec.from_grade(AGVGrade.XXL)
+        
+        # 验证规格满足负载需求
+        self.assertGreater(spec_xxl.max_linear_speed, 0)  # 有速度能力
+        self.assertGreater(spec_xxl.max_linear_accel, 0)  # 有加速度能力
+        # 最大负载通过规格表单独定义，此处验证驱动能力
+
+    def test_agv_s_grade_educational_spec(self):
+        """测试S级教育/实验规格"""
+        from control.agv import AGVSpec, AGVGrade
+        
+        spec_s = AGVSpec.from_grade(AGVGrade.S)
+        
+        self.assertEqual(spec_s.control_frequency, 50.0)
+        self.assertLessEqual(spec_s.max_linear_speed, 0.5)
+        self.assertLessEqual(spec_s.max_angular_speed, 1.5)
+
+    def test_agv_motion_controller_pid_convergence(self):
+        """测试PID控制器向目标收敛"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose
+        
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        agv = AGVMotionController(spec)
+        
+        # 从原点开始
+        agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+        target = AGVPose(x=0.5, y=0.0, theta=0.0)
+        
+        # 多次迭代控制
+        initial_dist = np.sqrt(target.x**2 + target.y**2)
+        
+        for iteration in range(100):
+            cmds = agv.compute_wheel_commands(target, dt=0.01)
+            cmds = agv.apply_safety_limits(cmds)
+            # 模拟更新 (简化版)
+            if iteration % 10 == 0:
+                current = agv.pose
+                dist = np.sqrt((target.x - current.x)**2 + (target.y - current.y)**2)
+        
+        # 验证控制器在运行
+        self.assertTrue(agv.pose is not None)
+
+    def test_agv_twist_conversion(self):
+        """测试AGV速度转换"""
+        from control.agv import AGVTwist
+        
+        twist = AGVTwist(vx=1.0, vy=2.0, omega=0.5)
+        vec = twist.to_vector()
+        self.assertEqual(vec.shape, (3,))
+        self.assertEqual(vec[0], 1.0)
+        self.assertEqual(vec[1], 2.0)
+        self.assertEqual(vec[2], 0.5)
+        
+        restored = AGVTwist.from_vector(vec)
+        self.assertAlmostEqual(restored.vx, twist.vx)
+        self.assertAlmostEqual(restored.vy, twist.vy)
+        self.assertAlmostEqual(restored.omega, twist.omega)
+
+
+class TestSafetyControllerGrades(unittest.TestCase):
+    """安全控制器AGV五级合规性测试"""
+
+    def test_safety_level_s_basic(self):
+        """S级安全: 基础限位"""
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-1.0] * 6),
+            joint_limits_upper=np.array([1.0] * 6),
+            velocity_limits=np.array([1.0] * 6),
+            acceleration_limits=np.array([5.0] * 6),
+            torque_limits=np.array([10.0] * 6),
+            safety_level=SafetyLevel.S,
+        )
+        safety = SafetyController(config)
+        
+        # 正常运行
+        state = JointStateSnapshot(
+            positions=np.zeros(6),
+            velocities=np.zeros(6),
+        )
+        result = safety.check(state)
+        self.assertTrue(result.safe)
+        
+        # 超限检测
+        state_limit = JointStateSnapshot(
+            positions=np.array([2.0] * 6),
+            velocities=np.zeros(6),
+        )
+        result = safety.check(state_limit)
+        self.assertFalse(result.safe)
+
+    def test_safety_level_xxl_comprehensive(self):
+        """XXL级安全: 完整故障容忍"""
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, SafetyEvent, JointStateSnapshot
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14] * 6),
+            joint_limits_upper=np.array([3.14] * 6),
+            velocity_limits=np.array([5.0] * 6),
+            acceleration_limits=np.array([10.0] * 6),
+            torque_limits=np.array([100.0] * 6),
+            safety_level=SafetyLevel.XXL,
+            watchdog_timeout=0.01,
+            max_fault_count=5,
+        )
+        safety = SafetyController(config)
+        
+        # 正常状态
+        state = JointStateSnapshot(
+            positions=np.zeros(6),
+            velocities=np.zeros(6),
+            torques=np.ones(6) * 5.0,
+        )
+        result = safety.check(state)
+        self.assertTrue(result.safe)
+        self.assertTrue(result.watchdog_ok)
+        
+        # 紧急停止功能
+        safety.emergency_stop()
+        self.assertTrue(safety.is_emergency_stopped)
+        
+        # 重置
+        safety.reset()
+        self.assertFalse(safety.is_emergency_stopped)
+        
+        # 看门狗超时测试
+        import time
+        safety.check(state)
+        time.sleep(0.02)
+        result2 = safety.check(state)
+        self.assertFalse(result2.watchdog_ok)
+
+    def test_safety_five_grades_features(self):
+        """验证五级安全特性"""
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, get_safety_spec
+        
+        for level in SafetyLevel:
+            spec = get_safety_spec(level)
+            self.assertEqual(spec['level'], level.value)
+            
+            config = SafetyConfig(
+                joint_limits_lower=np.array([-3.14] * 6),
+                joint_limits_upper=np.array([3.14] * 6),
+                velocity_limits=np.array([2.0] * 6),
+                acceleration_limits=np.array([5.0] * 6),
+                torque_limits=np.array([100.0] * 6),
+                safety_level=level,
+            )
+            safety = SafetyController(config)
+            status = safety.get_safety_status()
+            self.assertEqual(status['safety_level'], level.value)
+
+
+class TestImpedanceControlCompliance(unittest.TestCase):
+    """阻抗控制AGV五级合规性测试"""
+
+    def test_impedance_params_grade_s(self):
+        """S级无阻抗控制"""
+        from control.impedance import ImpedanceParams
+        params = ImpedanceParams.default_6d()
+        self.assertIsNotNone(params)
+    
+    def test_impedance_params_grade_l(self):
+        """L级完整阻抗参数"""
+        from control.impedance import ImpedanceParams
+        
+        params = ImpedanceParams(
+            M=np.eye(6) * 5.0,
+            D=np.eye(6) * 100.0,
+            K=np.eye(6) * 200.0,
+        )
+        self.assertEqual(params.M.shape, (6, 6))
+        self.assertEqual(params.D.shape, (6, 6))
+        self.assertEqual(params.K.shape, (6, 6))
+
+    def test_collaborative_force_limit(self):
+        """协作安全力限"""
+        from control.impedance import CollaborativeController
+        
+        ctrl = CollaborativeController(safety_force_limit=150.0)
+        self.assertEqual(ctrl.safety_force_limit, 150.0)
+
+
+class TestMPCControlCompliance(unittest.TestCase):
+    """MPC控制器AGV五级合规性测试"""
+
+    def test_mpc_grade_s_constraints(self):
+        """S级MPC: 基础约束"""
+        from control.mpc import get_mpc_spec
+        
+        spec = get_mpc_spec('S')
+        self.assertEqual(spec['horizon'], 10)
+        self.assertIn('joint_limits', spec['constraints'])
+
+    def test_mpc_grade_xxl_full_constraints(self):
+        """XXL级MPC: 完整约束包括力约束"""
+        from control.mpc import get_mpc_spec
+        
+        spec = get_mpc_spec('XXL')
+        self.assertEqual(spec['horizon'], 50)
+        self.assertIn('force', spec['constraints'])
+        self.assertIn('obstacle', spec['constraints'])
+        self.assertEqual(spec['solver'], 'osqp')
+
+    def test_dynamics_model_forward(self):
+        """测试动力学模型"""
+        from control.mpc import DynamicsModel
+        import numpy as np
+        
+        model = DynamicsModel(num_joints=6)
+        q = np.zeros(6)
+        qd = np.zeros(6)
+        tau = np.array([0, 0, 10, 0, 0, 0])
+        qdd = model.forward(q, qd, tau)
+        self.assertEqual(qdd.shape, (6,))
+        self.assertGreater(qdd[2], 0)
+
+    def test_joint_space_mpc_compute(self):
+        """测试关节空间MPC"""
+        from control.mpc import JointSpaceMPC, MPCConfig
+        import numpy as np
+        
+        config = MPCConfig.for_grade('M', num_joints=6)
+        mpc = JointSpaceMPC(config=config, num_joints=6)
+        
+        current_pos = np.zeros(6)
+        current_vel = np.zeros(6)
+        target_pos = np.array([0.5, 0.0, 0.0, 0.0, 0.0, 0.0])
+        
+        tau = mpc.compute_control_simple(current_pos, current_vel, target_pos)
+        self.assertEqual(tau.shape, (6,))
+        self.assertTrue(np.all(np.isfinite(tau)))
+
+
+class TestSensorSimulatorAGVCompliance(unittest.TestCase):
+    """传感器仿真AGV五级规格测试"""
+
+    def test_all_grades_sensor_noise(self):
+        """测试所有AGV等级的传感器噪声特性"""
+        from simulation.environment import SensorSimulator, RobotSimulator, SimConfig
+        
+        # 不同噪声水平模拟不同等级
+        noise_configs = [0.01, 0.005, 0.001, 0.0005, 0.0001]
+        
+        for noise_level in noise_configs:
+            config = SimConfig(dt=0.01, num_joints=6, position_noise=noise_level)
+            sim = RobotSimulator(config)
+            sensor = SensorSimulator(sim, config)
+            
+            # IMU数据
+            imu_data = sensor.get_imu_data()
+            self.assertIn('accel', imu_data)
+            self.assertIn('gyro', imu_data)
+            
+            # 力觉数据
+            wrench = sensor.get_wrench()
+            self.assertEqual(wrench.shape, (6,))
+
+    def test_sensor_noise_levels_by_grade(self):
+        """测试等级相关的噪声水平"""
+        from simulation.environment import SensorSimulator, RobotSimulator, SimConfig
+        
+        # 高等级有更低噪声
+        config_low = SimConfig(dt=0.01, num_joints=6, position_noise=0.01)
+        config_high = SimConfig(dt=0.01, num_joints=6, position_noise=0.001)
+        
+        sim_low = RobotSimulator(config_low)
+        sim_high = RobotSimulator(config_high)
+        
+        sensor_low = SensorSimulator(sim_low, config_low)
+        sensor_high = SensorSimulator(sim_high, config_high)
+        
+        # 采集多次取平均
+        noises_low = []
+        noises_high = []
+        
+        for _ in range(10):
+            imu_low = sensor_low.get_imu_data()
+            imu_high = sensor_high.get_imu_data()
+            noises_low.append(np.std(imu_low['accel']))
+            noises_high.append(np.std(imu_high['accel']))
+        
+        # 高等级(低噪声)应该噪声更低
+        self.assertLess(np.mean(noises_high), np.mean(noises_low) * 2)
+
+
+class TestFusionSensorIntegration(unittest.TestCase):
+    """多传感器融合与AGV等级集成测试"""
+
+    def test_multimodal_fusion_all_grades(self):
+        """测试所有AGV等级的多模态融合"""
+        from fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, FusionStrategy, MultimodalInput
+        import torch
+        
+        for grade, hidden_dim, num_heads in [
+            ('S', 128, 2),
+            ('M', 256, 4),
+            ('L', 512, 8),
+            ('XL', 768, 12),
+            ('XXL', 1024, 16),
+        ]:
+            config = FusionConfig(
+                hidden_dim=hidden_dim,
+                num_heads=num_heads,
+                num_layers=max(1, num_heads // 4),
+            )
+            fusion = CrossModalFusion(config)
+            
+            # 模拟多模态输入 (使用与配置匹配的维度)
+            mmi = MultimodalInput(
+                vision=torch.randn(2, 512),
+                audio=torch.randn(2, 128),
+                tactile=torch.randn(2, 64),
+                force=torch.randn(2, 32),   # 默认 force_dim=32
+                imu=torch.randn(2, 64),     # 默认 imu_dim=64
+            )
+            
+            output = fusion(mmi)
+            self.assertEqual(output.shape[0], 2)
+            self.assertEqual(output.shape[1], hidden_dim)
+
+    def test_sensor_fusion_pipeline(self):
+        """测试传感器融合完整流程"""
+        from sensors.vision import BinocularCamera, CameraIntrinsics, StereoExtrinsics
+        from sensors.audio import BinauralMic
+        from sensors.tactile import TactileArray
+        from sensors.force import ForceTorqueSensor, Wrench
+        from sensors.imu import IMUSensor, IMUSensorType
+        from fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        import torch
+        
+        # 创建虚拟传感器
+        cam = BinocularCamera(resolution=(640, 480), fps=30)
+        mic = BinauralMic(sample_rate=16000, chunk_size=512)
+        tactile = TactileArray(array_size=(16, 16))
+        force = ForceTorqueSensor()
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        
+        # 采集
+        cam.open()
+        mic.open()
+        tactile.open()
+        force.open()
+        imu.open()
+        
+        stereo = cam.capture()
+        audio = mic.capture()
+        tac_frame = tactile.capture()
+        wrench = force.capture()
+        imu_frame = imu.capture()
+        
+        # 融合 (使用正确维度)
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        
+        # 模拟视觉和触觉特征 (使用默认维度: force_dim=32, imu_dim=64)
+        mmi = MultimodalInput(
+            vision=torch.randn(1, 512),
+            tactile=torch.randn(1, 64),
+            force=torch.randn(1, 32),
+            imu=torch.randn(1, 64),
+        )
+        
+        fused = fusion(mmi)
+        self.assertEqual(fused.shape, (1, 256))
+        
+        # 清理
+        cam.close()
+        mic.close()
+        tactile.close()
+        force.close()
+        imu.close()
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

@@ -2558,7 +2558,344 @@ unconfigured --configure()--> inactive --activate()--> active
 
 ---
 
-*文档版本: v1.3.0*
+## 24. 控制模块接口 (Control)
+
+### 24.1 AGV运动控制器 — AGVMotionController
+
+```python
+class AGVMotionController:
+    def __init__(self, spec: AGVSpec)
+    def forward_kinematics(self, wheel_velocities: np.ndarray) -> AGVTwist
+    def inverse_kinematics(self, twist: AGVTwist) -> np.ndarray
+    def compute_wheel_commands(self, target_pose: AGVPose, dt: float) -> np.ndarray
+    def apply_safety_limits(self, wheel_commands: np.ndarray) -> np.ndarray
+    def update_pose(self, new_pose: AGVPose)
+    def update_twist(self, new_twist: AGVTwist)
+    @property def pose(self) -> AGVPose
+    @property def twist(self) -> AGVTwist
+```
+
+**AGVPose / AGVTwist 数据结构:**
+```python
+@dataclass
+class AGVPose:
+    x: float          # 世界坐标系X (m)
+    y: float          # 世界坐标系Y (m)
+    theta: float      # 朝向角 (rad)
+    def to_vector(self) -> np.ndarray   # [x, y, theta]
+    @classmethod def from_vector(cls, v) -> AGVPose
+
+@dataclass
+class AGVTwist:
+    vx: float         # X方向线速度 (m/s)
+    vy: float         # Y方向线速度 (m/s)
+    omega: float      # 角速度 (rad/s)
+    def to_vector(self) -> np.ndarray   # [vx, vy, omega]
+```
+
+**使用示例:**
+```python
+from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose, AGVTwist
+
+spec = AGVSpec.from_grade(AGVGrade.M)
+agv = AGVMotionController(spec)
+
+agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+target = AGVPose(x=1.0, y=0.5, theta=0.0)
+
+wheel_cmds = agv.compute_wheel_commands(target, dt=0.01)
+wheel_cmds = agv.apply_safety_limits(wheel_cmds)
+```
+
+### 24.2 运动学模型 — Kinematics
+
+```python
+class KinematicsBase:
+    def wheel_to_body(self, wheel_velocities) -> AGVTwist
+    def body_to_wheel(self, twist) -> np.ndarray
+
+class DifferentialKinematics(KinematicsBase):
+    # 差速驱动: wheel_velocities = [left, right] rad/s
+    def wheel_to_body(self, [wL, wR]) -> AGVTwist
+    def body_to_wheel(self, twist) -> [wL, wR]
+
+class MecanumKinematics(KinematicsBase):
+    # 麦克纳姆轮: wheel_velocities = [fl, fr, rl, rr] rad/s
+    def wheel_to_body(self, [wFL, wFR, wRL, wRR]) -> AGVTwist
+    def body_to_wheel(self, twist) -> [wFL, wFR, wRL, wRR]
+```
+
+### 24.3 安全控制器 — SafetyController
+
+```python
+class SafetyController:
+    def __init__(self, config: SafetyConfig)
+    def check(self, state: JointStateSnapshot) -> SafetyResult
+    def execute_response(self, result: SafetyResult) -> SafetyResponse
+    def emergency_stop(self)
+    def reset()
+    def compute_safe_velocity(self, current, desired) -> np.ndarray
+    def register_callback(self, event_type, callback)
+    def get_safety_status(self) -> Dict
+    @property def is_emergency_stopped(self) -> bool
+```
+
+**SafetyConfig:**
+```python
+@dataclass
+class SafetyConfig:
+    joint_limits_lower: np.ndarray      # 关节下限
+    joint_limits_upper: np.ndarray      # 关节上限
+    velocity_limits: np.ndarray         # 速度限制
+    acceleration_limits: np.ndarray     # 加速度限制
+    torque_limits: np.ndarray           # 力矩限制
+    watchdog_timeout: float             # 看门狗超时 (s)
+    safety_level: SafetyLevel           # S/M/L/XL/XXL
+    max_fault_count: int               # 最大故障容忍次数
+```
+
+**SafetyResult / SafetyEvent:**
+```python
+@dataclass
+class SafetyResult:
+    safe: bool
+    watchdog_ok: bool
+    events: List[SafetyEventRecord]
+    corrected_command: Optional[np.ndarray]
+
+class SafetyEvent(Enum):
+    JOINT_LIMIT = "joint_limit"
+    VELOCITY_LIMIT = "velocity_limit"
+    ACCELERATION_LIMIT = "acceleration_limit"
+    COLLISION_DETECTED = "collision_detected"
+    EMERGENCY_STOP = "emergency_stop"
+    WATCHDOG_TIMEOUT = "watchdog_timeout"
+    TORQUE_LIMIT = "torque_limit"
+```
+
+### 24.4 MPC控制器 — JointSpaceMPC / CartesianMPC
+
+```python
+class MPCConfig:
+    horizon: int              # 预测步数 N
+    control_horizon: int     # 控制步数 nu
+    dt: float               # 采样时间 (s)
+    Q_pos: np.ndarray       # 位置跟踪权重
+    Q_vel: np.ndarray       # 速度跟踪权重
+    R_acc: np.ndarray       # 加速度/控制权重
+    torque_limits: np.ndarray
+    solver: str            # "osqp" | "qp" | "unconstraint"
+    @classmethod def for_grade(cls, grade: str, num_joints=6, dt=0.01) -> MPCConfig
+
+class JointSpaceMPC:
+    def __init__(self, config: MPCConfig, dynamics: DynamicsModel, num_joints=6)
+    def compute_control(self, current_state, desired_trajectory, current_velocity) -> np.ndarray
+    def compute_control_simple(self, current_pos, current_vel, target_pos, target_vel=None) -> np.ndarray
+    def reset()
+
+class CartesianMPC:
+    def __init__(self, config: MPCConfig, num_joints=6)
+    def compute_control(self, current_joint_pos, current_joint_vel, target_pose, target_twist=None) -> np.ndarray
+```
+
+**使用示例:**
+```python
+from control.mpc import MPCConfig, JointSpaceMPC, DynamicsModel
+
+config = MPCConfig.for_grade('L', num_joints=6)
+dynamics = DynamicsModel(num_joints=6)
+mpc = JointSpaceMPC(config=config, dynamics=dynamics, num_joints=6)
+
+current_pos = np.zeros(6)
+current_vel = np.zeros(6)
+target_pos = np.array([0.5, 0.3, 0.1, 0, 0, 0])
+
+tau = mpc.compute_control_simple(current_pos, current_vel, target_pos)
+```
+
+### 24.5 阻抗控制器 — ImpedanceController
+
+```python
+class ImpedanceController:
+    def __init__(self, params: ImpedanceParams, control_rate=100.0)
+    def compute_torque(self, desired_pos, desired_vel, current_pos, current_vel,
+                       wrench: np.ndarray, jacobian: np.ndarray) -> np.ndarray
+    def set_impedance_params(self, params: ImpedanceParams)
+
+class ImpedanceParams:
+    M: np.ndarray   # 6x6 惯性矩阵
+    D: np.ndarray   # 6x6 阻尼矩阵
+    K: np.ndarray   # 6x6 刚度矩阵
+    @classmethod def default_6d() -> ImpedanceParams
+    @classmethod def high_stiffness() -> ImpedanceParams
+    @classmethod def low_stiffness() -> ImpedanceParams
+
+class AdmittanceController:
+    def __init__(self, M=10.0, D=50.0, K=200.0)
+    def update(self, external_force: float, desired_pos: float) -> float
+    def reset()
+
+class CollaborativeController:
+    def __init__(self, safety_force_limit=100.0, safety_velocity_limit=0.5)
+    def check_safety(self, force, velocity) -> (bool, str)
+    def get_reaction_torque(self, contact_force, jacobian) -> np.ndarray
+```
+
+### 24.6 技能库 — SkillLibrary
+
+```python
+class SkillLibrary:
+    def list_skills(self) -> List[str]
+    def create_skill(self, name: str, params: dict) -> Optional[Skill]
+    def execute_skill(self, skill: Skill, context) -> SkillResult
+
+class Skill:
+    name: str
+    config: SkillConfig
+    status: SkillStatus
+    def execute(self, context) -> SkillResult
+    def cancel()
+
+class SkillStatus(Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    SUCCEEDED = "succeeded"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+```
+
+### 24.7 任务规划器 — TaskPlanner / HierarchicalPlanner
+
+```python
+class TaskPlanner:
+    def add_task(self, task: Task)
+    def get_next_task(self) -> Optional[Task]
+    def plan(self, spec: TaskSpec) -> List[Action]
+    def set_world_state(self, state: WorldState)
+
+class HierarchicalPlanner(TaskPlanner):
+    def decompose_task(self, task: Task, max_depth=3) -> List[Task]
+    def plan_hierarchical(self, spec: TaskSpec) -> List[Task]
+
+@dataclass
+class Task:
+    id: str
+    name: str
+    parameters: Dict[str, Any]
+    status: TaskStatus
+    priority: TaskPriority
+
+class TaskStatus(Enum):
+    PENDING = "pending"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"
+```
+
+### 24.8 轨迹生成器 — TrajectoryGenerator
+
+```python
+class TrajectoryGenerator:
+    def __init__(self, num_joints: int, config: TrajectoryConfig)
+    def generate_quintic_polynomial(self, start, end, duration,
+                                    start_vel=None, end_vel=None) -> List[TrajectoryPoint]
+    def generate_trapezoidal(self, start, end, max_vel, max_acc) -> (List, float)
+    def resample_trajectory(self, waypoints, new_dt) -> List
+
+class RRTPlanner:
+    def __init__(self, space_dim: int, bounds, max_iterations=500, step_size=0.1)
+    def plan(self, start, goal, obstacle_check,
+             algorithm=PlanningAlgorithm.RRT) -> (List, float)
+```
+
+### 24.9 ROS2控制接口
+
+```python
+class ROS2JointTrajectoryInterface:
+    def __init__(self, joint_names: List[str], interface_mode=ControlInterfaceMode.POSITION)
+    def activate() / deactivate()
+    def send_point(cmd: JointCommand) -> bool
+    def send_trajectory(traj: List[JointCommand]) -> bool
+    def update(state: JointState) -> Optional[JointCommand]
+    def cancel() -> bool
+    def get_stats() -> Dict
+
+class ROS2ActionInterface:
+    def send_goal(trajectory: List[JointCommand]) -> str  # goal_id
+    def update_server(state: JointState) -> bool
+    def cancel_goal(goal_id: str) -> bool
+    def get_goal_status(goal_id: str) -> ActionGoalStatus
+
+class ROS2ParameterInterface:
+    def set_parameter(name: str, value: Any)
+    def get_parameter(name: str, default=None) -> Any
+    def list_parameters(prefix: str = "") -> List[str]
+    def subscribe_parameter_change(name: str, callback)
+
+class ROS2ComponentInterface:
+    def configure() -> bool
+    def activate() -> bool
+    def deactivate() -> bool
+    def cleanup()
+    def shutdown()
+    def get_state() -> str  # "unconfigured"/"inactive"/"active"/"shutdown"
+```
+
+### 24.10 控制模块五级规格
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 关节位置PID | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 关节速度PID | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 力矩控制 | - | ✓ | ✓ | ✓ | ✓ |
+| 笛卡尔空间控制 | - | ✓ | ✓ | ✓ | ✓ |
+| 轨迹跟踪 | - | ✓ | ✓ | ✓ | ✓ |
+| 阻抗控制 | - | 基础 | 完整 | 完整+自适应 | 完整+自适应 |
+| MPC | - | - | ✓ | ✓ | ✓ |
+| 安全限幅 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 碰撞检测 | - | ✓ | ✓ | ✓ | ✓ |
+| 紧急停止 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 看门狗监控 | - | - | ✓ | ✓ | ✓ |
+| 故障容忍 | - | - | - | ✓ | ✓ |
+| 控制频率 | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| ROS2接口 | REST | ROS2 | ROS2 | ROS2 | ROS2 |
+| 实时性 | 非实时 | 软实时 | 硬实时 | 硬实时 | 双系统 |
+
+### 24.11 仿真环境接口 — RobotSimulator / SensorSimulator
+
+```python
+class RobotSimulator:
+    def __init__(self, config: SimConfig)
+    def step(self, torque: np.ndarray) -> Dict  # {'time', 'joint_positions', 'step', ...}
+    def set_joint_positions(self, positions: np.ndarray)
+    def get_jacobian() -> np.ndarray
+    def end_effector_pose -> np.ndarray  # 4x4
+    def check_self_collision() -> bool
+    def reset()
+
+class SensorSimulator:
+    def __init__(self, robot: RobotSimulator, config: SimConfig)
+    def get_noisy_joint_positions() -> np.ndarray
+    def get_noisy_joint_velocities() -> np.ndarray
+    def get_imu_data() -> Dict  # {'accel': (3,), 'gyro': (3,)}
+    def get_wrench() -> np.ndarray  # (6,)
+    def get_contact_force() -> float
+```
+
+**SimConfig:**
+```python
+@dataclass
+class SimConfig:
+    dt: float = 0.01
+    num_joints: int = 6
+    grade: str = "M"          # S/M/L/XL/XXL
+    physics_engine: str = "custom"  # "pybullet"/"mujoco"/"dart"/"custom"
+    noise_level: float = 0.01
+```
+
+---
+
+*文档版本: v1.4.0*
 *最后更新: 2026-03-30*
 
-**2026-03-30 v1.3.0**: 新增第23节 ROS2接口模块文档，涵盖 JointTrajectory、Action、Parameter、Component 四大接口，完善执行控制层文档体系。对应 AGV五级 ROS2 规格表。
+**2026-03-30 v1.4.0**: 新增第24节控制模块接口文档，涵盖AGV运动控制、安全控制、MPC、阻抗控制、技能库、任务规划、轨迹生成、ROS2接口、仿真环境等9个子模块，完善执行控制层接口体系。对应AGV五级控制规格表。
