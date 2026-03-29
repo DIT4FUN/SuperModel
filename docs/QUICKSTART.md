@@ -99,16 +99,16 @@ imu_data = sensor_sim.get_imu_data()
 ## 运行测试
 
 ```bash
-# 所有测试 (150 tests)
+# 所有测试 (208 tests)
 python3 -m pytest tests/ -v
 
-# 传感器测试 (34 tests)
+# 传感器测试 (50 tests)
 python3 -m pytest tests/sensor_tests.py -v
 
-# 融合测试 (33 tests)
+# 融合测试 (35 tests)
 python3 -m pytest tests/fusion_tests.py -v
 
-# 控制模块测试 (8 tests)
+# 控制模块测试 (38 tests)
 python3 -m pytest tests/control_tests.py -v
 
 # Dreamer Agent 测试 (7 tests)
