@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-443%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-470%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -22,6 +22,7 @@
 | 模块 | 描述 | 状态 |
 |------|------|------|
 | `sensors/` | 多模态传感器接口 (视觉/听觉/触觉/力觉/IMU) | ✅ 完成 |
+| `sensors/manager.py` | **统一传感器管理器** (同步/异步采集, 健康监控) | ✅ 完成 |
 | `sensors/encoders.py` | **神经网络编码器** (CNN/RNN/注意力/Language) | ✅ 完成 |
 | `fusion/` | 跨模态注意力融合网络 (含Language模态) | ✅ 完成 |
 | `perception/` | 多模态特征提取与统一表示 | ✅ 完成 |
@@ -408,7 +409,8 @@ SuperModel/
 | simulation_tests.py | 44 | ✅ 全部通过 |
 | benchmark_tests.py | 16 | ✅ 全部通过 |
 | mpc_tests.py | 47 | ✅ 全部通过 |
-| **总计** | **424** | ✅ **全部通过** |
+| test_sensor_manager.py | 27 | ✅ 全部通过 |
+| **总计** | **470** | ✅ **全部通过** |
 
 ## 技术栈
 

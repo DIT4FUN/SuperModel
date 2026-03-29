@@ -22,6 +22,7 @@ from .encoders import (
     IMUEncoder, LanguageEncoder, SensorEncoderWrapper, EncoderConfig,
     ENCODER_GRADES, create_sensor_encoder, get_encoder_config
 )
+from .manager import SensorManager, SensorManagerConfig, SensorDataFrame, SensorGrade
 
 __all__ = [
     'BinocularCamera', 'DepthProcessor',
@@ -31,5 +32,6 @@ __all__ = [
     'IMUSensor', 'PoseEstimator', 'VirtualIMUSensor',
     'VisionEncoder', 'AudioEncoder', 'TactileEncoder', 'ForceEncoder',
     'IMUEncoder', 'LanguageEncoder', 'SensorEncoderWrapper', 'EncoderConfig',
-    'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config'
+    'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config',
+    'SensorManager', 'SensorManagerConfig', 'SensorDataFrame', 'SensorGrade',
 ]
