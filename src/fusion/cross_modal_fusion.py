@@ -444,3 +444,38 @@ def create_multimodal_input(
         imu=torch.from_numpy(imu).float() if imu is not None else None,
         language=torch.from_numpy(language).long() if language is not None else None
     )
+
+
+# AGV五级融合规格
+AGV_FUSION_GRADES = {
+    'S': {
+        'strategy': 'late', 'hidden_dim': 128, 'num_heads': 2,
+        'num_layers': 1, 'output_dim': 64, 'latency_ms': 50,
+        'dropout': 0.1, 'attention_dropout': 0.1,
+    },
+    'M': {
+        'strategy': 'middle', 'hidden_dim': 256, 'num_heads': 4,
+        'num_layers': 2, 'output_dim': 128, 'latency_ms': 20,
+        'dropout': 0.1, 'attention_dropout': 0.1,
+    },
+    'L': {
+        'strategy': 'middle', 'hidden_dim': 512, 'num_heads': 8,
+        'num_layers': 4, 'output_dim': 256, 'latency_ms': 10,
+        'dropout': 0.1, 'attention_dropout': 0.1,
+    },
+    'XL': {
+        'strategy': 'hybrid', 'hidden_dim': 768, 'num_heads': 12,
+        'num_layers': 6, 'output_dim': 512, 'latency_ms': 5,
+        'dropout': 0.1, 'attention_dropout': 0.1,
+    },
+    'XXL': {
+        'strategy': 'hybrid', 'hidden_dim': 1024, 'num_heads': 16,
+        'num_layers': 8, 'output_dim': 1024, 'latency_ms': 2,
+        'dropout': 0.1, 'attention_dropout': 0.1,
+    },
+}
+
+
+def get_fusion_spec(grade: str) -> dict:
+    """获取指定AGV等级的融合规格"""
+    return AGV_FUSION_GRADES.get(grade, AGV_FUSION_GRADES['M'])
