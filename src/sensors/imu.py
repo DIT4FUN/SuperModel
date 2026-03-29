@@ -498,6 +498,10 @@ class PoseEstimator:
         """获取当前欧拉角 [roll, pitch, yaw], rad"""
         return self.get_pose().to_euler()
     
+    def get_rotation_matrix(self) -> np.ndarray:
+        """获取当前旋转矩阵 (3x3)"""
+        return self.get_pose().to_matrix()[:3, :3]
+    
     def integrate_velocity(
         self,
         accel: np.ndarray,
@@ -524,6 +528,7 @@ class PoseEstimator:
         self.velocity = np.zeros(3)
         self.position = np.zeros(3)
         self._initialized = False
+        self.quaternion = np.array([1.0, 0.0, 0.0, 0.0])
 
 
 # AGV五级IMU规格

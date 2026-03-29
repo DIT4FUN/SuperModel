@@ -417,6 +417,46 @@ class PressureProcessor:
         """
         total_pressure = np.sum(pressure_map)
         return total_pressure * contact_area * 1e6  # 归一化系数
+    
+    def compute_centroid(self, pressure_map: np.ndarray) -> Tuple[float, float]:
+        """
+        计算压力分布质心
+        
+        Args:
+            pressure_map: 压力分布图
+            
+        Returns:
+            centroid: (row, col) 质心坐标
+        """
+        h, w = pressure_map.shape
+        rows = np.arange(h)[:, np.newaxis]
+        cols = np.arange(w)[np.newaxis, :]
+        
+        total = np.sum(pressure_map) + 1e-10
+        cy = np.sum(rows * pressure_map) / total
+        cx = np.sum(cols * pressure_map) / total
+        
+        return float(cy), float(cx)
+    
+    def compute_pressure_histogram(
+        self,
+        pressure_map: np.ndarray,
+        bins: int = 10
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        计算压力分布直方图
+        
+        Args:
+            pressure_map: 压力分布图
+            bins: 直方图 bin 数量
+            
+        Returns:
+            hist: 直方图值
+            bin_edges: bin 边界
+        """
+        flat = pressure_map.flatten()
+        hist, edges = np.histogram(flat, bins=bins, range=(0, 1))
+        return hist.astype(np.float32), edges
 
 
 # AGV五级触觉规格

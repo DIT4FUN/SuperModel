@@ -400,6 +400,47 @@ class WrenchProcessor:
         
         history_arr = np.array(history)
         return np.cov(history_arr, rowvar=False) + np.eye(6) * 1e-6
+    
+    def compute_force_direction(self, wrench: np.ndarray) -> np.ndarray:
+        """
+        计算力向量方向 (归一化)
+        
+        Args:
+            wrench: 6维力旋量
+            
+        Returns:
+            direction: 3维单位力向量方向
+        """
+        force = wrench[:3]
+        norm = np.linalg.norm(force)
+        if norm < 1e-6:
+            return np.zeros(3)
+        return force / norm
+    
+    def compute_equivalent_wrench_at(
+        self,
+        wrench: np.ndarray,
+        translation: np.ndarray
+    ) -> np.ndarray:
+        """
+        计算等效到指定点的力旋量
+        
+        用于力矩在不同参考点的变换
+        
+        Args:
+            wrench: 原始6维力旋量
+            translation: 从原始点到目标点的平移向量
+            
+        Returns:
+            equivalent_wrench: 等效6维力旋量
+        """
+        force = wrench[:3]
+        torque = wrench[3:6]
+        
+        # 新的力矩 = 原始力矩 + 平移叉乘力
+        new_torque = torque + np.cross(translation, force)
+        
+        return np.concatenate([force, new_torque])
 
 
 # AGV五级力觉规格
