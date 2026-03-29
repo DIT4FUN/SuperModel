@@ -27,7 +27,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**161项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**173项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -336,8 +336,8 @@ SuperModel/
 │   │   └── planner.py   # HTN 任务规划
 │   └── simulation/      # 仿真环境
 ├── tests/
-│   ├── sensor_tests.py      # 传感器单元测试 (43 tests)
-│   ├── fusion_tests.py      # 融合网络测试 (24 tests)
+│   ├── sensor_tests.py      # 传感器单元测试 (50 tests)
+│   ├── fusion_tests.py      # 融合网络测试 (29 tests)
 │   ├── control_tests.py     # 控制模块测试 (59 tests)
 │   ├── integration_tests.py # 集成测试 (11 tests)
 │   ├── test_encoders.py     # 编码器测试 (9 tests)
@@ -363,14 +363,14 @@ SuperModel/
 
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
-| sensor_tests.py | 43 | ✅ 全部通过 |
-| fusion_tests.py | 24 | ✅ 全部通过 |
+| sensor_tests.py | 50 | ✅ 全部通过 |
+| fusion_tests.py | 29 | ✅ 全部通过 |
 | control_tests.py | 59 | ✅ 全部通过 |
 | integration_tests.py | 11 | ✅ 全部通过 |
 | test_encoders.py | 9 | ✅ 全部通过 |
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
-| **总计** | **161** | ✅ **全部通过** |
+| **总计** | **173** | ✅ **全部通过** |
 
 ## 技术栈
 
