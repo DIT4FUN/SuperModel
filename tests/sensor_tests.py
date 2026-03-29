@@ -400,6 +400,81 @@ class TestAGVGradeSpecs(unittest.TestCase):
             self.assertIn('sample_hz', imu_spec, f"Grade {grade} missing imu sample_hz")
 
 
+class TestSensorEdgeCases(unittest.TestCase):
+    """传感器边缘用例测试"""
+    
+    def test_tactile_context_manager(self):
+        """测试触觉传感器上下文管理器"""
+        with TactileArray(array_size=(8, 8)) as tactile:
+            self.assertTrue(tactile._is_opened)
+            frame = tactile.capture()
+            self.assertIsInstance(frame, TactileFrame)
+        # 退出后应该关闭
+        self.assertFalse(tactile._is_opened)
+    
+    def test_tactile_multiple_captures(self):
+        """测试连续多次采集"""
+        tactile = TactileArray(array_size=(8, 8))
+        tactile.open()
+        frames = []
+        for _ in range(5):
+            frame = tactile.capture()
+            frames.append(frame)
+        self.assertEqual(len(frames), 5)
+        tactile.close()
+    
+    def test_force_sensor_capture_returns_wrench(self):
+        """测试力传感器采集返回Wrench对象"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        wrench = sensor.capture()
+        self.assertIsInstance(wrench, Wrench)
+        self.assertEqual(wrench.force.shape, (3,))
+        self.assertEqual(wrench.torque.shape, (3,))
+        self.assertGreater(wrench.magnitude, 0.0)
+        sensor.close()
+    
+    def test_imu_high_rate_capture(self):
+        """测试IMU高速采集"""
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        # 模拟多次采集
+        for _ in range(50):
+            frame = imu.capture()
+            self.assertIsInstance(frame, IMUFrame)
+            self.assertEqual(frame.accel.shape, (3,))
+            self.assertEqual(frame.gyro.shape, (3,))
+        imu.close()
+    
+    def test_pose_to_matrix_and_back(self):
+        """测试姿态矩阵转换的一致性"""
+        pose = Pose.from_euler(
+            position=np.array([1.0, 2.0, 3.0]),
+            rpy=np.array([0.1, 0.2, 0.3])
+        )
+        matrix = pose.to_matrix()
+        self.assertEqual(matrix.shape, (4, 4))
+        # 检查矩阵的性质
+        np.testing.assert_array_almost_equal(matrix[3, :], [0, 0, 0, 1])
+    
+    def test_tactile_pressure_processor(self):
+        """测试触觉压力处理器"""
+        proc = PressureProcessor(filter_window=3, drift_compensation=True)
+        pressure = np.random.rand(16, 16).astype(np.float32)
+        filtered = proc.filter(pressure)
+        self.assertEqual(filtered.shape, pressure.shape)
+        # 测试基线补偿
+        compensated = proc.compensate_baseline(pressure, set_baseline=True)
+        self.assertEqual(compensated.shape, pressure.shape)
+    
+    def test_force_wrench_processor(self):
+        """测试力矩信号处理器"""
+        proc = WrenchProcessor(filter_alpha=0.5)
+        wrench = np.array([10.0, 0.0, -9.81, 0.0, 0.0, 0.0])
+        filtered = proc.filter(wrench)
+        self.assertEqual(filtered.shape, (6,))
+
+
 if __name__ == '__main__':
     # 运行测试
     unittest.main(verbosity=2)

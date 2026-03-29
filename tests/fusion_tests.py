@@ -382,6 +382,76 @@ class TestCrossModalAttentionVariants(unittest.TestCase):
         self.assertEqual(out.shape, (B, 10, 256))
 
 
+class TestFusionEdgeCases(unittest.TestCase):
+    """融合模块边缘用例测试"""
+    
+    def test_multimodal_input_partial_none(self):
+        """测试部分模态为None时的融合"""
+        multimodal = MultimodalInput(
+            vision=torch.randn(2, 512),
+            audio=None,
+            tactile=torch.randn(2, 64),
+            force=torch.randn(2, 32),
+            imu=None
+        )
+        # 应该能正常处理
+        self.assertIsNotNone(multimodal.vision)
+        self.assertIsNone(multimodal.audio)
+        self.assertIsNone(multimodal.imu)
+        self.assertIn('vision', multimodal.modalities)
+        self.assertIn('tactile', multimodal.modalities)
+        self.assertNotIn('audio', multimodal.modalities)
+    
+    def test_fusion_config_defaults(self):
+        """测试融合配置默认值"""
+        config = FusionConfig()
+        self.assertEqual(config.hidden_dim, 256)
+        self.assertEqual(config.num_heads, 4)
+        self.assertEqual(config.strategy, FusionStrategy.HYBRID)
+    
+    def test_fusion_config_custom(self):
+        """测试融合配置自定义"""
+        config = FusionConfig(
+            vision_dim=1024,
+            audio_dim=256,
+            hidden_dim=512,
+            num_heads=8,
+            strategy=FusionStrategy.EARLY
+        )
+        self.assertEqual(config.vision_dim, 1024)
+        self.assertEqual(config.audio_dim, 256)
+        self.assertEqual(config.hidden_dim, 512)
+        self.assertEqual(config.num_heads, 8)
+        self.assertEqual(config.strategy, FusionStrategy.EARLY)
+    
+    def test_attention_different_input_dims(self):
+        """测试注意力模块处理不同输入维度"""
+        B = 2
+        attn = CrossModalAttention(query_dim=512, key_dim=256, value_dim=256, num_heads=4)
+        q = torch.randn(B, 10, 512)
+        k = torch.randn(B, 20, 256)
+        v = torch.randn(B, 20, 256)
+        out = attn(q, k, v)
+        self.assertEqual(out.shape, (B, 10, 512))
+    
+    def test_fusion_with_late_strategy(self):
+        """测试晚期融合策略"""
+        config = FusionConfig(
+            vision_dim=512,
+            audio_dim=128,
+            hidden_dim=256,
+            strategy=FusionStrategy.LATE
+        )
+        fusion = CrossModalFusion(config)
+        multimodal = MultimodalInput(
+            vision=torch.randn(2, 512),
+            audio=torch.randn(2, 128)
+        )
+        output = fusion(multimodal)
+        self.assertEqual(output.shape[0], 2)
+        self.assertEqual(output.shape[1], 256)
+
+
 if __name__ == '__main__':
     # 检查 CUDA 是否可用
     if torch.cuda.is_available():
