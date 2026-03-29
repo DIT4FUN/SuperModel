@@ -9,7 +9,7 @@ sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
 
 from sensors.encoders import (
     VisionEncoder, AudioEncoder, TactileEncoder,
-    ForceEncoder, IMUEncoder, MultiModalEncoder,
+    ForceEncoder, IMUEncoder, LanguageEncoder, MultiModalEncoder,
     SensorEncoderWrapper, EncoderConfig,
     create_sensor_encoder, get_encoder_config,
     ENCODER_GRADES
@@ -219,6 +219,50 @@ def test_encoder_training():
     print("    ✅ 编码器训练测试通过")
 
 
+def test_language_encoder():
+    """测试语言编码器"""
+    print("\n[10] 语言编码器测试")
+    
+    encoder = LanguageEncoder(
+        vocab_size=5000, embed_dim=128, hidden_dim=256,
+        max_len=32, num_heads=4, num_layers=2
+    )
+    
+    # 模拟 token 序列
+    B, L = 4, 20
+    token_ids = torch.randint(0, 5000, (B, L))
+    
+    # eval 模式测试确定性
+    encoder.eval()
+    features = encoder(token_ids)
+    assert features.shape == (B, 256), f"Expected ({B}, 256), got {features.shape}"
+    
+    features2 = encoder(token_ids)
+    assert torch.allclose(features, features2, atol=1e-6), "Same inputs should produce same outputs"
+    
+    # 不同输入应产生不同输出
+    token_ids3 = torch.randint(0, 5000, (B, L))
+    features3 = encoder(token_ids3)
+    distance = torch.norm(features - features3, dim=1).mean()
+    assert distance > 0.01, "Different inputs should produce different outputs"
+    
+    # 训练模式测试梯度
+    encoder.train()
+    token_ids4 = torch.randint(0, 5000, (B, L))
+    features4 = encoder(token_ids4)
+    optimizer = torch.optim.Adam(encoder.parameters(), lr=1e-4)
+    loss = features4.sum()
+    loss.backward()
+    optimizer.step()
+    
+    # 检查有参数有梯度
+    has_grad = any(p.grad is not None for p in encoder.parameters() if p.requires_grad)
+    assert has_grad, "Parameters should have gradients after training step"
+    
+    print(f"    特征形状: {features.shape}")
+    print(f"    ✅ 语言编码器测试通过")
+
+
 def run_all_tests():
     """运行所有测试"""
     print("=" * 60)
@@ -235,6 +279,7 @@ def run_all_tests():
         test_sensor_encoder_wrapper()
         test_agv_grades()
         test_encoder_training()
+        test_language_encoder()
         
         print("\n" + "=" * 60)
         print("🎉 所有编码器测试通过!")

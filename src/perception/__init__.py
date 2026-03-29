@@ -9,15 +9,23 @@ SuperModel 感知模块
 from fusion.cross_modal_fusion import (
     MultimodalInput,
     FusionConfig,
+    FusionStrategy,
     CrossModalFusion,
+    CrossModalAttention,
+    ModalityEncoder,
     UnifiedRepresentation,
+    LanguageEncoder,
     create_multimodal_input
 )
 
 __all__ = [
     'MultimodalInput',
-    'FusionConfig', 
+    'FusionConfig',
+    'FusionStrategy',
     'CrossModalFusion',
+    'CrossModalAttention',
+    'ModalityEncoder',
     'UnifiedRepresentation',
+    'LanguageEncoder',
     'create_multimodal_input'
 ]

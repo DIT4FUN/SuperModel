@@ -54,11 +54,98 @@ class FusionConfig:
     tactile_dim: int = 64
     force_dim: int = 32
     imu_dim: int = 64
+    language_dim: int = 128
     hidden_dim: int = 256
     num_heads: int = 4
     num_layers: int = 2
     dropout: float = 0.1
     strategy: FusionStrategy = FusionStrategy.HYBRID
+    vocab_size: int = 10000
+    language_max_len: int = 32
+
+
+class LanguageEncoder(nn.Module):
+    """
+    语言编码器
+    
+    将 token 序列编码为特征向量，用于多模态融合
+    支持: 词嵌入 + 位置编码 + Transformer 编码
+    """
+    
+    def __init__(
+        self,
+        vocab_size: int = 10000,
+        embed_dim: int = 128,
+        hidden_dim: int = 256,
+        max_len: int = 32,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.hidden_dim = hidden_dim
+        
+        # 词嵌入 + 位置编码
+        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.position_embedding = nn.Embedding(max_len, embed_dim)
+        
+        # 投影到 hidden_dim
+        self.input_proj = nn.Linear(embed_dim, hidden_dim)
+        
+        # Transformer 编码器层
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            activation='gelu',
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        # 池化: 使用 [CLS] token 或 mean pooling
+        self.use_cls = True
+        self.cls_token = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        
+        self.dropout = nn.Dropout(dropout)
+        
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            token_ids: B x L (token indices)
+            
+        Returns:
+            features: B x hidden_dim
+        """
+        B, L = token_ids.shape
+        
+        # 词嵌入
+        x = self.token_embedding(token_ids)  # B x L x embed_dim
+        
+        # 位置编码
+        positions = torch.arange(L, device=token_ids.device).unsqueeze(0).expand(B, -1)
+        pos_emb = self.position_embedding(positions)
+        x = x + pos_emb
+        
+        # 投影 + dropout
+        x = self.input_proj(x)
+        x = self.dropout(x)
+        
+        # 添加 [CLS] token
+        if self.use_cls:
+            cls_tokens = self.cls_token.expand(B, -1, -1)
+            x = torch.cat([cls_tokens, x], dim=1)  # B x (L+1) x hidden_dim
+        
+        # Transformer 编码
+        x = self.transformer(x)  # B x (L+1) x hidden_dim
+        
+        if self.use_cls:
+            # 取 [CLS] token
+            return x[:, 0]  # B x hidden_dim
+        else:
+            # Mean pooling
+            return x.mean(dim=1)  # B x hidden_dim
 
 
 class CrossModalAttention(nn.Module):
@@ -167,6 +254,12 @@ class CrossModalFusion(nn.Module):
         self.tactile_encoder = ModalityEncoder('tactile', 64, config.hidden_dim)
         self.force_encoder = ModalityEncoder('force', 32, config.hidden_dim)
         self.imu_encoder = ModalityEncoder('imu', 64, config.hidden_dim)
+        self.language_encoder = LanguageEncoder(
+            vocab_size=config.vocab_size,
+            embed_dim=config.language_dim,
+            hidden_dim=config.hidden_dim,
+            max_len=config.language_max_len
+        )
         
         # 跨模态注意力层
         self.cross_attn_layers = nn.ModuleList([
@@ -194,9 +287,10 @@ class CrossModalFusion(nn.Module):
         self.fusion_proj_3 = nn.Linear(config.hidden_dim * 3, config.hidden_dim)
         self.fusion_proj_4 = nn.Linear(config.hidden_dim * 4, config.hidden_dim)
         self.fusion_proj_5 = nn.Linear(config.hidden_dim * 5, config.hidden_dim)
+        self.fusion_proj_6 = nn.Linear(config.hidden_dim * 6, config.hidden_dim)
         
     def _get_active_mods(self) -> List[str]:
-        return ['vision', 'audio', 'tactile', 'force', 'imu']
+        return ['vision', 'audio', 'tactile', 'force', 'imu', 'language']
     
     def forward(self, multimodal: MultimodalInput) -> torch.Tensor:
         """
@@ -227,6 +321,9 @@ class CrossModalFusion(nn.Module):
             
         if multimodal.imu is not None:
             features['imu'] = self.imu_encoder(multimodal.imu)
+            
+        if multimodal.language is not None:
+            features['language'] = self.language_encoder(multimodal.language)
         
         if not features:
             raise ValueError("No modalities available")
@@ -264,11 +361,25 @@ class CrossModalFusion(nn.Module):
             out = self.audio_tactile_attn(q, k, v)
             features['audio'] = features['audio'] + squeeze_2d(out)
         
+        # 视觉-语言跨模态注意力 (关键对齐)
+        if 'vision' in features and 'language' in features:
+            q = ensure_3d(features['vision'])
+            k = ensure_3d(features['language'])
+            v = ensure_3d(features['language'])
+            out = self.vision_tactile_attn(q, k, v)  # 复用已有的视觉-触觉注意力层
+            features['vision'] = features['vision'] + squeeze_2d(out)
+        
         # 串联融合 (根据实际模态数量选择投影)
         num_modalities = len(features)
         fused = torch.cat(list(features.values()), dim=-1)
-        proj_map = {1: self.fusion_proj_1, 2: self.fusion_proj_2, 3: self.fusion_proj_3,
-                    4: self.fusion_proj_4, 5: self.fusion_proj_5}
+        proj_map = {
+            1: self.fusion_proj_1,
+            2: self.fusion_proj_2,
+            3: self.fusion_proj_3,
+            4: self.fusion_proj_4,
+            5: self.fusion_proj_5,
+            6: self.fusion_proj_6,
+        }
         fused = proj_map[num_modalities](fused)
         
         return fused

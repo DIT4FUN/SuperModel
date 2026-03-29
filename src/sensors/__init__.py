@@ -17,11 +17,19 @@ from .audio import BinauralMic, SoundLocalizer
 from .tactile import TactileArray, PressureProcessor
 from .force import ForceTorqueSensor, WrenchProcessor
 from .imu import IMUSensor, PoseEstimator
+from .encoders import (
+    VisionEncoder, AudioEncoder, TactileEncoder, ForceEncoder,
+    IMUEncoder, LanguageEncoder, SensorEncoderWrapper, EncoderConfig,
+    ENCODER_GRADES, create_sensor_encoder, get_encoder_config
+)
 
 __all__ = [
     'BinocularCamera', 'DepthProcessor',
     'BinauralMic', 'SoundLocalizer',
     'TactileArray', 'PressureProcessor',
     'ForceTorqueSensor', 'WrenchProcessor',
-    'IMUSensor', 'PoseEstimator'
+    'IMUSensor', 'PoseEstimator',
+    'VisionEncoder', 'AudioEncoder', 'TactileEncoder', 'ForceEncoder',
+    'IMUEncoder', 'LanguageEncoder', 'SensorEncoderWrapper', 'EncoderConfig',
+    'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config'
 ]

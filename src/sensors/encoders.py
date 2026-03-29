@@ -615,6 +615,74 @@ ENCODER_GRADES = {
 }
 
 
+class LanguageEncoder(nn.Module):
+    """
+    语言编码器
+    
+    将文本 token 序列编码为特征向量，支持:
+    - 词嵌入 + 位置编码
+    - Transformer 编码
+    - [CLS] token 池化
+    """
+    
+    def __init__(
+        self,
+        vocab_size: int = 10000,
+        embed_dim: int = 128,
+        hidden_dim: int = 256,
+        max_len: int = 32,
+        num_heads: int = 4,
+        num_layers: int = 2,
+        dropout: float = 0.1
+    ):
+        super().__init__()
+        self.embed_dim = embed_dim
+        self.hidden_dim = hidden_dim
+        
+        self.token_embedding = nn.Embedding(vocab_size, embed_dim)
+        self.position_embedding = nn.Embedding(max_len, embed_dim)
+        self.input_proj = nn.Linear(embed_dim, hidden_dim)
+        
+        encoder_layer = nn.TransformerEncoderLayer(
+            d_model=hidden_dim,
+            nhead=num_heads,
+            dim_feedforward=hidden_dim * 4,
+            dropout=dropout,
+            activation='gelu',
+            batch_first=True
+        )
+        self.transformer = nn.TransformerEncoder(encoder_layer, num_layers=num_layers)
+        
+        self.use_cls = True
+        self.cls_token = nn.Parameter(torch.randn(1, 1, hidden_dim))
+        self.dropout = nn.Dropout(dropout)
+    
+    def forward(self, token_ids: torch.Tensor) -> torch.Tensor:
+        """
+        Args:
+            token_ids: B x L (token indices)
+        Returns:
+            features: B x hidden_dim
+        """
+        B, L = token_ids.shape
+        x = self.token_embedding(token_ids)
+        positions = torch.arange(L, device=token_ids.device).unsqueeze(0).expand(B, -1)
+        x = x + self.position_embedding(positions)
+        x = self.input_proj(x)
+        x = self.dropout(x)
+        
+        if self.use_cls:
+            cls_tokens = self.cls_token.expand(B, -1, -1)
+            x = torch.cat([cls_tokens, x], dim=1)
+        
+        x = self.transformer(x)
+        
+        if self.use_cls:
+            return x[:, 0]
+        else:
+            return x.mean(dim=1)
+
+
 def create_sensor_encoder(
     obs_dims: Dict[str, int],
     grade: str = 'M'

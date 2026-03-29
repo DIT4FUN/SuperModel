@@ -18,8 +18,8 @@
 | 模块 | 描述 | 状态 |
 |------|------|------|
 | `sensors/` | 多模态传感器接口 (视觉/听觉/触觉/力觉/IMU) | ✅ 完成 |
-| `sensors/encoders.py` | **神经网络编码器** (CNN/RNN/注意力) | ✅ 完成 |
-| `fusion/` | 跨模态注意力融合网络 | ✅ 完成 |
+| `sensors/encoders.py` | **神经网络编码器** (CNN/RNN/注意力/Language) | ✅ 完成 |
+| `fusion/` | 跨模态注意力融合网络 (含Language模态) | ✅ 完成 |
 | `perception/` | 多模态特征提取与统一表示 | ✅ 完成 |
 | `learning/` | 自主学习框架 (对比学习/世界模型/好奇心) | ✅ 完成 |
 | `learning/world_model.py` | **Dreamer-style World Model** (RSSM) | ✅ 完成 |
@@ -27,7 +27,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**208项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**233项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -105,6 +105,7 @@ encoded = encoder({
 | TactileEncoder | (B, 1, H, W) | CNN + 残差块 |
 | ForceEncoder | (B, T, 6) | LSTM |
 | IMUEncoder | (B, T, 6) | 双向LSTM + 姿态估计 |
+| LanguageEncoder | (B, L) token ids | Transformer + [CLS] 池化 |
 
 ## 🤖 Dreamer Agent
 
@@ -370,7 +371,7 @@ SuperModel/
 | test_encoders.py | 9 | ✅ 全部通过 |
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
-| **总计** | **173** | ✅ **全部通过** |
+| **总计** | **233** | ✅ **全部通过** |
 
 ## 技术栈
 

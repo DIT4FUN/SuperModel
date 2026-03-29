@@ -795,3 +795,161 @@ class TestUnifiedRepresentation(unittest.TestCase):
         
         distance = torch.norm(out1 - out3, dim=1).mean()
         self.assertGreater(distance, 0.01)
+
+
+class TestLanguageEncoderFusion(unittest.TestCase):
+    """语言编码器 + 融合测试"""
+    
+    def test_language_encoder_basic(self):
+        """测试语言编码器基础功能"""
+        from fusion.cross_modal_fusion import LanguageEncoder
+        
+        encoder = LanguageEncoder(
+            vocab_size=1000, embed_dim=64, hidden_dim=128,
+            max_len=20, num_heads=2, num_layers=1
+        )
+        
+        B, L = 4, 15
+        token_ids = torch.randint(0, 1000, (B, L))
+        
+        out = encoder(token_ids)
+        self.assertEqual(out.shape, (B, 128))
+    
+    def test_language_encoder_gradients(self):
+        """测试语言编码器梯度"""
+        from fusion.cross_modal_fusion import LanguageEncoder
+        
+        encoder = LanguageEncoder(vocab_size=1000, hidden_dim=128)
+        token_ids = torch.randint(0, 1000, (2, 10))
+        
+        out = encoder(token_ids)
+        loss = out.sum()
+        loss.backward()
+        
+        # 检查编码器参数有梯度
+        has_grad = any(p.grad is not None for p in encoder.parameters())
+        self.assertTrue(has_grad)
+        self.assertFalse(torch.isnan(out).any())
+    
+    def test_language_with_vision_fusion(self):
+        """测试语言+视觉融合"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, language_dim=128,
+            hidden_dim=256
+        )
+        fusion = CrossModalFusion(config)
+        
+        B = 4
+        multimodal = MultimodalInput(
+            vision=torch.randn(B, 512),
+            language=torch.randint(0, 1000, (B, 20))
+        )
+        
+        out = fusion(multimodal)
+        self.assertEqual(out.shape, (B, 256))
+    
+    def test_language_only_fusion(self):
+        """测试纯语言融合 (无其他模态)"""
+        config = FusionConfig(hidden_dim=256, language_dim=128)
+        fusion = CrossModalFusion(config)
+        
+        B = 2
+        multimodal = MultimodalInput(
+            language=torch.randint(0, 1000, (B, 20))
+        )
+        
+        out = fusion(multimodal)
+        self.assertEqual(out.shape, (B, 256))
+    
+    def test_all_six_modalities_fusion(self):
+        """测试全部六种模态融合"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, language_dim=128,
+            hidden_dim=256
+        )
+        fusion = CrossModalFusion(config)
+        
+        B = 4
+        multimodal = MultimodalInput(
+            vision=torch.randn(B, 512),
+            audio=torch.randn(B, 128),
+            tactile=torch.randn(B, 64),
+            force=torch.randn(B, 32),
+            imu=torch.randn(B, 64),
+            language=torch.randint(0, 1000, (B, 20))
+        )
+        
+        out = fusion(multimodal)
+        self.assertEqual(out.shape, (B, 256))
+        
+        # 验证输出有足够的熵
+        self.assertFalse(torch.allclose(out, torch.zeros_like(out)))
+    
+    def test_language_encoder_cls_token(self):
+        """测试语言编码器 [CLS] token 机制"""
+        from fusion.cross_modal_fusion import LanguageEncoder
+        
+        encoder = LanguageEncoder(
+            vocab_size=1000, embed_dim=128, hidden_dim=256,
+            max_len=10
+        )
+        encoder.eval()  # 关闭 dropout
+        
+        # 不同句子应产生不同的 [CLS] 表示
+        tokens1 = torch.randint(0, 1000, (2, 8))
+        tokens2 = torch.randint(0, 1000, (2, 8))
+        
+        out1 = encoder(tokens1)
+        out2 = encoder(tokens2)
+        
+        # 相同 token 应产生相同输出
+        self.assertTrue(torch.allclose(encoder(tokens1), out1, atol=1e-6))
+        
+        # 不同 token 应产生不同输出
+        distance = torch.norm(out1 - out2, dim=1).mean()
+        self.assertGreater(distance, 0.01)
+    
+    def test_fusion_config_language_fields(self):
+        """测试 FusionConfig 中的语言配置字段"""
+        config = FusionConfig(
+            language_dim=256,
+            vocab_size=20000,
+            language_max_len=64
+        )
+        self.assertEqual(config.language_dim, 256)
+        self.assertEqual(config.vocab_size, 20000)
+        self.assertEqual(config.language_max_len, 64)
+    
+    def test_multimodal_input_language(self):
+        """测试 MultimodalInput 的 language 模态"""
+        inp = MultimodalInput(
+            language=torch.randint(0, 1000, (2, 20))
+        )
+        self.assertIn('language', inp.modalities)
+        self.assertEqual(len(inp.modalities), 1)
+    
+    def test_language_cross_attention_vision(self):
+        """测试视觉-语言跨模态注意力"""
+        config = FusionConfig(
+            vision_dim=512, language_dim=128,
+            hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        fusion.eval()
+        
+        B = 4
+        # 使用固定的随机种子验证一致性
+        torch.manual_seed(42)
+        vision = torch.randn(B, 512)
+        torch.manual_seed(123)
+        language = torch.randint(0, 1000, (B, 15))
+        
+        multimodal = MultimodalInput(vision=vision, language=language)
+        out1 = fusion(multimodal)
+        
+        # 相同输入应产生相同输出
+        multimodal2 = MultimodalInput(vision=vision.clone(), language=language.clone())
+        out2 = fusion(multimodal2)
+        self.assertTrue(torch.allclose(out1, out2, atol=1e-6))
