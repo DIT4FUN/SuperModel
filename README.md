@@ -343,7 +343,8 @@ SuperModel/
 │   ├── integration_tests.py # 集成测试 (11 tests)
 │   ├── test_encoders.py     # 编码器测试 (9 tests)
 │   ├── test_dreamer.py      # Dreamer Agent测试 (7 tests)
-│   └── test_world_model.py  # 世界模型测试 (8 tests)
+│   ├── test_world_model.py  # 世界模型测试 (8 tests)
+│   └── simulation_tests.py   # 仿真环境测试 (44 tests)
 ├── configs/
 │   └── project_config.yaml  # 项目配置
 └── docs/
@@ -371,7 +372,8 @@ SuperModel/
 | test_encoders.py | 9 | ✅ 全部通过 |
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
-| **总计** | **233** | ✅ **全部通过** |
+| test_simulation.py | 44 | ✅ 全部通过 |
+| **总计** | **288** | ✅ **全部通过** |
 
 ## 技术栈
 
