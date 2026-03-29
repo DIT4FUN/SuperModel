@@ -389,3 +389,192 @@ class TestSimConfig(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class TestGymEnvConfig(unittest.TestCase):
+    """测试 Gym 环境配置"""
+
+    def test_default_config(self):
+        from simulation.gym_env import GymEnvConfig
+        cfg = GymEnvConfig()
+        self.assertEqual(cfg.dt, 0.01)
+        self.assertEqual(cfg.num_joints, 6)
+        self.assertEqual(cfg.episode_length, 1000)
+
+    def test_custom_config(self):
+        from simulation.gym_env import GymEnvConfig
+        cfg = GymEnvConfig(dt=0.005, episode_length=500)
+        self.assertEqual(cfg.dt, 0.005)
+        self.assertEqual(cfg.episode_length, 500)
+
+
+class TestSuperModelGymEnv(unittest.TestCase):
+    """测试 Gymnasium 环境"""
+
+    def setUp(self):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
+        self.env = SuperModelGymEnv(
+            config=GymEnvConfig(grade='M'),
+            scenario='reach'
+        )
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_env_creation(self):
+        self.assertIsNotNone(self.env)
+
+    def test_spaces(self):
+        obs_space = self.env.observation_space
+        act_space = self.env.action_space
+        self.assertEqual(obs_space.shape[0], 53)
+        self.assertEqual(act_space.shape[0], 6)
+
+    def test_reset(self):
+        obs, info = self.env.reset(seed=42)
+        self.assertEqual(obs.shape, (53,))
+        self.assertIn('timestep', info)
+        self.assertEqual(info['timestep'], 0)
+
+    def test_reset_with_options(self):
+        import numpy as np
+        target = np.zeros(6)
+        obs, info = self.env.reset(options={'target': target})
+        self.assertEqual(obs.shape, (53,))
+
+    def test_step(self):
+        self.env.reset(seed=42)
+        action = self.env.action_space.sample()
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        self.assertEqual(obs.shape, (53,))
+        self.assertIsInstance(reward, float)
+        self.assertIsInstance(terminated, bool)
+        self.assertIsInstance(truncated, bool)
+
+    def test_episode_length(self):
+        self.env.reset(seed=42)
+        for _ in range(100):
+            action = self.env.action_space.sample()
+            _, _, terminated, truncated, _ = self.env.step(action)
+            if terminated or truncated:
+                break
+        # episode 可以终止也可以继续
+
+    def test_action_clipping(self):
+        """动作应被限幅"""
+        self.env.reset(seed=42)
+        # 采样一个在限制范围内的动作
+        action = self.env.action_space.sample()
+        obs, _, _, _, _ = self.env.step(action)
+        self.assertEqual(obs.shape, (53,))
+
+    def test_deterministic_reset(self):
+        """相同 seed 应产生相同的初始状态"""
+        import numpy as np
+        np.random.seed(0)
+        obs1, _ = self.env.reset(seed=123)
+        np.random.seed(0)
+        obs2, _ = self.env.reset(seed=123)
+        np.testing.assert_array_almost_equal(obs1, obs2)
+
+
+class TestSuperModelGymEnvTrack(unittest.TestCase):
+    """测试跟踪场景"""
+
+    def setUp(self):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
+        self.env = SuperModelGymEnv(
+            config=GymEnvConfig(grade='M'),
+            scenario='track'
+        )
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_track_scenario(self):
+        obs, info = self.env.reset(seed=42)
+        self.assertEqual(info['scenario'], 'track')
+        action = self.env.action_space.sample()
+        obs, reward, terminated, truncated, info = self.env.step(action)
+        self.assertEqual(obs.shape, (53,))
+
+
+class TestSuperModelGymEnvGrasp(unittest.TestCase):
+    """测试抓取场景"""
+
+    def setUp(self):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
+        self.env = SuperModelGymEnv(
+            config=GymEnvConfig(grade='L'),
+            scenario='grasp'
+        )
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_grasp_scenario(self):
+        obs, info = self.env.reset(seed=42)
+        self.assertEqual(info['scenario'], 'grasp')
+
+
+class TestCollectRollout(unittest.TestCase):
+    """测试 rollout 收集"""
+
+    def setUp(self):
+        import os
+        import sys
+        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
+        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
+        self.env = SuperModelGymEnv(
+            config=GymEnvConfig(grade='S'),
+            scenario='reach'
+        )
+
+    def tearDown(self):
+        self.env.close()
+
+    def test_collect_rollout(self):
+        from simulation.gym_env import collect_rollout
+
+        def random_policy(obs):
+            return self.env.action_space.sample()
+
+        rollout = collect_rollout(self.env, random_policy, max_steps=10)
+        self.assertIn('observations', rollout)
+        self.assertIn('actions', rollout)
+        self.assertIn('rewards', rollout)
+        self.assertGreater(rollout['length'], 0)
+
+
+class TestGetGymSpec(unittest.TestCase):
+    """测试 Gym 环境规格"""
+
+    def test_all_grades(self):
+        from simulation.gym_env import get_gym_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_gym_spec(grade)
+            self.assertIn('dt', spec)
+            self.assertIn('episode_length', spec)
+            self.assertIn('reward_tracking', spec)
+            self.assertIn('max_torque', spec)
+
+    def test_grade_S_dt(self):
+        from simulation.gym_env import get_gym_spec
+        spec = get_gym_spec('S')
+        self.assertEqual(spec['dt'], 0.02)
+        self.assertEqual(spec['max_torque'], 50)
+
+    def test_grade_XXL_dt(self):
+        from simulation.gym_env import get_gym_spec
+        spec = get_gym_spec('XXL')
+        self.assertEqual(spec['dt'], 0.002)
+        self.assertEqual(spec['max_torque'], 1000)

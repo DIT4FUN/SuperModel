@@ -1710,5 +1710,289 @@ for s in [cam, mic, tactile, force, imu]:
 
 ---
 
-*文档版本: v0.8.0*
+## 18. 模型预测控制 (MPC)
+
+### 18.1 关节空间 MPC — JointSpaceMPC
+
+```python
+from control.mpc import (
+    MPCConfig, JointSpaceMPC, CartesianMPC,
+    DynamicsModel, get_mpc_spec
+)
+
+# 获取各等级规格
+spec = get_mpc_spec('M')  # horizon=20, dt=0.01, solver='qp'
+spec_xxl = get_mpc_spec('XXL')  # horizon=50, dt=0.002, solver='osqp'
+
+# 创建配置
+config = MPCConfig.for_grade('L', num_joints=6, dt=0.01)
+
+# 创建动力学模型
+dynamics = DynamicsModel(
+    num_joints=6,
+    mass_matrix_diag=np.ones(6) * 0.5,
+    damping=np.ones(6) * 2.0
+)
+
+# 创建关节空间 MPC
+mpc = JointSpaceMPC(config=config, dynamics=dynamics, num_joints=6)
+
+# 当前状态
+current_pos = np.zeros(6)
+current_vel = np.zeros(6)
+
+# 期望轨迹 (horizon x 6)
+target_traj = np.tile(np.array([0.5, 0.2, 0.1, 0, 0, 0]), (20, 1))
+target_traj[:, 0] = np.linspace(0, 0.5, 20)
+
+# 计算控制力矩
+tau = mpc.compute_control(current_pos, target_traj, current_vel)
+# tau: 关节力矩命令 (6,)
+
+# 简化接口 (PD + 前馈)
+tau_simple = mpc.compute_control_simple(current_pos, current_vel, target_pos=np.ones(6) * 0.3)
+```
+
+### 18.2 笛卡尔空间 MPC — CartesianMPC
+
+```python
+# 笛卡尔空间 MPC
+cart_mpc = CartesianMPC(config=config, num_joints=6)
+
+# 当前关节状态
+current_joint_pos = np.zeros(6)
+current_joint_vel = np.zeros(6)
+
+# 目标末端执行器位姿 [x, y, z, roll, pitch, yaw]
+target_pose = np.array([0.3, 0.1, 0.5, 0.1, 0.0, 0.0])
+target_twist = np.zeros(6)  # 目标速度
+
+tau = cart_mpc.compute_control(current_joint_pos, current_joint_vel, target_pose, target_twist)
+```
+
+### 18.3 动力学模型 — DynamicsModel
+
+```python
+model = DynamicsModel(num_joints=6)
+
+# 前向动力学
+q = np.zeros(6)
+qd = np.zeros(6)
+tau = np.array([0, 0, 10, 0, 0, 0])
+qdd = model.forward(q, qd, tau)
+
+# 线性化
+A, B, G = model.linearize(q, qd)
+
+# 离散化
+Ad, Bd = model.discrete_matrices(q, qd, dt=0.01)
+```
+
+### 18.4 MPC 控制器规格表
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 预测步数 | 10 | 20 | 30 | 40 | 50 |
+| 控制步数 | 5 | 10 | 15 | 20 | 25 |
+| 采样周期 (s) | 0.02 | 0.01 | 0.01 | 0.005 | 0.002 |
+| 最大力矩 (Nm) | 50 | 100 | 200 | 500 | 1000 |
+| 求解器 | qp | qp | osqp | osqp | osqp |
+| 约束 | 关节/速度 | 关节/速度/力矩 | +碰撞 | +障碍 | +力约束 |
+| 描述 | 基础 MPC | 标准 QP | 增强 OSQP | 碰撞回避 | 旗舰多目标 |
+
+---
+
+## 19. Gymnasium RL 环境
+
+### 19.1 Gymnasium 环境 — SuperModelGymEnv
+
+```python
+from simulation.gym_env import (
+    SuperModelGymEnv, GymEnvConfig,
+    make_env, collect_rollout, get_gym_spec, register_gym_envs
+)
+
+# 直接创建环境
+config = GymEnvConfig(grade='M', scenario='reach', dt=0.01)
+env = SuperModelGymEnv(config=config, scenario='reach')
+
+# 重置
+obs, info = env.reset(seed=42)
+assert obs.shape == (53,)  # joint_pos(6) + joint_vel(6) + ee_pos(3) +
+                            # ee_quat(4) + imu(6) + wrench(6) +
+                            # tactile(16) + target(6)
+
+# 一步
+action = env.action_space.sample()  # 关节力矩 (6,)
+obs, reward, terminated, truncated, info = env.step(action)
+
+# 渲染
+env.render()  # human 模式打印状态
+
+env.close()
+```
+
+### 19.2 使用 make_env 快捷创建
+
+```python
+# 注册并创建环境
+env = make_env(scenario='reach', grade='M', render_mode=None, seed=42)
+
+obs, info = env.reset()
+for _ in range(100):
+    action = policy(obs)  # policy: obs -> action
+    obs, reward, terminated, truncated, info = env.step(action)
+    if terminated or truncated:
+        break
+
+env.close()
+```
+
+### 19.3 收集 Rollout
+
+```python
+from simulation.gym_env import collect_rollout
+
+def random_policy(obs):
+    return env.action_space.sample()
+
+rollout = collect_rollout(env, random_policy, max_steps=500, render=False)
+
+print(f"Episode length: {rollout['length']}")
+print(f"Total reward: {rollout['total_reward']:.2f}")
+# rollout['observations']: (T, 53)
+# rollout['actions']: (T, 6)
+# rollout['rewards']: (T,)
+```
+
+### 19.4 观测空间与动作空间
+
+**观测向量 (53 维):**
+```
+joint_pos(6) + joint_vel(6) + ee_pos(3) + ee_quat(4) +
+imu_accel(3) + imu_gyro(3) + wrench(6) + tactile(16) + target(6) = 53
+```
+
+**动作空间:** `Box(low=-100, high=100, shape=(6,))` — 关节力矩命令 (Nm)
+
+### 19.5 场景类型
+
+| 场景 | 描述 | 目标 |
+|------|------|------|
+| `reach` | 关节位置控制 | 到达随机关节位置 |
+| `track` | 正弦轨迹跟踪 | 跟踪周期性轨迹 |
+| `grasp` | 抓取任务 | 到达抓取姿态 |
+
+### 19.6 Gym 环境规格表
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 控制周期 (s) | 0.02 | 0.01 | 0.01 | 0.005 | 0.002 |
+| Episode 长度 | 500 | 1000 | 1000 | 2000 | 5000 |
+| 观测噪声 | 0.01 | 0.005 | 0.002 | 0.001 | 0.0005 |
+| 跟踪奖励权重 | 1.0 | 1.0 | 2.0 | 5.0 | 10.0 |
+| 最大力矩 (Nm) | 50 | 100 | 200 | 500 | 1000 |
+| 描述 | 教育级 | 标准级 | 专业级 | 高性能 | 旗舰级 |
+
+---
+
+## 20. 完整系统集成示例
+
+```python
+"""
+SuperModel 完整系统集成
+========================
+从传感器采集到控制执行的完整流程
+"""
+
+import numpy as np
+from sensors.vision import BinocularCamera
+from sensors.audio import BinauralMic
+from sensors.tactile import TactileArray
+from sensors.force import ForceTorqueSensor
+from sensors.imu import IMUSensor, PoseEstimator
+from fusion.cross_modal_fusion import CrossModalFusion
+from control.mpc import MPCConfig, JointSpaceMPC, CartesianMPC
+from simulation.gym_env import make_env
+
+# ===== 1. 初始化各子系统 =====
+
+# 传感器初始化 (AGV L 级)
+cam = BinocularCamera(resolution=(1280, 720), fps=60)
+mic = BinauralMic(sample_rate=22050)
+tactile = TactileArray(array_size=(24, 24), sample_rate=200)
+force = ForceTorqueSensor(grade='L')
+imu = IMUSensor(sensor_type='BMI088', sample_rate=500)
+
+# 融合网络初始化
+fusion = CrossModalFusion(config={
+    'hidden_dim': 512,
+    'num_heads': 8,
+    'num_layers': 4,
+    'dropout': 0.1
+})
+
+# MPC 控制器 (L 级)
+mpc_config = MPCConfig.for_grade('L', num_joints=6, dt=0.01)
+mpc = JointSpaceMPC(config=mpc_config, num_joints=6)
+
+# 姿态估计
+pose_est = PoseEstimator(algorithm='madgwick', beta=0.1)
+
+# ===== 2. 打开传感器 =====
+for s in [cam, mic, tactile, force, imu]:
+    s.open()
+
+# ===== 3. 主循环 =====
+for step in range(1000):
+    # --- 感知层 ---
+    stereo_frame = cam.capture()
+    audio_frame = mic.capture()
+    tac_frame = tactile.capture()
+    wrench = force.capture()
+    imu_frame = imu.capture()
+
+    # --- 感知融合 ---
+    observations = {
+        'vision': stereo_frame.left_image,
+        'audio': audio_frame.left_channel,
+        'tactile': tac_frame.pressure_map,
+        'force': wrench,
+        'imu': np.concatenate([imu_frame.accel, imu_frame.gyro]),
+    }
+
+    fused_features = fusion(observations)
+
+    # --- 决策规划 ---
+    pose = pose_est.update(imu_frame.accel, imu_frame.gyro)
+
+    # --- MPC 控制 ---
+    current_joint_pos = np.array([0.1, 0.05, 0.0, 0.0, 0.0, 0.0])
+    current_joint_vel = np.zeros(6)
+
+    # 目标: 跟踪期望轨迹
+    target_pos = np.array([0.3, 0.1, 0.1, 0.0, 0.0, 0.0])
+    tau = mpc.compute_control_simple(current_joint_pos, current_joint_vel, target_pos)
+
+    # --- 触觉反馈 ---
+    contacts = tactile.detect_contacts(tac_frame)
+    if contacts:
+        print(f"检测到 {len(contacts)} 个接触点")
+
+    # --- 安全检查 ---
+    if np.any(np.abs(tau) > 200):
+        print("警告: 力矩超限!")
+        tau = np.clip(tau, -200, 200)
+
+# ===== 4. 清理 =====
+for s in [cam, mic, tactile, force, imu]:
+    s.close()
+
+print("系统正常退出")
+```
+
+---
+
+*文档版本: v0.9.0*
 *最后更新: 2026-03-29*
+
