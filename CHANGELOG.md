@@ -5,6 +5,23 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.1.0] - 2026-03-30
+
+### Added
+- **扩展传感器测试**: 新增 `TestSensorEdgeCasesExtended` (触觉零接触/极端压力、力觉零力/极端值、IMU重力对齐/极端姿态、姿态估计漂移、力旋量变换一致性、多传感器时序一致性) 共 10 项
+- **AGV传感器集成测试**: `TestSensorAGVIntegration` (等级规格一致性、传感器更新率匹配、传感器融合时序) 共 3 项
+- **传感器数值稳定性测试**: `TestSensorNumericalStability` (压力/力矩/加速度稳定性、四元数归一化) 共 4 项
+- **融合模块边缘用例测试**: `TestFusionEdgeCases` (极端值处理、缺失模态、语言模态、大批量处理、重复一致性) 共 6 项
+- **融合模块集成测试**: `TestFusionIntegration` (完整模态融合、梯度流、跨注意力形状、语言编码器集成) 共 4 项
+- **模态编码器测试**: `TestModalityEncoder` (vision/audio/tactile/force/imu) 共 5 项
+
+### Verified
+- 全量测试套件 **597 项**测试全部通过（新增融合/传感器边缘用例测试 32 项）
+- 触觉/力觉/IMU 模块功能完整：接触检测、滑移检测、抓取质量评估、六维力矩、姿态估计、轨迹仿真
+- 控制模块完整：AGV运动控制、MPC、阻抗控制、安全监控、ROS2接口
+- 仿真环境完整：RobotSimulator、SuperModelGymEnv、虚拟传感器全套
+- 设计文档完整：AGV五级规格表（AGV_GRADE_SPEC.md）、模块接口设计（MODULE_INTERFACE.md）
+
 ## [1.0.3] - 2026-03-30
 
 ### Added

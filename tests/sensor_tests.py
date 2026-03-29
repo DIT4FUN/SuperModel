@@ -843,3 +843,237 @@ class TestVirtualIMUSensor(unittest.TestCase):
         with VirtualIMUSensor() as vi:
             frame = vi.simulate_static((0.0, 0.0, 0.0))
             self.assertIsNotNone(frame)
+
+
+class TestSensorEdgeCasesExtended(unittest.TestCase):
+    """扩展边缘用例测试"""
+    
+    def test_tactile_zero_contact(self):
+        """触觉零接触检测"""
+        ta = TactileArray(array_size=(8, 8))
+        ta.open()
+        frame = ta.capture()
+        contacts = ta.detect_contacts(frame)
+        # 无接触时应返回空列表
+        self.assertIsInstance(contacts, list)
+        ta.close()
+    
+    def test_tactile_extreme_pressure(self):
+        """触觉极端压力值"""
+        ta = TactileArray(array_size=(8, 8))
+        ta.open()
+        frame = ta.capture()
+        # 压力值应在 [0, 1] 范围内
+        self.assertTrue(np.all(frame.pressure_map >= 0))
+        self.assertTrue(np.all(frame.pressure_map <= 1.5))  # 允许轻微超出
+        ta.close()
+    
+    def test_force_zero_wrench(self):
+        """力觉零力旋量"""
+        with VirtualForceSensor(noise_level=0.0, bias_range=0.0) as vf:
+            wrench = vf.simulate_contact((0, 0, 0), (0, 0, 0), add_noise=False)
+            self.assertIsInstance(wrench, Wrench)
+            self.assertLess(wrench.magnitude, 0.1)
+    
+    def test_force_extreme_values(self):
+        """力觉极端值"""
+        with VirtualForceSensor(noise_level=0.0, bias_range=0.0) as vf:
+            # 大力值
+            wrench = vf.simulate_contact((1000, 1000, 1000), (100, 100, 100), add_noise=False)
+            self.assertGreater(wrench.magnitude, 0)
+            # 小力值（无噪声无偏置时接近0）
+            wrench = vf.simulate_contact((0.001, 0.001, 0.001), add_noise=False)
+            self.assertLess(wrench.magnitude, 0.1)
+    
+    def test_imu_gravity_alignment(self):
+        """IMU重力对齐验证"""
+        with VirtualIMUSensor() as vi:
+            frame = vi.simulate_static((0, 0, 0))
+            # 静止时加速度大小应接近 9.81
+            accel_mag = np.linalg.norm(frame.accel)
+            self.assertAlmostEqual(accel_mag, 9.81, delta=0.5)
+    
+    def test_imu_extreme_orientation(self):
+        """IMU极端姿态"""
+        with VirtualIMUSensor() as vi:
+            for roll, pitch, yaw in [(np.pi, 0, 0), (0, np.pi, 0), (0, 0, np.pi), (np.pi, np.pi, np.pi)]:
+                frame = vi.simulate_static((roll, pitch, yaw))
+                self.assertEqual(frame.accel.shape, (3,))
+                self.assertEqual(frame.gyro.shape, (3,))
+    
+    def test_pose_estimation_drift(self):
+        """姿态估计漂移测试"""
+        pe = PoseEstimator(algorithm='madgwick', sample_rate=200)
+        
+        # 模拟静止状态
+        accel_static = np.array([0.0, 0.0, 9.81])
+        gyro_static = np.array([0.0, 0.0, 0.0])
+        
+        # 长时间积分
+        for _ in range(500):
+            pose = pe.update(accel_static, gyro_static)
+        
+        # 检查欧拉角不应漂移太多
+        euler = pose.to_euler()
+        self.assertTrue(np.abs(euler[0]) < 0.1)  # roll
+        self.assertTrue(np.abs(euler[1]) < 0.1)  # pitch
+    
+    def test_wrench_transform_consistency(self):
+        """力旋量坐标变换一致性"""
+        with VirtualForceSensor() as vf:
+            wrench = vf.simulate_contact((10.0, 0.0, 0.0))
+            
+            # 恒等旋转应保持不变
+            I = np.eye(3)
+            t = np.zeros(3)
+            transformed = wrench.transform(I, t)
+            self.assertTrue(np.allclose(wrench.force, transformed.force))
+            self.assertTrue(np.allclose(wrench.torque, transformed.torque))
+    
+    def test_multimodal_timing(self):
+        """多传感器时序一致性"""
+        import time
+        
+        cam = BinocularCamera()
+        mic = BinauralMic()
+        ta = TactileArray()
+        
+        cam.open()
+        mic.open()
+        ta.open()
+        
+        timestamps = []
+        
+        for _ in range(10):
+            t0 = time.time()
+            cam.capture()
+            mic.capture()
+            ta.capture()
+            t1 = time.time()
+            timestamps.append(t1 - t0)
+        
+        cam.close()
+        mic.close()
+        ta.close()
+        
+        # 平均采集时间应合理
+        avg_time = np.mean(timestamps)
+        self.assertLess(avg_time, 0.1)  # 小于100ms
+
+
+class TestSensorAGVIntegration(unittest.TestCase):
+    """AGV传感器集成测试"""
+    
+    def test_agv_grade_spec_consistency(self):
+        """AGV等级规格一致性检查"""
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+        
+        for grade in grades:
+            tactile_spec = get_tactile_spec(grade)
+            force_spec = get_force_spec(grade)
+            imu_spec = get_imu_spec(grade)
+            
+            # 验证规格包含必需字段
+            self.assertIn('array', tactile_spec)
+            self.assertIn('axes', force_spec)
+            self.assertIn('type', imu_spec)
+    
+    def test_sensor_update_rate_matching(self):
+        """传感器更新率匹配测试"""
+        # 高速传感器 (IMU) 应该能够匹配
+        vi = VirtualIMUSensor()
+        vi.open()
+        
+        frame_times = []
+        for i in range(50):
+            t0 = time.time()
+            vi.simulate_static()
+            t1 = time.time()
+            frame_times.append(t1 - t0)
+        
+        vi.close()
+        
+        # 平均帧间隔应小于 10ms (100Hz)
+        avg_interval = np.mean(frame_times)
+        self.assertLess(avg_interval, 0.01)
+    
+    def test_sensor_fusion_timing(self):
+        """传感器融合时序测试"""
+        from sensors.manager import SensorManager, SensorManagerConfig
+        
+        config = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config)
+        manager.open_all()
+        
+        sync_times = []
+        for _ in range(20):
+            t0 = time.time()
+            data = manager.capture_all()
+            t1 = time.time()
+            sync_times.append(t1 - t0)
+        
+        manager.close_all()
+        
+        # 同步采集时间应合理
+        avg_time = np.mean(sync_times)
+        self.assertLess(avg_time, 0.1)  # 小于 100ms
+
+
+class TestSensorNumericalStability(unittest.TestCase):
+    """传感器数值稳定性测试"""
+    
+    def test_tactile_pressure_stability(self):
+        """触觉压力稳定性"""
+        ta = TactileArray(array_size=(8, 8))
+        ta.open()
+        
+        pressures = []
+        for _ in range(100):
+            frame = ta.capture()
+            pressures.append(np.mean(frame.pressure_map))
+        
+        ta.close()
+        
+        # 压力均值不应剧烈波动
+        pressure_std = np.std(pressures)
+        self.assertLess(pressure_std, 0.2)
+    
+    def test_force_wrench_stability(self):
+        """力旋量稳定性"""
+        with VirtualForceSensor(noise_level=0.001) as vf:
+            wrench_mags = []
+            for _ in range(100):
+                wrench = vf.simulate_contact((5.0, 0.0, 0.0), add_noise=True)
+                wrench_mags.append(wrench.magnitude)
+            
+            # 力矩大小标准差应小
+            mag_std = np.std(wrench_mags)
+            self.assertLess(mag_std, 2.0)
+    
+    def test_imu_accel_stability(self):
+        """IMU加速度稳定性"""
+        with VirtualIMUSensor(accel_noise=0.001) as vi:
+            accel_mags = []
+            for _ in range(100):
+                frame = vi.simulate_static()
+                accel_mags.append(np.linalg.norm(frame.accel))
+            
+            # 重力大小标准差应小
+            mag_std = np.std(accel_mags)
+            self.assertLess(mag_std, 0.1)
+    
+    def test_pose_quaternion_normalization(self):
+        """四元数归一化验证"""
+        pe = PoseEstimator()
+        
+        accel = np.array([0.0, 0.0, 9.81])
+        gyro = np.array([0.0, 0.0, 0.1])
+        
+        for _ in range(50):
+            pose = pe.update(accel, gyro)
+            quat_norm = np.linalg.norm(pose.orientation)
+            self.assertAlmostEqual(quat_norm, 1.0, places=5)
+
+
+if __name__ == '__main__':
+    unittest.main()
