@@ -5,6 +5,12 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.0.1] - 2026-03-29
+
+### Fixed
+- 更新 README 测试数量从 424 → 443（新增 sensorimotor_tests.py 19项用例）
+- 更新 CHANGELOG 测试数量
+
 ## [1.0.0] - 2026-03-29
 
 ### Added
@@ -25,7 +31,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **ROS2集成** (`control/ros2_interface.py`): ROS2 Humble 关节轨迹接口、话题/服务接口
 - **安全监控** (`control/safety_controller.py`): 碰撞检测、关节限位、速度/加速度限制、容错处理
 - **仿真环境** (`simulation/environment.py`): Gymnasium 物理仿真环境，支持传感器仿真
-- **完整测试套件**: 424 项测试全部通过，覆盖传感器、融合、控制、世界模型、仿真
+- **完整测试套件**: 443 项测试全部通过，覆盖传感器、融合、控制、世界模型、仿真、传感器-执行器集成
 - **AGV五级规格文档**: S/M/L/XL/XXL 全套规格表（感知/融合/认知/执行/硬件）
 - **模块接口设计文档**: 完整的 API 接口定义和数据结构规范
 
