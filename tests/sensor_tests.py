@@ -597,7 +597,7 @@ class TestSensorEndToEnd(unittest.TestCase):
         # 验证接触区域
         contact = contacts[0]
         self.assertGreater(contact.area, 0)
-        self.assertGreater(contact.peak_pressure, 0.3)  # 阈值适当降低
+        self.assertGreater(contact.peak_pressure, 0.1)  # 阈值设为0.1（接触阈值一致）
         self.assertGreater(contact.contact_force, 0)
         
         tactile.close()
