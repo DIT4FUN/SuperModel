@@ -213,6 +213,10 @@ class TactileArray:
         计算滑移信号
         
         基于时序压力变化检测滑移趋势
+        采用多尺度滑移检测算法:
+        1. 压力梯度变化检测
+        2. 高频振动成分检测
+        3. 压力分布变化率分析
         """
         if frame is None:
             frame = self._last_frame
@@ -236,15 +240,91 @@ class TactileArray:
             grad_magnitude = np.sqrt(grad_x**2 + grad_y**2)
             
             # 3. 高频成分检测 (滑移产生高频振动)
-            # 简化: 使用梯度变化率作为滑移信号
-            slip = np.abs(pressure_diff) * (1 + grad_magnitude * 5.0)
+            # 使用Laplacian算子检测高频成分
+            laplacian_kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]])
+            laplacian = convolve(frame.pressure_map, laplacian_kernel)
+            high_freq = np.abs(laplacian)
+            
+            # 4. 多帧历史分析 (如果有多帧历史)
+            slip_signal = np.zeros_like(frame.pressure_map)
+            if len(self._frame_buffer) >= 3:
+                # 计算连续帧的变化率
+                prev_prev_frame = self._frame_buffer[-2]
+                diff2 = frame.pressure_map - 2 * prev_frame.pressure_map + prev_prev_frame.pressure_map
+                # 加速度变化指示滑移趋势
+                slip_signal += np.abs(diff2) * 0.5
+            
+            # 5. 综合滑移信号
+            # 梯度变化贡献
+            slip_signal += np.abs(pressure_diff) * (1 + grad_magnitude * 5.0)
+            # 高频振动贡献 (滑移时振动加剧)
+            slip_signal += high_freq * 3.0
+            # 接触区域加权 (仅在接触区域计算)
+            contact_mask = (frame.pressure_map > 0.1).astype(np.float32)
+            slip_signal *= contact_mask
             
             # 归一化
-            slip = np.clip(slip, 0, 1)
+            slip_signal = np.clip(slip_signal, 0, 1)
             
-            return slip.astype(np.float32)
+            # 更新帧缓冲区
+            self._frame_buffer.append(frame)
+            if len(self._frame_buffer) > 10:  # 保留最近10帧
+                self._frame_buffer.pop(0)
+            
+            return slip_signal.astype(np.float32)
         
+        # 第一帧，初始化缓冲区
+        self._frame_buffer.append(frame)
         return np.zeros(self.array_size, dtype=np.float32)
+    
+    def estimate_grip_quality(self, frame: Optional[TactileFrame] = None) -> Dict[str, float]:
+        """
+        估计抓取质量
+        
+        综合评估:
+        - 接触面积
+        - 压力分布均匀性
+        - 抓取稳定性
+        
+        Returns:
+            grip_quality: 包含各项指标的字典
+        """
+        if frame is None:
+            frame = self._last_frame
+        if frame is None:
+            return {'overall': 0.0, 'contact_area': 0.0, 'uniformity': 0.0, 'stability': 0.0}
+        
+        contacts = self.detect_contacts(frame)
+        
+        if not contacts:
+            return {'overall': 0.0, 'contact_area': 0.0, 'uniformity': 0.0, 'stability': 0.0}
+        
+        # 接触面积评分 (相对于阵列大小)
+        total_contact_area = sum(c.area for c in contacts)
+        max_area = self.array_size[0] * self.array_size[1]
+        contact_score = min(total_contact_area / max_area * 5.0, 1.0)
+        
+        # 均匀性评分 (基于压力方差)
+        pressures = frame.pressure_map[frame.pressure_map > 0.1]
+        if len(pressures) > 1:
+            uniformity_score = 1.0 - min(np.std(pressures), 1.0)
+        else:
+            uniformity_score = 0.0
+        
+        # 稳定性评分 (基于历史滑移)
+        slip = self.get_slip_signal(frame)
+        avg_slip = np.mean(slip[slip > 0])
+        stability_score = 1.0 - min(avg_slip * 5.0, 1.0)
+        
+        # 综合评分
+        overall = 0.4 * contact_score + 0.3 * uniformity_score + 0.3 * stability_score
+        
+        return {
+            'overall': float(overall),
+            'contact_area': float(contact_score),
+            'uniformity': float(uniformity_score),
+            'stability': float(stability_score)
+        }
     
     def calibrate(
         self,
