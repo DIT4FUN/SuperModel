@@ -1283,3 +1283,278 @@ class TestAGVMotionController(unittest.TestCase):
         self.assertEqual(len(cmds), 2)
         # 前进命令
         self.assertTrue(cmds[0] > 0 or cmds[1] > 0)
+
+
+class TestROS2ActionInterface(unittest.TestCase):
+    """ROS2 Action 接口测试"""
+
+    def test_action_interface_creation(self):
+        from control.ros2_interface import ROS2ActionInterface, ActionGoalStatus
+        action = ROS2ActionInterface("test_action")
+        self.assertEqual(action.action_name, "test_action")
+        self.assertFalse(action._is_server_active)
+
+    def test_action_server_lifecycle(self):
+        from control.ros2_interface import ROS2ActionInterface
+        action = ROS2ActionInterface()
+        action.start_server()
+        self.assertTrue(action._is_server_active)
+        action.stop_server()
+        self.assertFalse(action._is_server_active)
+
+    def test_send_goal_and_update(self):
+        from control.ros2_interface import ROS2ActionInterface, JointCommand, JointState
+        action = ROS2ActionInterface()
+        action.start_server()
+
+        trajectory = [
+            JointCommand(positions=np.array([0.1, 0.2, 0.3])),
+            JointCommand(positions=np.array([0.2, 0.3, 0.4])),
+            JointCommand(positions=np.array([0.3, 0.4, 0.5])),
+        ]
+
+        goal_id = action.send_goal(trajectory)
+        self.assertIsNotNone(goal_id)
+
+        state = JointState(
+            positions=np.array([0.05, 0.1, 0.15]),
+            velocities=np.zeros(3),
+            efforts=np.zeros(3),
+        )
+
+        has_active = action.update_server(state)
+        self.assertTrue(has_active)
+
+        action.stop_server()
+
+    def test_feedback_callback(self):
+        from control.ros2_interface import ROS2ActionInterface
+        action = ROS2ActionInterface()
+        feedbacks = []
+
+        def on_feedback(fb):
+            feedbacks.append(fb)
+
+        action.set_feedback_callback(on_feedback)
+        self.assertEqual(action._feedback_callback, on_feedback)
+
+    def test_cancel_goal(self):
+        from control.ros2_interface import ROS2ActionInterface, JointCommand, ActionGoalStatus
+        action = ROS2ActionInterface()
+        action.start_server()
+
+        trajectory = [
+            JointCommand(positions=np.array([0.1, 0.2])),
+        ]
+        goal_id = action.send_goal(trajectory)
+
+        result = action.cancel_goal(goal_id)
+        self.assertTrue(result)
+
+        status = action.get_goal_status(goal_id)
+        self.assertEqual(status, ActionGoalStatus.CANCELLED)
+
+        action.stop_server()
+
+    def test_action_stats(self):
+        from control.ros2_interface import ROS2ActionInterface, JointCommand
+        action = ROS2ActionInterface()
+        action.start_server()
+
+        trajectory = [JointCommand(positions=np.array([0.1, 0.2]))]
+        action.send_goal(trajectory)
+        action.send_goal(trajectory)
+
+        stats = action.get_stats()
+        self.assertEqual(stats["total_goals"], 2)
+        self.assertEqual(stats["active"], 2)
+
+        action.stop_server()
+
+    def test_wait_for_result_timeout(self):
+        from control.ros2_interface import ROS2ActionInterface
+        action = ROS2ActionInterface()
+        result = action.wait_for_result("nonexistent", timeout_sec=0.1)
+        self.assertIsNone(result)
+
+    def test_cancel_all_goals(self):
+        from control.ros2_interface import ROS2ActionInterface, JointCommand
+        action = ROS2ActionInterface()
+        action.start_server()
+
+        for _ in range(3):
+            action.send_goal([JointCommand(positions=np.array([0.1]))])
+
+        count = action.cancel_all_goals()
+        self.assertEqual(count, 3)
+
+        stats = action.get_stats()
+        self.assertEqual(stats["cancelled"], 3)
+
+        action.stop_server()
+
+
+class TestROS2ParameterInterface(unittest.TestCase):
+    """ROS2 Parameter 接口测试"""
+
+    def test_parameter_interface_creation(self):
+        from control.ros2_interface import ROS2ParameterInterface, ROSParams
+        param = ROS2ParameterInterface("test_node")
+        self.assertEqual(param.node_name, "test_node")
+        self.assertGreater(len(param.list_parameters()), 0)
+
+    def test_get_set_parameter(self):
+        from control.ros2_interface import ROS2ParameterInterface
+        param = ROS2ParameterInterface()
+        param.set_parameter("test_param", 42)
+        self.assertEqual(param.get_parameter("test_param"), 42)
+
+    def test_get_parameter_default(self):
+        from control.ros2_interface import ROS2ParameterInterface
+        param = ROS2ParameterInterface()
+        val = param.get_parameter("nonexistent_param", default=100)
+        self.assertEqual(val, 100)
+
+    def test_batch_get_parameters(self):
+        from control.ros2_interface import ROS2ParameterInterface, ROSParams
+        param = ROS2ParameterInterface()
+        params = param.get_parameters([ROSParams.CONTROL_RATE, ROSParams.MAX_VELOCITY])
+        self.assertIn(ROSParams.CONTROL_RATE, params)
+
+    def test_list_parameters(self):
+        from control.ros2_interface import ROS2ParameterInterface
+        param = ROS2ParameterInterface()
+        all_params = param.list_parameters()
+        self.assertIsInstance(all_params, list)
+
+    def test_list_parameters_with_prefix(self):
+        from control.ros2_interface import ROS2ParameterInterface
+        param = ROS2ParameterInterface()
+        control_params = param.list_parameters("control.")
+        for p in control_params:
+            self.assertTrue(p.startswith("control."))
+
+    def test_subscribe_parameter_change(self):
+        from control.ros2_interface import ROS2ParameterInterface, ROSParams
+        param = ROS2ParameterInterface()
+        change_count = [0]
+
+        def on_change(value):
+            change_count[0] += 1
+
+        param.subscribe_parameter_change(ROSParams.CONTROL_RATE, on_change)
+        param.set_parameter(ROSParams.CONTROL_RATE, 200.0)
+        self.assertEqual(change_count[0], 1)
+
+    def test_load_from_dict(self):
+        from control.ros2_interface import ROS2ParameterInterface
+        param = ROS2ParameterInterface()
+        param.load_from_dict({"custom_param": "hello", "another": 123})
+        self.assertEqual(param.get_parameter("custom_param"), "hello")
+        self.assertEqual(param.get_parameter("another"), 123)
+
+    def test_to_dict(self):
+        from control.ros2_interface import ROS2ParameterInterface, ROSParams
+        param = ROS2ParameterInterface()
+        d = param.to_dict()
+        self.assertIsInstance(d, dict)
+        self.assertIn(ROSParams.CONTROL_RATE, d)
+
+
+class TestROS2ComponentInterface(unittest.TestCase):
+    """ROS2 Component 接口测试"""
+
+    def test_component_creation(self):
+        from control.ros2_interface import ROS2ComponentInterface
+        comp = ROS2ComponentInterface("test_component")
+        self.assertEqual(comp.component_name, "test_component")
+        self.assertEqual(comp.get_state(), "unconfigured")
+
+    def test_lifecycle_callbacks(self):
+        from control.ros2_interface import ROS2ComponentInterface
+        comp = ROS2ComponentInterface("lifecycle_test")
+
+        configure_called = [False]
+        activate_called = [False]
+
+        def on_configure():
+            configure_called[0] = True
+            return True
+
+        def on_activate():
+            activate_called[0] = True
+            return True
+
+        comp.on_configure(on_configure)
+        comp.on_activate(on_activate)
+
+        comp.configure()
+        self.assertTrue(configure_called[0])
+        self.assertEqual(comp.get_state(), "inactive")
+
+        comp.activate()
+        self.assertTrue(activate_called[0])
+        self.assertEqual(comp.get_state(), "active")
+
+    def test_lifecycle_no_callbacks(self):
+        from control.ros2_interface import ROS2ComponentInterface
+        comp = ROS2ComponentInterface("no_cbs")
+        comp.configure()
+        self.assertEqual(comp.get_state(), "inactive")
+        comp.activate()
+        self.assertEqual(comp.get_state(), "active")
+        comp.deactivate()
+        self.assertEqual(comp.get_state(), "inactive")
+        comp.cleanup()
+        self.assertEqual(comp.get_state(), "unconfigured")
+        comp.shutdown()
+        self.assertEqual(comp.get_state(), "shutdown")
+
+    def test_cannot_activate_from_wrong_state(self):
+        from control.ros2_interface import ROS2ComponentInterface
+        comp = ROS2ComponentInterface("wrong_state_test")
+        result = comp.activate()
+        self.assertFalse(result)
+        self.assertEqual(comp.get_state(), "unconfigured")
+
+    def test_context_manager(self):
+        from control.ros2_interface import ROS2ComponentInterface
+        comp = ROS2ComponentInterface("ctx_test")
+        with comp:
+            self.assertEqual(comp.get_state(), "active")
+        self.assertEqual(comp.get_state(), "unconfigured")
+
+
+class TestROSTopicsServicesParams(unittest.TestCase):
+    """ROS2 话题/服务/参数常量测试"""
+
+    def test_rostopics(self):
+        from control.ros2_interface import ROSTopics
+        self.assertEqual(ROSTopics.JOINT_TRAJECTORY_CMD, "/supermodel/joint_trajectory/command")
+        self.assertEqual(ROSTopics.JOINT_STATES, "/supermodel/joint_states")
+        self.assertEqual(ROSTopics.IMU, "/supermodel/imu")
+        self.assertEqual(ROSTopics.FORCE, "/supermodel/force")
+
+    def test_rosservices(self):
+        from control.ros2_interface import ROSServices
+        self.assertEqual(ROSServices.PERCEPTION, "/supermodel/perception")
+        self.assertEqual(ROSServices.PLANNING, "/supermodel/planning")
+        self.assertEqual(ROSServices.EXECUTE_SKILL, "/supermodel/execute_skill")
+
+    def test_rosparams(self):
+        from control.ros2_interface import ROSParams
+        self.assertEqual(ROSParams.CONTROL_RATE, "control.rate")
+        self.assertEqual(ROSParams.MAX_VELOCITY, "control.max_velocity")
+        self.assertEqual(ROSParams.FUSION_STRATEGY, "fusion.strategy")
+
+    def test_get_ros2_spec(self):
+        from control.ros2_interface import get_ros2_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_ros2_spec(grade)
+            self.assertIn('topics', spec)
+            self.assertIn('services', spec)
+            self.assertIn('max_freq_hz', spec)
+            self.assertIn('realtime', spec)
+
+        default = get_ros2_spec('UNKNOWN')
+        self.assertEqual(default, get_ros2_spec('M'))

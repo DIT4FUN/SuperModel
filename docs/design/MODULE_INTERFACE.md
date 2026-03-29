@@ -2196,3 +2196,369 @@ for step in range(100):
 
 **2026-03-30 v1.2.0**: 新增第22节 虚拟传感器接口文档，涵盖 VirtualTactileSensor、VirtualForceSensor、VirtualIMUSensor 的完整API、集成示例和规格对照表，完善仿真层文档体系。
 
+
+---
+
+## 23. ROS2 接口模块 (ros2_interface)
+
+### 23.1 ROS2JointTrajectoryInterface
+
+```python
+class ROS2JointTrajectoryInterface:
+    def __init__(self, joint_names: List[str],
+                 interface_mode: ControlInterfaceMode = ControlInterfaceMode.POSITION)
+    def activate(self)
+    def deactivate(self)
+    def send_trajectory(self, trajectory: List[JointCommand]) -> bool
+    def send_point(self, point: JointCommand) -> bool
+    def update(self, current_state: JointState) -> Optional[JointCommand]
+    def cancel(self) -> bool
+    def get_stats(self) -> Dict[str, Any]
+```
+
+### 23.2 ROS2ActionInterface
+
+```python
+class ROS2ActionInterface:
+    def __init__(self, action_name: str = "joint_trajectory_action")
+    def start_server(self)
+    def stop_server(self)
+    def send_goal(self, trajectory: List[JointCommand], goal_id: Optional[str] = None) -> str
+    def update_server(self, current_state: JointState) -> bool
+    def cancel_goal(self, goal_id: str) -> bool
+    def get_goal_status(self, goal_id: str) -> Optional[ActionGoalStatus]
+    def send_goal_async(self, trajectory: List[JointCommand], timeout_sec: float = 300.0) -> str
+    def wait_for_result(self, goal_id: str, timeout_sec: Optional[float] = None) -> Optional[ActionResult]
+    def cancel_all_goals(self) -> int
+    def get_stats(self) -> Dict[str, Any]
+```
+
+**ActionFeedback 数据结构:**
+```python
+@dataclass
+class ActionFeedback:
+    sequence: int
+    percent_complete: float
+    current_joint_positions: Optional[np.ndarray]
+    error: Optional[np.ndarray]
+    message: str
+```
+
+**ActionResult 数据结构:**
+```python
+@dataclass
+class ActionResult:
+    success: bool
+    message: str
+    final_positions: Optional[np.ndarray]
+    execution_time: float
+    trajectory_length: int
+```
+
+**使用示例 (Action Server):**
+```python
+from control.ros2_interface import ROS2ActionInterface, JointCommand, JointState
+
+action = ROS2ActionInterface("follow_joint_trajectory")
+action.start_server()
+
+trajectory = [
+    JointCommand(positions=np.array([0.1, 0.2, 0.3])),
+    JointCommand(positions=np.array([0.5, 0.6, 0.7])),
+]
+
+goal_id = action.send_goal(trajectory)
+
+# 主循环
+while action.update_server(current_state):
+    # 发送反馈 / 监控进度
+    pass
+
+action.stop_server()
+```
+
+### 23.3 ROS2ParameterInterface
+
+```python
+class ROS2ParameterInterface:
+    def __init__(self, node_name: str = "supermodel_params")
+    def get_parameter(self, name: str, default: Any = None) -> Any
+    def set_parameter(self, name: str, value: Any) -> bool
+    def get_parameters(self, names: List[str]) -> Dict[str, Any]
+    def list_parameters(self, prefix: str = "") -> List[str]
+    def declare_parameter(self, name: str, value: Any, descriptor: Optional[Dict] = None)
+    def subscribe_parameter_change(self, name: str, callback: Callable[[Any], None])
+    def load_from_dict(self, params: Dict[str, Any])
+    def to_dict(self) -> Dict[str, Any]
+```
+
+**使用示例:**
+```python
+param = ROS2ParameterInterface("test_node")
+param.set_parameter("control.Kp", 1.0)
+param.set_parameter("control.Ki", 0.1)
+
+# 订阅变化
+param.subscribe_parameter_change("control.Kp", lambda v: print(f"Kp changed to {v}"))
+param.set_parameter("control.Kp", 2.0)  # 触发回调
+
+# 批量加载
+param.load_from_dict({"fusion.hidden_dim": 512, "agv.max_velocity": 1.5})
+```
+
+### 23.4 ROS2ComponentInterface
+
+```python
+class ROS2ComponentInterface:
+    def __init__(self, component_name: str)
+    def on_configure(self, callback: Callable[[], bool])
+    def on_activate(self, callback: Callable[[], bool])
+    def on_deactivate(self, callback: Callable[[], bool])
+    def on_cleanup(self, callback: Callable[[], bool])
+    def on_shutdown(self, callback: Callable[[], bool])
+    def configure(self) -> bool
+    def activate(self) -> bool
+    def deactivate(self) -> bool
+    def cleanup(self) -> bool
+    def shutdown(self) -> bool
+    def get_state(self) -> str  # unconfigured/inactive/active/shutdown
+```
+
+**ROS2 Lifecycle State Machine:**
+```
+unconfigured --configure()--> inactive --activate()--> active
+     ^                                    |
+     |-------deactivate()-------|        |
+     ^                                    |
+     |--------cleanup()---------|---shutdown()--> shutdown
+```
+
+### 23.5 标准话题/服务/参数
+
+**ROSTopics (话题):**
+| 话题 | 路径 | 说明 |
+|------|------|------|
+| CAMERA_LEFT | /supermodel/camera/left | 左侧相机 |
+| CAMERA_RIGHT | /supermodel/camera/right | 右侧相机 |
+| AUDIO | /supermodel/audio | 音频流 |
+| TACTILE | /supermodel/tactile | 触觉数据 |
+| IMU | /supermodel/imu | IMU数据 |
+| FORCE | /supermodel/force | 力觉数据 |
+| JOINT_TRAJECTORY_CMD | /supermodel/joint_trajectory/command | 关节轨迹命令 |
+| JOINT_STATES | /supermodel/joint_states | 关节状态 |
+
+**ROSServices (服务):**
+| 服务 | 路径 |
+|------|------|
+| PERCEPTION | /supermodel/perception |
+| PLANNING | /supermodel/planning |
+| EXECUTE_SKILL | /supermodel/execute_skill |
+
+**ROSParams (参数):**
+| 参数 | 说明 |
+|------|------|
+| control.rate | 控制频率 (Hz) |
+| control.max_velocity | 最大速度 (m/s) |
+| control.max_acceleration | 最大加速度 (m/s²) |
+| camera.exposure | 相机曝光时间 (s) |
+| imu.sample_rate | IMU采样率 (Hz) |
+| fusion.strategy | 融合策略 |
+| fusion.hidden_dim | 融合隐层维度 |
+
+### 23.6 ROS2 AGV五级规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| topics | 5 | 10 | 20 | 30 | 50 |
+| services | 3 | 5 | 10 | 15 | 25 |
+| max_freq_hz | 50 | 100 | 200 | 500 | 1000 |
+| realtime | ✗ | ✗ | ✓ | ✓ | ✓ |
+| qos_depth | 10 | 10 | 5 | 3 | 1 |
+
+---
+
+*文档版本: v1.3.0*
+---
+
+## 23. ROS2 接口模块 (ros2_interface)
+
+### 23.1 ROS2JointTrajectoryInterface
+
+```python
+class ROS2JointTrajectoryInterface:
+    def __init__(self, joint_names: List[str],
+                 interface_mode: ControlInterfaceMode = ControlInterfaceMode.POSITION)
+    def activate(self)
+    def deactivate(self)
+    def send_trajectory(self, trajectory: List[JointCommand]) -> bool
+    def send_point(self, point: JointCommand) -> bool
+    def update(self, current_state: JointState) -> Optional[JointCommand]
+    def cancel(self) -> bool
+    def get_stats(self) -> Dict[str, Any]
+```
+
+### 23.2 ROS2ActionInterface
+
+```python
+class ROS2ActionInterface:
+    def __init__(self, action_name: str = "joint_trajectory_action")
+    def start_server(self)
+    def stop_server(self)
+    def send_goal(self, trajectory: List[JointCommand], goal_id: Optional[str] = None) -> str
+    def update_server(self, current_state: JointState) -> bool
+    def cancel_goal(self, goal_id: str) -> bool
+    def get_goal_status(self, goal_id: str) -> Optional[ActionGoalStatus]
+    def send_goal_async(self, trajectory: List[JointCommand], timeout_sec: float = 300.0) -> str
+    def wait_for_result(self, goal_id: str, timeout_sec: Optional[float] = None) -> Optional[ActionResult]
+    def cancel_all_goals(self) -> int
+    def get_stats(self) -> Dict[str, Any]
+```
+
+**ActionFeedback 数据结构:**
+```python
+@dataclass
+class ActionFeedback:
+    sequence: int
+    percent_complete: float
+    current_joint_positions: Optional[np.ndarray]
+    error: Optional[np.ndarray]
+    message: str
+```
+
+**ActionResult 数据结构:**
+```python
+@dataclass
+class ActionResult:
+    success: bool
+    message: str
+    final_positions: Optional[np.ndarray]
+    execution_time: float
+    trajectory_length: int
+```
+
+**使用示例 (Action Server):**
+```python
+from control.ros2_interface import ROS2ActionInterface, JointCommand, JointState
+
+action = ROS2ActionInterface("follow_joint_trajectory")
+action.start_server()
+
+trajectory = [
+    JointCommand(positions=np.array([0.1, 0.2, 0.3])),
+    JointCommand(positions=np.array([0.5, 0.6, 0.7])),
+]
+
+goal_id = action.send_goal(trajectory)
+
+# 主循环
+while action.update_server(current_state):
+    # 发送反馈 / 监控进度
+    pass
+
+action.stop_server()
+```
+
+### 23.3 ROS2ParameterInterface
+
+```python
+class ROS2ParameterInterface:
+    def __init__(self, node_name: str = "supermodel_params")
+    def get_parameter(self, name: str, default: Any = None) -> Any
+    def set_parameter(self, name: str, value: Any) -> bool
+    def get_parameters(self, names: List[str]) -> Dict[str, Any]
+    def list_parameters(self, prefix: str = "") -> List[str]
+    def declare_parameter(self, name: str, value: Any, descriptor: Optional[Dict] = None)
+    def subscribe_parameter_change(self, name: str, callback: Callable[[Any], None])
+    def load_from_dict(self, params: Dict[str, Any])
+    def to_dict(self) -> Dict[str, Any]
+```
+
+**使用示例:**
+```python
+param = ROS2ParameterInterface("test_node")
+param.set_parameter("control.Kp", 1.0)
+param.set_parameter("control.Ki", 0.1)
+
+# 订阅变化
+param.subscribe_parameter_change("control.Kp", lambda v: print(f"Kp changed to {v}"))
+param.set_parameter("control.Kp", 2.0)  # 触发回调
+
+# 批量加载
+param.load_from_dict({"fusion.hidden_dim": 512, "agv.max_velocity": 1.5})
+```
+
+### 23.4 ROS2ComponentInterface
+
+```python
+class ROS2ComponentInterface:
+    def __init__(self, component_name: str)
+    def on_configure(self, callback: Callable[[], bool])
+    def on_activate(self, callback: Callable[[], bool])
+    def on_deactivate(self, callback: Callable[[], bool])
+    def on_cleanup(self, callback: Callable[[], bool])
+    def on_shutdown(self, callback: Callable[[], bool])
+    def configure(self) -> bool
+    def activate(self) -> bool
+    def deactivate(self) -> bool
+    def cleanup(self) -> bool
+    def shutdown(self) -> bool
+    def get_state(self) -> str  # unconfigured/inactive/active/shutdown
+```
+
+**ROS2 Lifecycle State Machine:**
+```
+unconfigured --configure()--> inactive --activate()--> active
+     ^                                    |
+     |-------deactivate()-------|        |
+     ^                                    |
+     |--------cleanup()---------|---shutdown()--> shutdown
+```
+
+### 23.5 标准话题/服务/参数
+
+**ROSTopics (话题):**
+| 话题 | 路径 | 说明 |
+|------|------|------|
+| CAMERA_LEFT | /supermodel/camera/left | 左侧相机 |
+| CAMERA_RIGHT | /supermodel/camera/right | 右侧相机 |
+| AUDIO | /supermodel/audio | 音频流 |
+| TACTILE | /supermodel/tactile | 触觉数据 |
+| IMU | /supermodel/imu | IMU数据 |
+| FORCE | /supermodel/force | 力觉数据 |
+| JOINT_TRAJECTORY_CMD | /supermodel/joint_trajectory/command | 关节轨迹命令 |
+| JOINT_STATES | /supermodel/joint_states | 关节状态 |
+
+**ROSServices (服务):**
+| 服务 | 路径 |
+|------|------|
+| PERCEPTION | /supermodel/perception |
+| PLANNING | /supermodel/planning |
+| EXECUTE_SKILL | /supermodel/execute_skill |
+
+**ROSParams (参数):**
+| 参数 | 说明 |
+|------|------|
+| control.rate | 控制频率 (Hz) |
+| control.max_velocity | 最大速度 (m/s) |
+| control.max_acceleration | 最大加速度 (m/s²) |
+| camera.exposure | 相机曝光时间 (s) |
+| imu.sample_rate | IMU采样率 (Hz) |
+| fusion.strategy | 融合策略 |
+| fusion.hidden_dim | 融合隐层维度 |
+
+### 23.6 ROS2 AGV五级规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| topics | 5 | 10 | 20 | 30 | 50 |
+| services | 3 | 5 | 10 | 15 | 25 |
+| max_freq_hz | 50 | 100 | 200 | 500 | 1000 |
+| realtime | ✗ | ✗ | ✓ | ✓ | ✓ |
+| qos_depth | 10 | 10 | 5 | 3 | 1 |
+
+---
+
+*文档版本: v1.3.0*
+*最后更新: 2026-03-30*
+
+**2026-03-30 v1.3.0**: 新增第23节 ROS2接口模块文档，涵盖 JointTrajectory、Action、Parameter、Component 四大接口，完善执行控制层文档体系。对应 AGV五级 ROS2 规格表。

@@ -434,3 +434,548 @@ ROS2_AGV_GRADES = {
 def get_ros2_spec(grade: str) -> dict:
     """获取AGV指定等级的ROS2规格"""
     return ROS2_AGV_GRADES.get(grade, ROS2_AGV_GRADES['M'])
+
+
+class ActionGoalStatus(Enum):
+    """Action 目标状态"""
+    UNKNOWN = 0
+    ACCEPTED = 1
+    EXECUTING = 2
+    CANCELLED = 3
+    SUCCEEDED = 4
+    ABORTED = 5
+
+
+@dataclass
+class ActionFeedback:
+    """Action 反馈"""
+    sequence: int
+    percent_complete: float
+    current_joint_positions: Optional[np.ndarray] = None
+    error: Optional[np.ndarray] = None
+    message: str = ""
+
+
+@dataclass
+class ActionResult:
+    """Action 结果"""
+    success: bool
+    message: str
+    final_positions: Optional[np.ndarray] = None
+    execution_time: float = 0.0
+    trajectory_length: int = 0
+
+
+class ROS2ActionInterface:
+    """
+    ROS2 Action 接口
+    
+    支持 long-running 任务:
+    - JointTrajectory Action (FollowJointTrajectory)
+    - 任务执行 Action
+    - 自定义 Action
+    
+    提供:
+    - Goal 管理 (发送/取消/状态查询)
+    - Feedback 回调
+    - Result 处理
+    """
+
+    GOAL_TIMEOUT_SEC = 300.0  # 默认目标超时
+
+    def __init__(self, action_name: str = "joint_trajectory_action"):
+        """
+        Args:
+            action_name: Action 名称
+        """
+        self.action_name = action_name
+        self._is_server_active = False
+        self._active_goal_handle: Optional[str] = None
+        self._goal_handle_counter = 0
+
+        # Goal 存储
+        self._goals: Dict[str, Dict] = {}
+        self._current_trajectory: Optional[List[JointCommand]] = None
+        self._current_goal_idx = 0
+        self._goal_start_time = 0.0
+
+        # 回调
+        self._feedback_callback: Optional[Callable[[ActionFeedback], None]] = None
+        self._result_callback: Optional[Callable[[ActionResult], None]] = None
+        self._goal_callback: Optional[Callable[[List[JointCommand]], Optional[ActionResult]]] = None
+
+        # 线程安全
+        self._lock = threading.Lock()
+
+        # 统计
+        self._total_goals = 0
+        self._succeeded_goals = 0
+        self._cancelled_goals = 0
+        self._aborted_goals = 0
+
+        print(f"[ROS2Action] Interface created: {action_name}")
+
+    def set_feedback_callback(self, callback: Callable[[ActionFeedback], None]):
+        """设置反馈回调"""
+        self._feedback_callback = callback
+
+    def set_result_callback(self, callback: Callable[[ActionResult], None]):
+        """设置结果回调"""
+        self._result_callback = callback
+
+    def set_goal_callback(
+        self, callback: Callable[[List[JointCommand]], Optional[ActionResult]]
+    ):
+        """设置目标处理回调"""
+        self._goal_callback = callback
+
+    # --- Server Side ---
+
+    def start_server(self):
+        """启动 Action Server"""
+        self._is_server_active = True
+        print(f"[ROS2Action] Server started: {self.action_name}")
+
+    def stop_server(self):
+        """停止 Action Server"""
+        self._is_server_active = False
+        # 取消所有活跃目标
+        with self._lock:
+            for goal_id, goal in self._goals.items():
+                if goal["status"] in (ActionGoalStatus.ACCEPTED, ActionGoalStatus.EXECUTING):
+                    self._cancel_goal_internal(goal_id, "Server stopped")
+        print(f"[ROS2Action] Server stopped: {self.action_name}")
+
+    def send_goal(
+        self,
+        trajectory: List[JointCommand],
+        goal_id: Optional[str] = None
+    ) -> str:
+        """
+        接收目标 (Server 端)
+
+        Args:
+            trajectory: 要执行的轨迹
+            goal_id: 目标 ID (可选，自动生成)
+
+        Returns:
+            goal_id: 分配的目标 ID
+        """
+        if not self._is_server_active:
+            raise RuntimeError("Action server not active")
+
+        if goal_id is None:
+            self._goal_handle_counter += 1
+            goal_id = f"goal_{self._goal_handle_counter}"
+
+        with self._lock:
+            self._goals[goal_id] = {
+                "status": ActionGoalStatus.ACCEPTED,
+                "trajectory": trajectory,
+                "current_idx": 0,
+                "start_time": time.time(),
+                "result": None,
+            }
+            self._total_goals += 1
+            self._active_goal_handle = goal_id
+
+        print(f"[ROS2Action] Goal accepted: {goal_id}, {len(trajectory)} points")
+        return goal_id
+
+    def update_server(self, current_state: JointState) -> bool:
+        """
+        更新 Action Server 状态
+
+        Args:
+            current_state: 当前关节状态
+
+        Returns:
+            是否还有活跃目标
+        """
+        if not self._is_server_active or self._active_goal_handle is None:
+            return False
+
+        with self._lock:
+            goal = self._goals.get(self._active_goal_handle)
+            if goal is None:
+                return False
+
+            trajectory = goal["trajectory"]
+            idx = goal["current_idx"]
+
+            if idx >= len(trajectory):
+                # 轨迹完成
+                result = ActionResult(
+                    success=True,
+                    message="Trajectory completed successfully",
+                    final_positions=current_state.positions.copy(),
+                    execution_time=time.time() - goal["start_time"],
+                    trajectory_length=len(trajectory),
+                )
+                goal["status"] = ActionGoalStatus.SUCCEEDED
+                goal["result"] = result
+                self._succeeded_goals += 1
+                self._active_goal_handle = None
+
+                if self._result_callback:
+                    self._result_callback(result)
+                return False
+
+            # 检查当前点是否到达
+            cmd = trajectory[idx]
+            tolerance = 0.01
+            if cmd.positions is not None:
+                diff = np.abs(current_state.positions - cmd.positions)
+                if np.all(diff < tolerance):
+                    goal["current_idx"] = idx + 1
+
+                    # 发送反馈
+                    if self._feedback_callback:
+                        feedback = ActionFeedback(
+                            sequence=idx,
+                            percent_complete=goal["current_idx"] / len(trajectory),
+                            current_joint_positions=current_state.positions.copy(),
+                            error=diff if idx > 0 else None,
+                            message=f"Point {idx+1}/{len(trajectory)} reached",
+                        )
+                        self._feedback_callback(feedback)
+
+            goal["status"] = ActionGoalStatus.EXECUTING
+            return True
+
+    def cancel_goal(self, goal_id: str) -> bool:
+        """取消目标"""
+        with self._lock:
+            return self._cancel_goal_internal(goal_id, "User requested cancellation")
+
+    def _cancel_goal_internal(self, goal_id: str, reason: str) -> bool:
+        """内部取消目标"""
+        goal = self._goals.get(goal_id)
+        if goal is None:
+            return False
+
+        if goal["status"] in (ActionGoalStatus.SUCCEEDED, ActionGoalStatus.CANCELLED, ActionGoalStatus.ABORTED):
+            return False
+
+        goal["status"] = ActionGoalStatus.CANCELLED
+        self._cancelled_goals += 1
+
+        if self._active_goal_handle == goal_id:
+            self._active_goal_handle = None
+
+        print(f"[ROS2Action] Goal cancelled: {goal_id}, reason={reason}")
+        return True
+
+    def get_goal_status(self, goal_id: str) -> Optional[ActionGoalStatus]:
+        """获取目标状态"""
+        with self._lock:
+            goal = self._goals.get(goal_id)
+            return goal["status"] if goal else None
+
+    # --- Client Side ---
+
+    def send_goal_async(
+        self,
+        trajectory: List[JointCommand],
+        timeout_sec: float = GOAL_TIMEOUT_SEC
+    ) -> str:
+        """
+        异步发送目标 (Client 端)
+
+        Args:
+            trajectory: 要执行的轨迹
+            timeout_sec: 超时时间
+
+        Returns:
+            goal_id: 发送的目标 ID
+        """
+        goal_id = f"client_goal_{int(time.time()*1000)}"
+
+        with self._lock:
+            self._goals[goal_id] = {
+                "status": ActionGoalStatus.ACCEPTED,
+                "trajectory": trajectory,
+                "current_idx": 0,
+                "start_time": time.time(),
+                "timeout": timeout_sec,
+                "result": None,
+            }
+            self._total_goals += 1
+            self._active_goal_handle = goal_id
+
+        print(f"[ROS2Action] Async goal sent: {goal_id}")
+        return goal_id
+
+    def wait_for_result(self, goal_id: str, timeout_sec: Optional[float] = None) -> Optional[ActionResult]:
+        """
+        等待目标结果 (轮询模拟)
+
+        Args:
+            goal_id: 目标 ID
+            timeout_sec: 超时时间
+
+        Returns:
+            ActionResult if completed, None if timeout
+        """
+        start = time.time()
+        timeout = timeout_sec or self.GOAL_TIMEOUT_SEC
+
+        while True:
+            with self._lock:
+                goal = self._goals.get(goal_id)
+                if goal is None:
+                    return None
+
+                status = goal["status"]
+                if status == ActionGoalStatus.SUCCEEDED:
+                    return goal["result"]
+                elif status in (ActionGoalStatus.CANCELLED, ActionGoalStatus.ABORTED):
+                    return ActionResult(
+                        success=False,
+                        message=f"Goal {status.name.lower()}",
+                    )
+
+            if time.time() - start > timeout:
+                print(f"[ROS2Action] Goal wait timeout: {goal_id}")
+                return None
+
+            time.sleep(0.01)
+
+    def cancel_all_goals(self) -> int:
+        """取消所有活跃目标"""
+        count = 0
+        with self._lock:
+            for goal_id, goal in self._goals.items():
+                if goal["status"] in (ActionGoalStatus.ACCEPTED, ActionGoalStatus.EXECUTING):
+                    goal["status"] = ActionGoalStatus.CANCELLED
+                    self._cancelled_goals += 1
+                    count += 1
+                    if self._active_goal_handle == goal_id:
+                        self._active_goal_handle = None
+        print(f"[ROS2Action] Cancelled {count} goals")
+        return count
+
+    def get_stats(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        with self._lock:
+            active = sum(
+                1 for g in self._goals.values()
+                if g["status"] in (ActionGoalStatus.ACCEPTED, ActionGoalStatus.EXECUTING)
+            )
+            return {
+                "total_goals": self._total_goals,
+                "succeeded": self._succeeded_goals,
+                "cancelled": self._cancelled_goals,
+                "aborted": self._aborted_goals,
+                "active": active,
+                "success_rate": (
+                    self._succeeded_goals / self._total_goals
+                    if self._total_goals > 0 else 0.0
+                ),
+            }
+
+
+class ROS2ParameterInterface:
+    """
+    ROS2 参数服务器接口
+
+    提供参数 get/set/列表/订阅功能
+    模拟 rclpy 参数服务
+    """
+
+    def __init__(self, node_name: str = "supermodel_params"):
+        self.node_name = node_name
+        self._parameters: Dict[str, Any] = {}
+        self._param_subscriptions: Dict[str, Callable] = {}
+        self._param_types: Dict[str, type] = {}
+
+        # 预定义默认参数
+        self._set_default_parameters()
+
+        print(f"[ROS2Param] Parameter interface created for '{node_name}'")
+
+    def _set_default_parameters(self):
+        """设置默认参数"""
+        defaults = {
+            # 控制参数
+            ROSParams.CONTROL_RATE: 100.0,
+            ROSParams.MAX_VELOCITY: 1.0,
+            ROSParams.MAX_ACCELERATION: 5.0,
+            # 感知参数
+            ROSParams.CAMERA_EXPOSURE: 0.033,
+            ROSParams.IMU_SAMPLE_RATE: 200.0,
+            # 融合参数
+            ROSParams.FUSION_STRATEGY: "late",
+            ROSParams.HIDDEN_DIM: 256,
+            # AGV 参数
+            "agv.max_linear_velocity": 1.5,
+            "agv.max_angular_velocity": 1.0,
+            "agv.wheel_base": 0.5,
+            "agv.track_width": 0.4,
+            "agv.wheel_radius": 0.1,
+        }
+        for name, value in defaults.items():
+            self.set_parameter(name, value)
+
+    def get_parameter(self, name: str, default: Any = None) -> Any:
+        """获取参数"""
+        return self._parameters.get(name, default)
+
+    def set_parameter(self, name: str, value: Any) -> bool:
+        """
+        设置参数
+
+        Args:
+            name: 参数名
+            value: 参数值
+
+        Returns:
+            设置是否成功
+        """
+        old_value = self._parameters.get(name)
+        self._parameters[name] = value
+        self._param_types[name] = type(value)
+
+        # 触发订阅回调
+        if name in self._param_subscriptions and old_value != value:
+            try:
+                self._param_subscriptions[name](value)
+            except Exception as e:
+                print(f"[ROS2Param] Subscription callback error for {name}: {e}")
+
+        return True
+
+    def get_parameters(self, names: List[str]) -> Dict[str, Any]:
+        """批量获取参数"""
+        return {name: self.get_parameter(name) for name in names}
+
+    def list_parameters(self, prefix: str = "") -> List[str]:
+        """列出参数名"""
+        if prefix:
+            return [k for k in self._parameters.keys() if k.startswith(prefix)]
+        return list(self._parameters.keys())
+
+    def declare_parameter(self, name: str, value: Any, descriptor: Optional[Dict] = None):
+        """
+        声明参数 (带元数据)
+
+        Args:
+            name: 参数名
+            value: 默认值
+            descriptor: 参数描述符 (read_only, default_value, etc.)
+        """
+        self._parameters[name] = value
+        self._param_types[name] = type(value)
+
+        if descriptor:
+            print(f"[ROS2Param] Declared '{name}' = {value} ({descriptor.get('description', '')})")
+        else:
+            print(f"[ROS2Param] Declared '{name}' = {value}")
+
+    def subscribe_parameter_change(self, name: str, callback: Callable[[Any], None]):
+        """订阅参数变化"""
+        self._param_subscriptions[name] = callback
+
+    def load_from_dict(self, params: Dict[str, Any]):
+        """从字典加载参数"""
+        for name, value in params.items():
+            self.set_parameter(name, value)
+        print(f"[ROS2Param] Loaded {len(params)} parameters")
+
+    def to_dict(self) -> Dict[str, Any]:
+        """导出为字典"""
+        return self._parameters.copy()
+
+
+class ROS2ComponentInterface:
+    """
+    ROS2 组件接口
+
+    封装常用 ROS2 功能组件:
+    - Lifecycle 管理
+    - Component 加载
+    - Node 组合
+    """
+
+    def __init__(self, component_name: str):
+        self.component_name = component_name
+        self._state = "unconfigured"  # unconfigured -> inactive -> active -> shutdown
+        self._callbacks: Dict[str, Callable] = {}
+
+        print(f"[ROS2Component] '{component_name}' created")
+
+    def on_configure(self, callback: Callable[[], bool]):
+        self._callbacks["configure"] = callback
+
+    def on_activate(self, callback: Callable[[], bool]):
+        self._callbacks["activate"] = callback
+
+    def on_deactivate(self, callback: Callable[[], bool]):
+        self._callbacks["deactivate"] = callback
+
+    def on_cleanup(self, callback: Callable[[], bool]):
+        self._callbacks["cleanup"] = callback
+
+    def on_shutdown(self, callback: Callable[[], bool]):
+        self._callbacks["shutdown"] = callback
+
+    def configure(self) -> bool:
+        if "configure" in self._callbacks:
+            success = self._callbacks["configure"]()
+            if success:
+                self._state = "inactive"
+            return success
+        self._state = "inactive"
+        return True
+
+    def activate(self) -> bool:
+        if self._state != "inactive":
+            print(f"[ROS2Component] Cannot activate from state: {self._state}")
+            return False
+        if "activate" in self._callbacks:
+            success = self._callbacks["activate"]()
+            if success:
+                self._state = "active"
+            return success
+        self._state = "active"
+        return True
+
+    def deactivate(self) -> bool:
+        if self._state != "active":
+            return False
+        if "deactivate" in self._callbacks:
+            success = self._callbacks["deactivate"]()
+            if success:
+                self._state = "inactive"
+            return success
+        self._state = "inactive"
+        return True
+
+    def cleanup(self) -> bool:
+        if "cleanup" in self._callbacks:
+            success = self._callbacks["cleanup"]()
+            if success:
+                self._state = "unconfigured"
+            return success
+        self._state = "unconfigured"
+        return True
+
+    def shutdown(self) -> bool:
+        if "shutdown" in self._callbacks:
+            success = self._callbacks["shutdown"]()
+            self._state = "shutdown"
+            return success
+        self._state = "shutdown"
+        return True
+
+    def get_state(self) -> str:
+        return self._state
+
+    def __enter__(self):
+        self.configure()
+        self.activate()
+        return self
+
+    def __exit__(self, *args):
+        self.deactivate()
+        self.cleanup()
