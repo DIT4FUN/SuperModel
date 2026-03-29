@@ -1562,3 +1562,153 @@ spec_ros2 = get_ros2_spec('XL')
 
 *文档版本: v0.7.0*
 *最后更新: 2026-03-29*
+
+## 17. 传感器 AGV 五级规格速查
+
+### 17.1 触觉传感器 TactileArray 规格表
+
+```python
+from sensors.tactile import get_tactile_spec, TactileArray, TactileSensorType
+
+# 获取各等级规格
+spec_s = get_tactile_spec('S')   # 8x8, 12bit, 50Hz
+spec_m = get_tactile_spec('M')   # 16x16, 12bit, 100Hz + 温度
+spec_l = get_tactile_spec('L')   # 24x24, 14bit, 200Hz + 温度 + 接近觉
+spec_xl = get_tactile_spec('XL') # 32x32, 14bit, 500Hz + 全功能
+spec_xxl = get_tactile_spec('XXL') # 48x48, 16bit, 1000Hz + 全功能
+
+# 创建传感器
+tactile = TactileArray(
+    array_size=spec_xl['array'],
+    sensor_type=TactileSensorType.CAPACITIVE
+)
+tactile.open()
+frame = tactile.capture()
+contacts = tactile.detect_contacts(frame)
+tactile.close()
+```
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 阵列尺寸 | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| 分辨率 (bit) | 12 | 12 | 14 | 14 | 16 |
+| 压力范围 (kPa) | 0-500 | 0-1000 | 0-2000 | 0-5000 | 0-10000 |
+| 采样频率 (Hz) | 50 | 100 | 200 | 500 | 1000 |
+| 温度感知 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 接近觉 | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+### 17.2 力觉传感器 ForceTorqueSensor 规格表
+
+```python
+from sensors.force import get_force_spec, ForceTorqueSensor, ForceSensorType, Wrench, ContactState
+
+# 获取各等级规格
+spec_s = get_force_spec('S')   # 3轴, ±100N, 100Hz
+spec_m = get_force_spec('M')   # 6轴, ±200N, 500Hz
+spec_l = get_force_spec('L')   # 6轴, ±500N, 1000Hz
+spec_xl = get_force_spec('XL') # 6轴, ±1000N, 2000Hz
+spec_xxl = get_force_spec('XXL') # 6轴, ±5000N, 5000Hz
+
+# 创建传感器
+sensor = ForceTorqueSensor(
+    sensor_type=ForceSensorType.SIX_AXIS,
+    sensor_id='ft_wrist'
+)
+sensor.open()
+wrench = sensor.capture()
+contact = sensor.detect_contact(wrench)
+payload = sensor.estimate_payload(wrench)
+sensor.close()
+```
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 轴数 | 3 | 6 | 6 | 6 | 6 |
+| 力范围 (N) | ±100 | ±200 | ±500 | ±1000 | ±5000 |
+| 力矩范围 (N·m) | ±10 | ±20 | ±50 | ±100 | ±500 |
+| 分辨率 | 0.1N | 0.05N | 0.02N | 0.01N | 0.005N |
+| 采样频率 (Hz) | 100 | 500 | 1000 | 2000 | 5000 |
+
+### 17.3 IMU传感器 IMUSensor 规格表
+
+```python
+from sensors.imu import get_imu_spec, IMUSensor, IMUSensorType, PoseEstimator, Pose
+
+# 获取各等级规格
+spec_s = get_imu_spec('S')   # MPU6050, 8g, 1000dps, 100Hz
+spec_m = get_imu_spec('M')   # BMI088, 16g, 2000dps, 200Hz
+spec_l = get_imu_spec('L')   # BMI088, 24g, 4000dps, 500Hz
+spec_xl = get_imu_spec('XL') # ADIS16470, 40g, 4000dps, 1000Hz
+spec_xxl = get_imu_spec('XXL') # ADIS16470, 80g, 8000dps, 2000Hz
+
+# 创建传感器
+imu = IMUSensor(
+    sensor_type=IMUSensorType.BMI088,
+    accel_range=16,
+    gyro_range=2000,
+    sample_rate=500
+)
+imu.open()
+imu.self_test()
+frame = imu.capture()
+
+# 姿态估计
+estimator = PoseEstimator(algorithm='madgwick', beta=0.1)
+pose = estimator.update(frame.accel, frame.gyro)
+euler = pose.to_euler()  # [roll, pitch, yaw] in rad
+imu.close()
+```
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 传感器型号 | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| 加速度量程 (g) | 8 | 16 | 24 | 40 | 80 |
+| 陀螺量程 (°/s) | 1000 | 2000 | 4000 | 4000 | 8000 |
+| 采样频率 (Hz) | 100 | 200 | 500 | 1000 | 2000 |
+| 噪声密度 (μg/√Hz) | 400 | 120 | 60 | 20 | 10 |
+
+### 17.4 传感器融合使用示例
+
+```python
+# 多传感器融合使用示例
+from sensors.vision import BinocularCamera
+from sensors.audio import BinauralMic
+from sensors.tactile import TactileArray
+from sensors.force import ForceTorqueSensor
+from sensors.imu import IMUSensor, PoseEstimator
+
+# 初始化
+cam = BinocularCamera()
+mic = BinauralMic()
+tactile = TactileArray(array_size=(24, 24))
+force = ForceTorqueSensor()
+imu = IMUSensor(sensor_type=IMUSensorType.BMI088, sample_rate=500)
+
+# 打开所有传感器
+for s in [cam, mic, tactile, force, imu]:
+    s.open()
+
+# 采集数据
+stereo = cam.capture()        # 双目视觉
+audio = mic.capture()         # 双耳声觉
+tac_frame = tactile.capture() # 触觉
+wrench = force.capture()      # 六维力矩
+imu_frame = imu.capture()     # IMU
+
+# 姿态估计
+pose_est = PoseEstimator(algorithm='madgwick', beta=0.1)
+pose = pose_est.update(imu_frame.accel, imu_frame.gyro)
+
+# 接触检测
+contacts = tactile.detect_contacts(tac_frame)
+contact_state = force.detect_contact(wrench)
+
+# 清理
+for s in [cam, mic, tactile, force, imu]:
+    s.close()
+```
+
+---
+
+*文档版本: v0.8.0*
+*最后更新: 2026-03-29*

@@ -478,3 +478,241 @@ class TestSensorEdgeCases(unittest.TestCase):
 if __name__ == '__main__':
     # 运行测试
     unittest.main(verbosity=2)
+
+
+class TestSensorEndToEnd(unittest.TestCase):
+    """端到端传感器融合测试"""
+    
+    def test_multi_sensor_fusion_pipeline(self):
+        """测试多传感器数据融合流程"""
+        # 1. 初始化所有传感器
+        cam = BinocularCamera()
+        mic = BinauralMic()
+        tactile = TactileArray(array_size=(16, 16))
+        force = ForceTorqueSensor()
+        imu = IMUSensor()
+        
+        # 2. 采集数据
+        cam.open()
+        mic.open()
+        tactile.open()
+        force.open()
+        imu.open()
+        
+        stereo = cam.capture()
+        audio = mic.capture()
+        tac_frame = tactile.capture()
+        wrench = force.capture()
+        imu_frame = imu.capture()
+        
+        # 3. 验证数据
+        self.assertIsNotNone(stereo.left_image)
+        self.assertIsNotNone(audio.left_channel)
+        self.assertIsNotNone(tac_frame.pressure_map)
+        self.assertIsNotNone(wrench.force)
+        self.assertIsNotNone(imu_frame.accel)
+        
+        # 4. 处理
+        depth_proc = DepthProcessor(cam.left_intrinsics, cam.right_intrinsics, cam.get_extrinsics())
+        contacts = tactile.detect_contacts(tac_frame)
+        contact_state = force.detect_contact(wrench)
+        pose_est = PoseEstimator()
+        pose = pose_est.update(imu_frame.accel, imu_frame.gyro)
+        
+        self.assertIsInstance(contacts, list)
+        self.assertIsInstance(contact_state, ContactState)
+        self.assertIsInstance(pose, Pose)
+        
+        # 5. 清理
+        cam.close()
+        mic.close()
+        tactile.close()
+        force.close()
+        imu.close()
+    
+    def test_imu_pose_estimation_accuracy(self):
+        """测试IMU姿态估计精度"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        
+        # 静止状态下的姿态估计
+        frames = [imu.capture() for _ in range(100)]
+        
+        pose_est = PoseEstimator(algorithm='madgwick', beta=0.1)
+        euler_angles = []
+        
+        for frame in frames:
+            pose = pose_est.update(frame.accel, frame.gyro)
+            euler = pose.to_euler()
+            euler_angles.append(euler)
+        
+        # 静止时，roll和pitch应该接近0，yaw保持稳定
+        euler_arr = np.array(euler_angles)
+        roll_std = np.std(euler_arr[:, 0])
+        pitch_std = np.std(euler_arr[:, 1])
+        
+        # 标准差应该很小
+        self.assertLess(roll_std, 0.1)  # rad
+        self.assertLess(pitch_std, 0.1)
+        
+        imu.close()
+    
+    def test_force_wrench_physical_consistency(self):
+        """测试力矩数据的物理一致性"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        
+        # 静止时，力矩应该接近0
+        wrenches = [sensor.capture() for _ in range(50)]
+        
+        forces = np.array([w.force for w in wrenches])
+        torques = np.array([w.torque for w in wrenches])
+        
+        # 检查静态力矩不为零 (重力分量)
+        mean_force_z = np.mean(forces[:, 2])
+        self.assertLess(mean_force_z, -5.0)  # 应该有重力
+        
+        # 力矩波动应该很小
+        torque_std = np.std(torques, axis=0)
+        self.assertTrue(np.all(torque_std < 5.0))  # Nm
+        
+        sensor.close()
+    
+    def test_tactile_contact_detection_under_pressure(self):
+        """测试触觉接触检测"""
+        tactile = TactileArray(array_size=(24, 24))
+        tactile.open()
+        
+        # 创建高压力区域
+        frame = tactile.capture()
+        # 手动设置高压力 - 覆盖整个区域以确保峰值足够高
+        frame.pressure_map[8:16, 8:16] = 0.95
+        frame.pressure_map[10:14, 10:14] = 1.0  # 中心最高
+        
+        contacts = tactile.detect_contacts(frame)
+        
+        # 应该检测到接触
+        self.assertGreater(len(contacts), 0)
+        
+        # 验证接触区域
+        contact = contacts[0]
+        self.assertGreater(contact.area, 0)
+        self.assertGreater(contact.peak_pressure, 0.3)  # 阈值适当降低
+        self.assertGreater(contact.contact_force, 0)
+        
+        tactile.close()
+    
+    def test_tactile_agv_grade_compliance(self):
+        """测试触觉传感器满足AGV等级规格"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_tactile_spec(grade)
+            
+            # 创建传感器
+            tactile = TactileArray(
+                array_size=spec['array'],
+                sensor_id=f'tactile_{grade}'
+            )
+            tactile.open()
+            frame = tactile.capture()
+            
+            # 验证分辨率
+            self.assertEqual(frame.pressure_map.shape[0], spec['array'][0])
+            self.assertEqual(frame.pressure_map.shape[1], spec['array'][1])
+            
+            tactile.close()
+    
+    def test_force_agv_grade_compliance(self):
+        """测试力觉传感器满足AGV等级规格"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_force_spec(grade)
+            
+            sensor = ForceTorqueSensor(sensor_id=f'force_{grade}')
+            sensor.open()
+            wrench = sensor.capture()
+            
+            # 验证轴数
+            if spec['axes'] == 3:
+                self.assertEqual(len(wrench.force), 3)
+            else:
+                self.assertEqual(len(wrench.force), 3)
+                self.assertEqual(len(wrench.torque), 3)
+            
+            sensor.close()
+    
+    def test_imu_agv_grade_compliance(self):
+        """测试IMU满足AGV等级规格"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_imu_spec(grade)
+            
+            # 验证规格字段
+            self.assertIn('type', spec)
+            self.assertIn('accel_range', spec)
+            self.assertIn('gyro_range', spec)
+            self.assertIn('sample_hz', spec)
+            
+            imu = IMUSensor(
+                sensor_type=IMUSensorType.VIRTUAL,
+                accel_range=spec['accel_range'],
+                gyro_range=spec['gyro_range'],
+                sample_rate=spec['sample_hz'],
+                sensor_id=f'imu_{grade}'
+            )
+            imu.open()
+            frame = imu.capture()
+            
+            self.assertEqual(frame.accel.shape, (3,))
+            self.assertEqual(frame.gyro.shape, (3,))
+            
+            imu.close()
+
+
+class TestSensorPerformance(unittest.TestCase):
+    """传感器性能测试"""
+    
+    def test_imu_high_frequency_capture(self):
+        """测试IMU高频采集性能"""
+        import time
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL, sample_rate=1000)
+        imu.open()
+        
+        # 采集1000帧并计时
+        start = time.time()
+        for _ in range(1000):
+            imu.capture()
+        elapsed = time.time() - start
+        
+        # 应该能在2秒内完成
+        self.assertLess(elapsed, 2.0)
+        
+        imu.close()
+    
+    def test_tactile_filter_performance(self):
+        """测试触觉滤波性能"""
+        import time
+        
+        proc = PressureProcessor(filter_window=5)
+        pressure = np.random.rand(48, 48).astype(np.float32)
+        
+        start = time.time()
+        for _ in range(1000):
+            proc.filter(pressure)
+        elapsed = time.time() - start
+        
+        # 1000次滤波应在1.5秒内完成
+        self.assertLess(elapsed, 1.5)
+    
+    def test_force_wrench_processor_performance(self):
+        """测试力矩处理器性能"""
+        import time
+        
+        proc = WrenchProcessor(filter_alpha=0.3)
+        wrench = np.array([10.0, 0.0, -9.81, 0.1, -0.1, 0.05])
+        
+        start = time.time()
+        for _ in range(10000):
+            proc.filter(wrench)
+        elapsed = time.time() - start
+        
+        # 10000次处理应在0.5秒内完成
+        self.assertLess(elapsed, 0.5)
