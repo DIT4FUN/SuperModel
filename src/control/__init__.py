@@ -11,6 +11,7 @@ SuperModel 控制模块
 - mpc: 模型预测控制 (MPC)
 - ros2_interface: ROS2 Humble 集成接口
 - safety_controller: 安全监控与故障容忍
+- agv: AGV运动学/动力学控制
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand
@@ -29,7 +30,9 @@ from .safety_controller import (
 )
 from .ros2_interface import (
     ROS2JointTrajectoryInterface, ROS2TopicInterface, ROS2ServiceInterface,
+    ROS2ActionInterface, ROS2ParameterInterface, ROS2ComponentInterface,
     JointCommand, JointState, ControlInterfaceMode,
+    ActionGoalStatus, ActionFeedback, ActionResult,
     ROSTopics, ROSServices, ROSParams, get_ros2_spec
 )
 from .mpc import (
@@ -55,19 +58,10 @@ __all__ = [
     'SafetyResponse', 'SafetyEventRecord', 'JointStateSnapshot',
     'SafetyCheckResult', 'get_safety_spec',
     'ROS2JointTrajectoryInterface', 'ROS2TopicInterface', 'ROS2ServiceInterface',
+    'ROS2ActionInterface', 'ROS2ParameterInterface', 'ROS2ComponentInterface',
     'JointCommand', 'JointState', 'ControlInterfaceMode',
+    'ActionGoalStatus', 'ActionFeedback', 'ActionResult',
     'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec',
     'AGVMotionController', 'AGVSpec', 'AGVPose', 'AGVTwist', 'DriveType', 'AGVGrade',
     'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec'
-]
-
-from .ros2_interface import (
-    ROS2ActionInterface, ActionGoalStatus, ActionFeedback, ActionResult,
-    ROS2ParameterInterface, ROS2ComponentInterface,
-    ROSTopics, ROSServices, ROSParams, get_ros2_spec
-)
-
-__all__ += [
-    'ROS2ActionInterface', 'ActionGoalStatus', 'ActionFeedback', 'ActionResult',
-    'ROS2ParameterInterface', 'ROS2ComponentInterface',
 ]

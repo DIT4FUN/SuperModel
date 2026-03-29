@@ -7,17 +7,31 @@ SuperModel 感知模块
 - 场景理解 (SceneUnderstanding)
 """
 
-from fusion.cross_modal_fusion import (
-    MultimodalInput,
-    FusionConfig,
-    FusionStrategy,
-    CrossModalFusion,
-    CrossModalAttention,
-    ModalityEncoder,
-    UnifiedRepresentation,
-    LanguageEncoder,
-    create_multimodal_input
-)
+try:
+    from ..fusion.cross_modal_fusion import (
+        MultimodalInput,
+        FusionConfig,
+        FusionStrategy,
+        CrossModalFusion,
+        CrossModalAttention,
+        ModalityEncoder,
+        UnifiedRepresentation,
+        LanguageEncoder,
+        create_multimodal_input
+    )
+except ImportError:
+    from fusion.cross_modal_fusion import (
+        MultimodalInput,
+        FusionConfig,
+        FusionStrategy,
+        CrossModalFusion,
+        CrossModalAttention,
+        ModalityEncoder,
+        UnifiedRepresentation,
+        LanguageEncoder,
+        create_multimodal_input
+    )
+
 from .scene_understanding import (
     SceneUnderstanding,
     SceneObject,
