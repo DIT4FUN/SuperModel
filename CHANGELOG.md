@@ -7,8 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [1.0.3] - 2026-03-30
 
+### Added
+- **场景理解模块** (`perception/scene_understanding.py`): 占据栅格、物体检测与跟踪(Euclidean聚类)、场景图谱构建、动态/静态分离、触觉-视觉融合、完整场景状态输出
+- **场景理解测试** (`tests/scene_tests.py`): OccupancyGrid/SceneObject/SceneGraph/SceneUnderstanding 全功能测试 26项
+- **AGV五级场景理解规格**: AGV_GRADE_SPEC.md 新增 C.5 节，覆盖 S~XXL 五级的占据栅格、物体跟踪、语义分割规格
+- **MODULE_INTERFACE.md 第24.11节**: 新增 SceneUnderstanding 完整接口文档，包括核心数据结构、AGV五级规格表和使用示例
+
 ### Verified
-- 全量测试套件 522 项测试全部通过（sensor_tests.py 74项、fusion_tests.py 51项、control_tests.py 96项等）
+- 全量测试套件 **574 项**测试全部通过（新增 scene_tests.py 26项）
 - 触觉/力觉/IMU 模块功能完整：接触检测、滑移检测、抓取质量评估、六维力矩、姿态估计、轨迹仿真
 - 控制模块完整：AGV运动控制、MPC、阻抗控制、安全监控、ROS2接口
 - 仿真环境完整：RobotSimulator、SuperModelGymEnv、虚拟传感器全套

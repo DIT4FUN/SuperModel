@@ -2861,7 +2861,166 @@ class ROS2ComponentInterface:
 | ROS2接口 | REST | ROS2 | ROS2 | ROS2 | ROS2 |
 | 实时性 | 非实时 | 软实时 | 硬实时 | 硬实时 | 双系统 |
 
-### 24.11 仿真环境接口 — RobotSimulator / SensorSimulator
+### 24.11 场景理解接口 — SceneUnderstanding
+
+```python
+class SceneUnderstanding:
+    def __init__(
+        self,
+        resolution: float = 0.05,           # 栅格分辨率 (m)
+        grid_size: Tuple[int, int, int] = (100, 100, 20),
+        origin: Optional[np.ndarray] = None,
+        use_raycasting: bool = True,
+        tracking_window: int = 30
+    )
+    
+    # 占据栅格更新
+    def update_from_depth(
+        self,
+        depth_map: np.ndarray,              # HxW, 深度图 (米)
+        intrinsics: np.ndarray,             # 3x3 内参
+        extrinsics: Optional[np.ndarray] = None,  # 4x4 外参
+        depth_scale: float = 1000.0,       # 深度缩放
+        max_depth: float = 10.0
+    ) -> OccupancyGrid
+    
+    def update_from_pointcloud(self, pointcloud: np.ndarray) -> None  # Nx3
+    
+    # 物体检测与跟踪
+    def detect_objects(
+        self,
+        pointcloud: Optional[np.ndarray] = None,
+        use_euclidean_clustering: bool = True,
+        cluster_tolerance: float = 0.05,
+        min_cluster_size: int = 10
+    ) -> List[SceneObject]
+    
+    def track_objects(
+        self,
+        detected_objects: List[SceneObject],
+        max_distance: float = 0.3
+    ) -> List[SceneObject]
+    
+    def build_scene_graph(
+        self,
+        objects: List[SceneObject],
+        robot_position: np.ndarray
+    ) -> SceneGraph
+    
+    def classify_dynamic_objects(
+        self,
+        objects: List[SceneObject],
+        velocity_threshold: float = 0.05
+    ) -> List[int]
+    
+    # 触觉集成
+    def integrate_tactile_contact(
+        self,
+        objects: List[SceneObject],
+        tactile_contact_point: np.ndarray,  # 3, 世界坐标
+        contact_force: float,
+        sensor_id: str = "default"
+    ) -> List[SceneObject]
+    
+    # 完整状态
+    def get_scene_state(
+        self,
+        robot_pose: np.ndarray,             # 4x4
+        robot_velocity: np.ndarray,        # 3
+        imu_data: Optional[np.ndarray] = None,
+        tactile_data: Optional[Dict] = None,
+        force_data: Optional[np.ndarray] = None
+    ) -> SceneState
+    
+    def reset()
+```
+
+**核心数据结构:**
+
+```python
+@dataclass
+class SceneObject:
+    object_id: int
+    class_id: ObjectClass                   # FLOOR/TABLE/CHAIR/HUMAN/...
+    class_name: str
+    bounding_box_3d: np.ndarray             # 8x3, 3D包围盒
+    centroid_3d: np.ndarray                  # 3, 质心
+    pose: np.ndarray                        # 4x4
+    velocity: Optional[np.ndarray] = None   # 3, m/s
+    confidence: float = 1.0
+    tactile_contact: bool = False
+    force_reading: Optional[np.ndarray] = None  # 3
+
+@dataclass
+class OccupancyGrid:
+    resolution: float
+    size: Tuple[int, int, int]
+    origin: np.ndarray                      # 3
+    data: np.ndarray                       # nx*ny*nz, 占据概率 [0,1]
+    
+    def world_to_grid(self, point: np.ndarray) -> Tuple[int, int, int]
+    def grid_to_world(self, gx, gy, gz) -> np.ndarray
+    def set_occupied(self, point: np.ndarray, prob: float = 1.0)
+    def is_occupied(self, point: np.ndarray, threshold: float = 0.5) -> bool
+
+@dataclass
+class SceneGraph:
+    objects: List[SceneObject]
+    relations: List[SpatialRelation]
+    timestamp: float
+    frame_id: int
+    
+    def get_object(self, object_id: int) -> Optional[SceneObject]
+    def get_relations(self, object_id: int) -> List[SpatialRelation]
+
+@dataclass
+class SceneState:
+    scene_graph: SceneGraph
+    occupancy: OccupancyGrid
+    robot_pose: np.ndarray                  # 4x4
+    robot_velocity: np.ndarray              # 3
+    imu_data: Optional[np.ndarray]
+    tactile_data: Optional[Dict]
+    force_data: Optional[np.ndarray]
+    dynamic_objects: List[int]
+    timestamp: float
+    frame_id: int
+```
+
+**AGV五级场景理解规格:**
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 分辨率 (m) | 0.10 | 0.05 | 0.02 | 0.01 | 0.005 |
+| 感知范围 (m) | 3.0 | 5.0 | 8.0 | 10.0 | 15.0 |
+| 最大物体数 | 10 | 30 | 50 | 100 | 200 |
+| 物体跟踪 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 语义分割 | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+**使用示例:**
+```python
+scene = SceneUnderstanding(resolution=0.05, grid_size=(40, 40, 10))
+
+# 从深度图更新
+occupancy = scene.update_from_depth(depth_map, intrinsics)
+
+# 检测物体
+objects = scene.detect_objects(pointcloud)
+
+# 跟踪
+tracked = scene.track_objects(objects)
+
+# 构建场景图
+graph = scene.build_scene_graph(tracked, robot_position)
+
+# 获取完整状态
+state = scene.get_scene_state(robot_pose, robot_velocity,
+                              imu_data=imu, force_data=wrench)
+```
+
+---
+
+### 24.12 仿真环境接口 — RobotSimulator / SensorSimulator
 
 ```python
 class RobotSimulator:
