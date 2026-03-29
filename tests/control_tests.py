@@ -539,5 +539,208 @@ class TestControlIntegration(unittest.TestCase):
         self.assertTrue(True)
 
 
+class TestTrajectoryGenerator(unittest.TestCase):
+    """测试轨迹生成器"""
+    
+    def setUp(self):
+        from control.trajectory import TrajectoryGenerator, TrajectoryConfig
+        self.config = TrajectoryConfig(
+            max_velocity=np.ones(6) * np.pi,
+            max_acceleration=np.ones(6) * 2.0 * np.pi,
+            dt=0.01
+        )
+        self.gen = TrajectoryGenerator(num_joints=6, config=self.config)
+    
+    def test_generator_init(self):
+        self.assertEqual(self.gen.num_joints, 6)
+        self.assertIsNotNone(self.gen.config)
+    
+    def test_quintic_polynomial_shapes(self):
+        start = np.zeros(6)
+        end = np.array([0.5, 0.3, -0.2, 0.0, 0.0, 0.0])
+        waypoints = self.gen.generate_quintic_polynomial(start, end, duration=2.0)
+        
+        self.assertIsInstance(waypoints, list)
+        self.assertGreater(len(waypoints), 0)
+        
+        # 检查每个路点形状
+        for wp in waypoints:
+            self.assertEqual(wp.position.shape, (6,))
+            self.assertEqual(wp.velocity.shape, (6,))
+            self.assertEqual(wp.acceleration.shape, (6,))
+    
+    def test_quintic_polynomial_boundary_conditions(self):
+        start = np.zeros(6)
+        end = np.ones(6) * 0.5
+        waypoints = self.gen.generate_quintic_polynomial(
+            start, end, duration=2.0,
+            start_vel=np.zeros(6),
+            end_vel=np.zeros(6)
+        )
+        
+        # 第一个路点
+        np.testing.assert_array_almost_equal(waypoints[0].position, start, decimal=5)
+        # 最后一个路点
+        np.testing.assert_array_almost_equal(waypoints[-1].position, end, decimal=5)
+    
+    def test_trapezoidal_trajectory(self):
+        start = np.zeros(6)
+        end = np.ones(6) * 0.5
+        max_vel = np.ones(6) * 0.5
+        max_acc = np.ones(6) * 1.0
+        
+        waypoints, total_time = self.gen.generate_trapezoidal(start, end, max_vel, max_acc)
+        
+        self.assertIsInstance(waypoints, list)
+        self.assertGreater(len(waypoints), 0)
+        self.assertGreater(total_time, 0)
+    
+    def test_resample_trajectory(self):
+        start = np.zeros(6)
+        end = np.ones(6) * 0.5
+        waypoints = self.gen.generate_quintic_polynomial(start, end, duration=2.0)
+        
+        resampled = self.gen.resample_trajectory(waypoints, new_dt=0.005)
+        
+        self.assertIsInstance(resampled, list)
+        self.assertGreater(len(resampled), len(waypoints))
+
+
+class TestRRTPlanner(unittest.TestCase):
+    """测试RRT规划器"""
+    
+    def setUp(self):
+        from control.trajectory import RRTPlanner, PlanningAlgorithm
+        self.planner = RRTPlanner(
+            space_dim=3,
+            bounds=[(-1, 1), (-1, 1), (0, 2)],
+            max_iterations=200,
+            step_size=0.1
+        )
+    
+    def test_planner_init(self):
+        self.assertEqual(self.planner.space_dim, 3)
+        self.assertEqual(self.planner.max_iterations, 200)
+        self.assertEqual(self.planner.step_size, 0.1)
+    
+    def test_plan_no_obstacle(self):
+        start = np.array([0.0, 0.0, 0.5])
+        goal = np.array([0.5, 0.5, 1.0])
+        
+        def no_obs(pos):
+            return False
+        
+        path, cost = self.planner.plan(start, goal, no_obs)
+        
+        self.assertIsNotNone(path)
+        self.assertIsInstance(path, list)
+        self.assertLess(cost, float('inf'))
+        self.assertGreater(len(path), 0)
+    
+    def test_plan_rrt_star(self):
+        from control.trajectory import PlanningAlgorithm
+        start = np.array([0.0, 0.0, 0.5])
+        goal = np.array([0.5, 0.5, 1.0])
+        
+        path, cost = self.planner.plan(
+            start, goal,
+            obstacle_check=lambda p: False,
+            algorithm=PlanningAlgorithm.RRT_STAR
+        )
+        
+        self.assertIsNotNone(path)
+        self.assertLess(cost, float('inf'))
+    
+    def test_plan_informed_rrt(self):
+        from control.trajectory import PlanningAlgorithm
+        start = np.array([0.0, 0.0, 0.5])
+        goal = np.array([0.5, 0.5, 1.0])
+        
+        path, cost = self.planner.plan(
+            start, goal,
+            obstacle_check=lambda p: False,
+            algorithm=PlanningAlgorithm.INF_PLANNER
+        )
+        
+        self.assertIsNotNone(path)
+    
+    def test_plan_with_obstacle(self):
+        start = np.array([0.0, 0.0, 0.5])
+        goal = np.array([0.8, 0.8, 1.5])
+        
+        # 碰撞检测: 某个区域有障碍
+        def with_obs(pos):
+            # 以原点为中心的球形障碍
+            return np.linalg.norm(pos - np.array([0.4, 0.4, 1.0])) < 0.2
+        
+        path, cost = self.planner.plan(start, goal, with_obs)
+        
+        # 即使有障碍，也应该能找到路径或返回None
+        if path is not None:
+            self.assertIsInstance(path, list)
+            self.assertLess(cost, float('inf'))
+    
+    def test_plan_start_collision(self):
+        start = np.array([0.0, 0.0, 0.5])
+        goal = np.array([0.5, 0.5, 1.0])
+        
+        def obs_everywhere(pos):
+            return True
+        
+        path, cost = self.planner.plan(start, goal, obs_everywhere)
+        self.assertIsNone(path)
+        self.assertEqual(cost, float('inf'))
+
+
+class TestScurveGenerator(unittest.TestCase):
+    """测试S型曲线生成器"""
+    
+    def test_scurve_init(self):
+        from control.trajectory import ScurveGenerator
+        gen = ScurveGenerator(max_velocity=1.0, max_acceleration=2.0, max_jerk=10.0)
+        self.assertEqual(gen.v_max, 1.0)
+        self.assertEqual(gen.a_max, 2.0)
+        self.assertEqual(gen.j_max, 10.0)
+    
+    def test_scurve_plan(self):
+        from control.trajectory import ScurveGenerator
+        gen = ScurveGenerator(max_velocity=1.0, max_acceleration=2.0, max_jerk=10.0)
+        segments = gen.plan(start_pos=0.0, end_pos=1.0)
+        
+        self.assertIsInstance(segments, list)
+        self.assertGreater(len(segments), 0)
+        
+        for seg in segments:
+            self.assertIn('phase', seg)
+            self.assertIn('duration', seg)
+            self.assertGreater(seg['duration'], 0)
+
+
+class TestAGVTrajectorySpecs(unittest.TestCase):
+    """测试AGV五级轨迹规划规格"""
+    
+    def test_all_grades_have_specs(self):
+        from control.trajectory import get_trajectory_spec, AGV_TRAJECTORY_GRADES
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_trajectory_spec(grade)
+            self.assertIn('algorithm', spec)
+            self.assertIn('max_degree', spec)
+            self.assertIn('jerk_limit', spec)
+            self.assertIn('collision_check', spec)
+    
+    def test_s_grade_linear(self):
+        from control.trajectory import get_trajectory_spec
+        spec = get_trajectory_spec('S')
+        self.assertEqual(spec['algorithm'], 'linear')
+        self.assertFalse(spec['jerk_limit'])
+    
+    def test_xxl_grade_optimal(self):
+        from control.trajectory import get_trajectory_spec
+        spec = get_trajectory_spec('XXL')
+        self.assertEqual(spec['algorithm'], 'optimal')
+        self.assertTrue(spec['jerk_limit'])
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

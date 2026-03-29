@@ -332,6 +332,121 @@ class ControlMode(Enum):
     CARTESIAN_POSITION
 ```
 
+### 5.2 轨迹规划 — TrajectoryGenerator / RRTPlanner
+
+```python
+class TrajectoryGenerator:
+    def __init__(self, num_joints: int, config: Optional[TrajectoryConfig] = None)
+
+    def generate_quintic_polynomial(
+        self,
+        start: np.ndarray,
+        end: np.ndarray,
+        duration: float,
+        start_vel: np.ndarray = None,
+        end_vel: np.ndarray = None,
+        start_acc: np.ndarray = None,
+        end_acc: np.ndarray = None
+    ) -> List[JointWaypoint]
+
+    def generate_trapezoidal(
+        self,
+        start: np.ndarray,
+        end: np.ndarray,
+        max_velocity: np.ndarray,
+        max_acceleration: np.ndarray
+    ) -> Tuple[List[JointWaypoint], float]
+
+    def resample_trajectory(
+        self,
+        waypoints: List[JointWaypoint],
+        new_dt: float
+    ) -> List[JointWaypoint]
+
+class RRTPlanner:
+    def __init__(
+        self,
+        space_dim: int,
+        bounds: List[Tuple[float, float]],
+        max_iterations: int = 1000,
+        step_size: float = 0.1,
+        goal_bias: float = 0.05,
+        search_radius: float = 0.5
+    )
+
+    def plan(
+        self,
+        start: np.ndarray,
+        goal: np.ndarray,
+        obstacle_check: Callable[[np.ndarray], bool],
+        algorithm: PlanningAlgorithm = PlanningAlgorithm.RRT_STAR
+    ) -> Tuple[Optional[List[np.ndarray]], float]
+
+class ScurveGenerator:
+    def __init__(self, max_velocity: float, max_acceleration: float, max_jerk: float)
+    def plan(self, start_pos: float, end_pos: float, start_vel=0.0, end_vel=0.0) -> List[Dict]
+
+@dataclass
+class JointWaypoint:
+    position: np.ndarray
+    velocity: np.ndarray
+    acceleration: np.ndarray
+    time_from_start: float
+
+@dataclass
+class CartesianWaypoint:
+    position: np.ndarray      # 3
+    orientation: np.ndarray  # 4
+    linear_velocity: np.ndarray   # 3
+    angular_velocity: np.ndarray  # 3
+    time_from_start: float
+
+@dataclass
+class TrajectoryConfig:
+    max_velocity: np.ndarray
+    max_acceleration: np.ndarray
+    max_jerk: Optional[np.ndarray] = None
+    dt: float = 0.01
+    tolerance: float = 1e-6
+
+class PlanningAlgorithm(Enum):
+    RRT = "rrt"
+    RRT_STAR = "rrt_star"
+    PRM = "prm"
+    RRT_CONNECT = "rrt_connect"
+    INF_PLANNER = "informed_rrt_star"
+```
+
+**使用示例:**
+```python
+from control.trajectory import TrajectoryGenerator, RRTPlanner, PlanningAlgorithm
+
+# 关节空间轨迹生成
+gen = TrajectoryGenerator(num_joints=6)
+waypoints = gen.generate_quintic_polynomial(
+    start=np.zeros(6),
+    end=np.array([0.5, 0.3, -0.2, 0.0, 0.0, 0.0]),
+    duration=2.0
+)
+
+# 笛卡尔空间RRT规划
+def no_collision(pos):
+    # 自定义碰撞检测
+    return False
+
+planner = RRTPlanner(
+    space_dim=3,
+    bounds=[(-1, 1), (-1, 1), (0, 2)],
+    max_iterations=500
+)
+path, cost = planner.plan(
+    start=np.array([0.0, 0.0, 0.5]),
+    goal=np.array([0.8, 0.3, 0.8]),
+    obstacle_check=no_collision,
+    algorithm=PlanningAlgorithm.RRT_STAR
+)
+```
+
 ---
 
 ### 5.2 阻抗控制 — ImpedanceController
@@ -719,15 +834,9 @@ t=0ms      t=10ms     t=20ms     t=30ms     t=40ms     t=50ms
 
 | 版本 | 日期 | 描述 |
 |------|------|------|
-| v0.2.0 | 2026-03-28 | 新增编码器接口章节、AGV五级规格对照 |
-| v0.1.0 | 2026-03-28 | 初始接口设计文档 |
-
-## 11. 版本历史
-
-| 版本 | 日期 | 描述 |
-|------|------|------|
+| v0.4.0 | 2026-03-29 | 新增轨迹规划接口、扩展阻抗/导纳控制接口 |
 | v0.3.0 | 2026-03-28 | 新增AGV五级功能矩阵、模块依赖关系图、快速启动示例、数据流时序图 |
 | v0.2.0 | 2026-03-28 | 新增编码器接口章节、AGV五级规格对照 |
 | v0.1.0 | 2026-03-28 | 初始接口设计文档 |
 
-*文档版本: v0.3.0*
+*文档版本: v0.4.0*
