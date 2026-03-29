@@ -1,6 +1,10 @@
 # SuperModel - 超模态机器人具身智能大脑
 
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
+>
+> ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
+> ![Tests](https://img.shields.io/badge/tests-424%20passed-brightgreen)
+> ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
 
@@ -27,7 +31,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**358项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**424项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -315,59 +319,71 @@ for _ in range(1000):
 
 ```
 SuperModel/
+├── .github/
+│   └── workflows/
+│       └── ci.yml          # GitHub Actions CI/CD
 ├── src/
-│   ├── sensors/          # 传感器接口
-│   │   ├── vision.py     # 双目相机 + 深度处理
-│   │   ├── audio.py      # 双耳麦克风 + 声源定位
-│   │   ├── tactile.py    # 电子皮肤 + 压力处理 + 接触检测
-│   │   ├── force.py      # 六维力矩传感器 + 负载估计
-│   │   ├── imu.py        # IMU + 姿态估计 (Madgwick/AHRS)
-│   │   ├── encoders.py   # 神经网络编码器 (CNN/RNN/注意力)
-│   │   └── __init__.py   # 模块导出
-│   ├── fusion/           # 跨模态融合网络
+│   ├── sensors/            # 传感器接口
+│   │   ├── vision.py       # 双目相机 + 深度处理
+│   │   ├── audio.py        # 双耳麦克风 + 声源定位
+│   │   ├── tactile.py      # 电子皮肤 + 压力处理 + 接触检测
+│   │   ├── force.py        # 六维力矩传感器 + 负载估计
+│   │   ├── imu.py          # IMU + 姿态估计 (Madgwick/AHRS)
+│   │   ├── encoders.py     # 神经网络编码器 (CNN/RNN/注意力)
+│   │   └── __init__.py     # 模块导出
+│   ├── fusion/             # 跨模态融合网络
 │   │   └── cross_modal_fusion.py  # 跨模态注意力融合
-│   ├── learning/         # 自主学习框架
+│   ├── perception/         # 多模态感知
+│   │   └── cross_modal_fusion.py  # 感知层融合入口
+│   ├── learning/           # 自主学习框架
 │   │   ├── self_supervised.py  # 对比学习/好奇心/自主学习
-│   │   └── world_model.py      # Dreamer-style 世界模型
-│   ├── control/         # 运动控制
-│   │   ├── motion.py        # PID + 轨迹控制
-│   │   ├── impedance.py     # 阻抗/导纳/协作控制
-│   │   ├── skill.py         # 技能库
-│   │   ├── planner.py       # HTN 任务规划
-│   │   ├── trajectory.py    # RRT 路径规划 + S曲线
-│   │   ├── ros2_interface.py # ROS2 Humble 集成
+│   │   ├── world_model.py      # Dreamer-style 世界模型 (RSSM)
+│   │   └── dreamer_agent.py    # Dreamer Actor-Critic (想象训练)
+│   ├── control/            # 运动控制
+│   │   ├── motion.py           # PID + 轨迹控制
+│   │   ├── impedance.py        # 阻抗/导纳/协作控制
+│   │   ├── mpc.py              # 模型预测控制 (MPC)
+│   │   ├── agv.py              # AGV运动学/动力学控制
+│   │   ├── skill.py            # 技能库 (原子/时序/并行)
+│   │   ├── planner.py          # HTN 任务规划
+│   │   ├── trajectory.py       # RRT 路径规划 + S曲线
+│   │   ├── ros2_interface.py   # ROS2 Humble 集成
 │   │   └── safety_controller.py # 安全监控 (S~XXL 五级)
-│   └── simulation/      # 仿真环境
-│       └── environment.py   # 机器人 + 传感器仿真
-├── tests/
-│   ├── sensor_tests.py      # 传感器单元测试 (50 tests)
-│   ├── fusion_tests.py      # 融合网络测试 (51 tests)
-│   ├── control_tests.py     # 控制模块测试 (101 tests)
+│   └── simulation/         # 仿真环境
+│       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
+├── tests/                   # 424 项测试全部通过
+│   ├── sensor_tests.py      # 传感器 (74 tests)
+│   ├── fusion_tests.py      # 融合网络 (51 tests)
+│   ├── control_tests.py     # 控制模块 (110 tests)
 │   ├── integration_tests.py # 集成测试 (20 tests)
-│   ├── test_encoders.py     # 编码器测试 (10 tests)
-│   ├── test_dreamer.py      # Dreamer Agent测试 (7 tests)
-│   ├── test_world_model.py  # 世界模型测试 (8 tests)
-│   ├── simulation_tests.py  # 仿真环境测试 (44 tests)
-│   ├── benchmark_tests.py   # 性能基准测试 (16 tests)
-│   └── mpc_tests.py         # MPC控制器测试 (51 tests)
+│   ├── encoder_tests.py     # 编码器 (34 tests)
+│   ├── test_encoders.py     # 编码器 (13 tests)
+│   ├── test_dreamer.py     # Dreamer Agent (7 tests)
+│   ├── test_world_model.py  # 世界模型 (8 tests)
+│   ├── simulation_tests.py  # 仿真环境 (44 tests)
+│   ├── benchmark_tests.py   # 性能基准 (16 tests)
+│   └── mpc_tests.py         # MPC控制器 (47 tests)
 ├── configs/
 │   ├── project_config.yaml  # 项目默认配置
-│   ├── agv_S.yaml           # AGV-S 教育级配置
-│   ├── agv_M.yaml           # AGV-M 标准助手级配置
-│   ├── agv_L.yaml           # AGV-L 专业工业级配置
-│   ├── agv_XL.yaml          # AGV-XL 高性能级配置
-│   └── agv_XXL.yaml         # AGV-XXL 旗舰全功能级配置
+│   ├── agv_S.yaml          # AGV-S 教育级配置
+│   ├── agv_M.yaml          # AGV-M 标准助手级配置
+│   ├── agv_L.yaml          # AGV-L 专业工业级配置
+│   ├── agv_XL.yaml         # AGV-XL 高性能级配置
+│   └── agv_XXL.yaml        # AGV-XXL 旗舰全功能级配置
 ├── scripts/
-│   ├── demo.py              # 基础演示脚本
-│   ├── demo_full_pipeline.py # 全系统演示脚本
-│   └── multi_sensor_data_collection.py # 多传感器数据采集
-└── docs/
-    ├── architecture/    # 架构设计
-    └── design/         # 详细设计文档
-        ├── AGV_GRADE_SPEC.md    # AGV五级规格表
-        ├── CONTROL_GRADE_SPEC.md # 控制五级规格表
-        ├── MODULE_INTERFACE.md  # 模块接口设计
-        └── SYSTEM_ARCHITECTURE.md # 系统架构
+│   ├── demo.py             # 基础演示脚本
+│   ├── demo_full_pipeline.py  # 全系统演示脚本
+│   └── multi_sensor_data_collection.py  # 多传感器数据采集
+├── docs/
+│   ├── architecture/
+│   └── design/             # 详细设计文档
+│       ├── AGV_GRADE_SPEC.md     # AGV五级规格表
+│       ├── CONTROL_GRADE_SPEC.md # 控制五级规格表
+│       ├── MODULE_INTERFACE.md   # 模块接口设计 (2026行)
+│       └── SYSTEM_ARCHITECTURE.md # 系统架构
+├── CHANGELOG.md            # 版本变更历史
+├── README.md               # 本文档
+└── LICENSE                 # MIT License
 ```
 
 ## 接口文档
@@ -380,17 +396,18 @@ SuperModel/
 
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
-| sensor_tests.py | 50 | ✅ 全部通过 |
+| sensor_tests.py | 74 | ✅ 全部通过 |
 | fusion_tests.py | 51 | ✅ 全部通过 |
-| control_tests.py | 101 | ✅ 全部通过 |
+| control_tests.py | 110 | ✅ 全部通过 |
 | integration_tests.py | 20 | ✅ 全部通过 |
-| test_encoders.py | 10 | ✅ 全部通过 |
+| encoder_tests.py | 34 | ✅ 全部通过 |
+| test_encoders.py | 13 | ✅ 全部通过 |
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
 | simulation_tests.py | 44 | ✅ 全部通过 |
 | benchmark_tests.py | 16 | ✅ 全部通过 |
-| mpc_tests.py | 51 | ✅ 全部通过 |
-| **总计** | **358** | ✅ **全部通过** |
+| mpc_tests.py | 47 | ✅ 全部通过 |
+| **总计** | **424** | ✅ **全部通过** |
 
 ## 技术栈
 
