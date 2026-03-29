@@ -27,7 +27,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**233项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**291项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -317,40 +317,44 @@ for _ in range(1000):
 SuperModel/
 ├── src/
 │   ├── sensors/          # 传感器接口
-│   │   ├── vision.py    # 双目相机 + 深度处理
-│   │   ├── audio.py     # 双耳麦克风 + 声源定位
-│   │   ├── tactile.py   # 电子皮肤 + 压力处理
-│   │   ├── force.py     # 六维力矩传感器
-│   │   ├── imu.py       # IMU + 姿态估计
-│   │   ├── encoders.py  # 神经网络编码器 (CNN/RNN/注意力)
+│   │   ├── vision.py     # 双目相机 + 深度处理
+│   │   ├── audio.py      # 双耳麦克风 + 声源定位
+│   │   ├── tactile.py    # 电子皮肤 + 压力处理 + 接触检测
+│   │   ├── force.py      # 六维力矩传感器 + 负载估计
+│   │   ├── imu.py        # IMU + 姿态估计 (Madgwick/AHRS)
+│   │   ├── encoders.py   # 神经网络编码器 (CNN/RNN/注意力)
 │   │   └── __init__.py   # 模块导出
-│   ├── perception/      # 感知处理
-│   └── fusion/          # 跨模态融合网络
-│       └── cross_modal_fusion.py  # 跨模态注意力融合
-│   ├── learning/        # 自主学习框架
+│   ├── fusion/           # 跨模态融合网络
+│   │   └── cross_modal_fusion.py  # 跨模态注意力融合
+│   ├── learning/         # 自主学习框架
 │   │   ├── self_supervised.py  # 对比学习/好奇心/自主学习
 │   │   └── world_model.py      # Dreamer-style 世界模型
 │   ├── control/         # 运动控制
-│   │   ├── motion.py    # PID + 轨迹控制
-│   │   ├── impedance.py # 阻抗/导纳/协作控制
-│   │   ├── skill.py     # 技能库
-│   │   └── planner.py   # HTN 任务规划
+│   │   ├── motion.py        # PID + 轨迹控制
+│   │   ├── impedance.py     # 阻抗/导纳/协作控制
+│   │   ├── skill.py         # 技能库
+│   │   ├── planner.py       # HTN 任务规划
+│   │   ├── trajectory.py    # RRT 路径规划 + S曲线
+│   │   ├── ros2_interface.py # ROS2 Humble 集成
+│   │   └── safety_controller.py # 安全监控 (S~XXL 五级)
 │   └── simulation/      # 仿真环境
+│       └── environment.py   # 机器人 + 传感器仿真
 ├── tests/
 │   ├── sensor_tests.py      # 传感器单元测试 (50 tests)
-│   ├── fusion_tests.py      # 融合网络测试 (29 tests)
-│   ├── control_tests.py     # 控制模块测试 (59 tests)
-│   ├── integration_tests.py # 集成测试 (11 tests)
-│   ├── test_encoders.py     # 编码器测试 (9 tests)
+│   ├── fusion_tests.py      # 融合网络测试 (51 tests)
+│   ├── control_tests.py     # 控制模块测试 (101 tests)
+│   ├── integration_tests.py # 集成测试 (20 tests)
+│   ├── test_encoders.py     # 编码器测试 (10 tests)
 │   ├── test_dreamer.py      # Dreamer Agent测试 (7 tests)
 │   ├── test_world_model.py  # 世界模型测试 (8 tests)
-│   └── simulation_tests.py   # 仿真环境测试 (44 tests)
+│   └── simulation_tests.py  # 仿真环境测试 (44 tests)
 ├── configs/
 │   └── project_config.yaml  # 项目配置
 └── docs/
     ├── architecture/    # 架构设计
     └── design/         # 详细设计文档
         ├── AGV_GRADE_SPEC.md    # AGV五级规格表
+        ├── CONTROL_GRADE_SPEC.md # 控制五级规格表
         ├── MODULE_INTERFACE.md  # 模块接口设计
         └── SYSTEM_ARCHITECTURE.md # 系统架构
 ```
@@ -366,14 +370,14 @@ SuperModel/
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
 | sensor_tests.py | 50 | ✅ 全部通过 |
-| fusion_tests.py | 29 | ✅ 全部通过 |
-| control_tests.py | 59 | ✅ 全部通过 |
-| integration_tests.py | 11 | ✅ 全部通过 |
-| test_encoders.py | 9 | ✅ 全部通过 |
+| fusion_tests.py | 51 | ✅ 全部通过 |
+| control_tests.py | 101 | ✅ 全部通过 |
+| integration_tests.py | 20 | ✅ 全部通过 |
+| test_encoders.py | 10 | ✅ 全部通过 |
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
-| test_simulation.py | 44 | ✅ 全部通过 |
-| **总计** | **288** | ✅ **全部通过** |
+| simulation_tests.py | 44 | ✅ 全部通过 |
+| **总计** | **291** | ✅ **全部通过** |
 
 ## 技术栈
 
