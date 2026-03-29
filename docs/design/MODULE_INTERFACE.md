@@ -1150,5 +1150,304 @@ class ControlError(Exception):
 
 ---
 
-*文档版本: v0.5.0*
+## 13. 触觉/力觉/IMU传感器详细接口
+
+### 13.1 触觉传感器 — TactileArray
+
+```python
+from sensors.tactile import (
+    TactileArray, TactileFrame, TactileContact, TactileCalibration,
+    TactileSensorType, PressureProcessor
+)
+
+# 初始化
+sensor = TactileArray(
+    sensor_type=TactileSensorType.PIEZORESISTIVE,
+    array_size=(16, 16),
+    resolution=12,  # ADC位数
+    sampling_rate=100.0  # Hz
+)
+
+# 打开传感器
+sensor.open()
+
+# 捕获触觉帧
+frame = sensor.capture()  # -> TactileFrame
+
+# 帧数据结构
+print(f"压力矩阵形状: {frame.pressure_matrix.shape}")  # (H, W)
+print(f"温度矩阵形状: {frame.temperature_matrix.shape}")  # (H, W)
+print(f"触点列表: {len(frame.contacts)} 个")
+for contact in frame.contacts:
+    print(f"  触点位置: {contact.centroid}, 力度: {contact.force:.2f}N")
+
+# 接触检测
+if sensor.detect_contact(frame):
+    print("检测到接触事件")
+
+# 滑移检测
+if sensor.get_slip_signal(frame) > 0.5:
+    print("检测到滑移!")
+
+# 标定
+calibration = TactileCalibration.create_default(16)
+calibrated = calibration.apply(frame)
+
+# 压力处理器
+processor = PressureProcessor(array_size=(16, 16))
+processed = processor.process(frame)
+print(f"热力图均值: {processed['mean_pressure']:.2f}")
+
+sensor.close()
+```
+
+### 13.2 力觉传感器 — ForceTorqueSensor
+
+```python
+from sensors.force import (
+    ForceTorqueSensor, ForceCalibration, Wrench, ContactState,
+    WrenchProcessor, ForceSensorType
+)
+
+# 初始化
+sensor = ForceTorqueSensor(
+    sensor_type=ForceSensorType.SIX_AXIS_STRAIN_GAUGE,
+    force_range=np.array([200.0, 200.0, 200.0]),  # N (x, y, z)
+    torque_range=np.array([20.0, 20.0, 20.0]),    # Nm (x, y, z)
+    resolution=16
+)
+
+sensor.open()
+
+# 捕获六维力/力矩
+wrench = sensor.capture()  # -> Wrench
+
+print(f"力: Fx={wrench.force[0]:.2f}N, Fy={wrench.force[1]:.2f}N, Fz={wrench.force[2]:.2f}N")
+print(f"力矩: Tx={wrench.torque[0]:.2f}Nm, Ty={wrench.torque[1]:.2f}Nm, Tz={wrench.torque[2]:.2f}Nm")
+print(f"合力: {wrench.force_magnitude:.2f}N, 合力矩: {wrench.torque_magnitude:.2f}Nm")
+print(f"接触状态: {wrench.contact_state}")
+
+# 坐标系变换
+transformed = wrench.transform(np.eye(4), np.array([0, 0, 0.05]))
+
+# 碰撞检测
+if sensor.detect_collision(wrench, threshold=50.0):
+    print("碰撞检测触发!")
+
+# 负载估计
+payload = sensor.estimate_payload(wrench, gravity_vector=np.array([0, 0, -9.81]))
+print(f"估计负载: {payload:.2f}kg")
+
+# 力处理器
+processor = WrenchProcessor(window_size=5)
+filtered = processor.filter(wrench)
+print(f"滤波后合力: {filtered.force_magnitude:.2f}N")
+
+sensor.close()
+```
+
+### 13.3 IMU传感器 — IMUSensor & PoseEstimator
+
+```python
+from sensors.imu import (
+    IMUSensor, IMUFrame, Pose, PoseEstimator,
+    IMUCalibration, IMUSensorType
+)
+
+# 初始化
+imu = IMUSensor(
+    sensor_type=IMUSensorType.MPU6050,
+    accel_range=16.0,   # ±16g
+    gyro_range=1000.0,  # ±1000°/s
+    sample_rate=100.0   # Hz
+)
+
+imu.open()
+
+# 自检
+if imu.self_test():
+    print("IMU自检通过")
+
+# 校准
+calibration = IMUCalibration.create_default()
+imu.calibrate_gyro_bias(calibration)
+
+# 捕获IMU帧
+frame = imu.capture()  # -> IMUFrame
+
+print(f"加速度: ax={frame.accel[0]:.3f}g, ay={frame.accel[1]:.3f}g, az={frame.accel[2]:.3f}g")
+print(f"角速度: wx={frame.gyro[0]:.2f}°/s, wy={frame.gyro[1]:.2f}°/s, wz={frame.gyro[2]:.2f}°/s")
+print(f"磁场: mx={frame.mag[0]:.2f}, my={frame.mag[1]:.2f}, mz={frame.mag[2]:.2f}")
+print(f"温度: {frame.temperature:.1f}°C")
+
+# 姿态估计
+estimator = PoseEstimator(sample_rate=100.0, algorithm='complementary')
+estimator.reset()
+
+for _ in range(100):
+    frame = imu.capture()
+    pose = estimator.update(frame)  # -> Pose
+
+print(f"Euler角: roll={pose.euler[0]:.2f}°, pitch={pose.euler[1]:.2f}°, yaw={pose.euler[2]:.2f}°")
+print(f"四元数: {pose.quaternion}")  # [w, x, y, z]
+print(f"旋转矩阵:\n{pose.rotation_matrix}")
+
+imu.close()
+```
+
+### 13.4 触觉/力觉/IMU接口规格表
+
+| 参数 | 触觉 TactileArray | 力觉 ForceTorqueSensor | IMU IMUSensor |
+|------|-------------------|------------------------|---------------|
+| 数据类型 | TactileFrame | Wrench | IMUFrame |
+| 主要字段 | pressure_matrix, temperature_matrix, contacts | force(3), torque(3), contact_state | accel(3), gyro(3), mag(3) |
+| 采样率 | 最高 500Hz | 最高 1000Hz | 最高 1000Hz |
+| 关键方法 | capture(), detect_contact(), get_slip_signal() | capture(), detect_collision(), estimate_payload() | capture(), self_test(), calibrate_gyro_bias() |
+| 处理器 | PressureProcessor | WrenchProcessor | PoseEstimator |
+| 支持等级 | S ~ XXL | M ~ XXL | S ~ XXL |
+
+---
+
+## 14. 跨模态融合网络详细接口
+
+### 14.1 融合配置与输入
+
+```python
+from fusion.cross_modal_fusion import (
+    FusionStrategy, FusionConfig, MultimodalInput,
+    LanguageEncoder, CrossModalAttention, ModalityEncoder,
+    CrossModalFusion, UnifiedRepresentation, create_multimodal_input
+)
+import torch
+
+# 创建融合配置
+config = FusionConfig(
+    vision_dim=512,
+    audio_dim=128,
+    tactile_dim=64,
+    force_dim=32,
+    imu_dim=64,
+    language_dim=128,
+    hidden_dim=256,
+    num_heads=4,
+    num_layers=2,
+    dropout=0.1,
+    strategy=FusionStrategy.HYBRID,
+    vocab_size=10000,
+    language_max_len=32
+)
+```
+
+### 14.2 语言编码器
+
+```python
+# 语言编码器: Token序列 -> 特征向量
+lang_enc = LanguageEncoder(
+    vocab_size=10000,
+    embed_dim=128,
+    hidden_dim=256,
+    max_len=32,
+    num_heads=4,
+    num_layers=2
+)
+
+token_ids = torch.randint(0, 10000, (4, 32))  # B=4, L=32
+features = lang_enc(token_ids)  # -> torch.Size([4, 256])
+```
+
+### 14.3 跨模态注意力
+
+```python
+# 两模态之间的注意力交互
+attn = CrossModalAttention(query_dim=256, key_dim=256, value_dim=256, num_heads=4)
+
+query = torch.randn(2, 10, 256)   # B=2, N=10, D=256
+key   = torch.randn(2, 15, 256)  # B=2, M=15, D=256
+value = torch.randn(2, 15, 256)  # B=2, M=15, D=256
+
+output = attn(query, key, value)  # -> torch.Size([2, 10, 256])
+```
+
+### 14.4 完整融合流程
+
+```python
+# 初始化融合网络
+fusion = CrossModalFusion(config)
+unified = UnifiedRepresentation(input_dim=256, hidden_dim=384, output_dim=128)
+
+# 构建多模态输入 (所有模态均为可选)
+multimodal = MultimodalInput(
+    vision=torch.randn(2, 512),           # 视觉特征
+    audio=torch.randn(2, 128),            # 音频特征
+    tactile=torch.randn(2, 64),           # 触觉特征
+    force=torch.randn(2, 32),             # 力觉特征 (6维)
+    imu=torch.randn(2, 64),               # IMU特征 (9维)
+    language=torch.randint(0, 10000, (2, 32))  # 语言token
+)
+
+# 融合前向传播
+fused_features = fusion(multimodal)  # -> torch.Size([2, 256])
+
+# 统一表示生成 (三任务头)
+state_repr, action_repr, world_repr = unified(fused_features)
+# state_repr:  -> torch.Size([2, 128])  状态表示
+# action_repr: -> torch.Size([2, 128])  动作策略
+# world_repr:  -> torch.Size([2, 128])  世界模型预测
+
+print(f"融合特征: {fused_features.shape}")
+print(f"可用模态: {multimodal.modalities}")
+```
+
+### 14.5 NumPy 工厂函数
+
+```python
+# 使用 NumPy 数组创建多模态输入 (自动转换torch)
+mmi = create_multimodal_input(
+    vision=np.random.randn(2, 512).astype(np.float32),
+    audio=np.random.randn(2, 50, 128).astype(np.float32),
+    tactile=np.random.randn(2, 64).astype(np.float32),
+    force=np.random.randn(2, 6).astype(np.float32),
+    imu=np.random.randn(2, 9).astype(np.float32),
+    language=np.random.randint(0, 10000, (2, 32))
+)
+# 所有numpy数组自动转换为torch.Tensor
+```
+
+### 14.6 融合策略说明
+
+| 策略 | 说明 | 适用场景 |
+|------|------|----------|
+| `EARLY` | 早期融合，原始特征拼接后联合编码 | 模态对齐良好时 |
+| `LATE` | 晚期融合，各模态独立编码后在决策层融合 | 模态异构性强时 |
+| `HYBRID` | 混合融合，结合早期和晚期优点 | 默认，推荐使用 |
+
+### 14.7 融合网络架构参数
+
+| 组件 | 参数 | 默认值 |
+|------|------|--------|
+| 视觉编码器 | input_dim, output_dim | 512 → 256 |
+| 音频编码器 | input_dim, output_dim | 128 → 256 |
+| 触觉编码器 | input_dim, output_dim | 64 → 256 |
+| 力觉编码器 | input_dim, output_dim | 32 → 256 |
+| IMU编码器 | input_dim, output_dim | 64 → 256 |
+| 语言编码器 | vocab, embed, hidden, layers | 10000, 128, 256, 2 |
+| 跨模态注意力 | num_heads | 4 |
+| 融合投影 | hidden_dim * num_modalities → hidden_dim | 可变 |
+
+---
+
+## 15. AGV五级规格对照 (增强)
+
+### 15.1 传感器等级配置
+
+| 传感器 | S级 | M级 | L级 | XL级 | XXL级 |
+|--------|-----|-----|-----|------|-------|
+| 触觉阵列 | 8×8 Piezoresistive | 16×16 Piezoresistive | 24×24 Hybrid | 32×32 Capacitive | 48×48 Multi-modal |
+| 力觉 | — | 6轴 ±200N | 6轴 ±500N | 6轴 ±1000N | 6轴 ±5000N |
+| IMU | MPU6050 (6轴) | BMI088 (6轴) | BMI088 + Mag | ADIS16470 | 双 ADIS16470 |
+| 控制频率 | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+
+---
+
+*文档版本: v0.6.0*
 *最后更新: 2026-03-29*
