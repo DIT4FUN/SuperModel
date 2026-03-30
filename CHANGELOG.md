@@ -5,6 +5,16 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.0] - 2026-03-30
+
+### Added
+- **完整系统演示脚本** (`examples/complete_system_demo.py`): 新增端到端演示脚本，涵盖所有核心模块
+- **示例文档** (`examples/README.md`): 新增示例目录文档，包含快速开始和AGV五级配置示例
+- **README.md**: 测试数量更新至 721 项
+
+### Verified
+- 全量测试套件 **721 项**测试全部通过
+
 ## [1.3.0] - 2026-03-30
 
 ### Added
