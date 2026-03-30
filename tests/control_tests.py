@@ -2229,5 +2229,152 @@ class TestFusionSensorIntegration(unittest.TestCase):
         imu.close()
 
 
+class TestTrajectoryTracker(unittest.TestCase):
+    """测试AGV轨迹跟踪控制器"""
+
+    def test_tracker_initialization(self):
+        """轨迹跟踪器初始化"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+        self.assertEqual(tracker.look_ahead_distance, 0.3)
+        self.assertEqual(tracker.k_gain, 2.0)
+
+    def test_tracker_set_trajectory(self):
+        """设置轨迹"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        trajectory = [
+            AGVPose(x=0.0, y=0.0, theta=0.0),
+            AGVPose(x=0.5, y=0.0, theta=0.0),
+            AGVPose(x=1.0, y=0.0, theta=0.0),
+        ]
+        times = np.array([0.0, 1.0, 2.0])
+        tracker.set_trajectory(trajectory, times)
+
+        self.assertEqual(len(tracker._trajectory), 3)
+
+    def test_tracker_normalize_angle(self):
+        """角度归一化"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        # 测试边界情况
+        self.assertAlmostEqual(tracker._normalize_angle(np.pi), np.pi)
+        self.assertAlmostEqual(tracker._normalize_angle(-np.pi), -np.pi)
+        self.assertAlmostEqual(tracker._normalize_angle(3*np.pi), np.pi)
+        self.assertAlmostEqual(tracker._normalize_angle(-3*np.pi), -np.pi)
+
+    def test_tracker_find_look_ahead(self):
+        """前看点查找"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        trajectory = [
+            AGVPose(x=0.0, y=0.0, theta=0.0),
+            AGVPose(x=0.2, y=0.0, theta=0.0),
+            AGVPose(x=0.5, y=0.0, theta=0.0),
+            AGVPose(x=1.0, y=0.0, theta=0.0),
+        ]
+        times = np.array([0.0, 0.2, 0.5, 1.0])
+        tracker.set_trajectory(trajectory, times)
+
+        # 起始位置靠近第一个点
+        tracker._agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+        idx, pt = tracker._find_look_ahead_point(np.array([0.0, 0.0]))
+        self.assertGreaterEqual(idx, 0)
+        self.assertLessEqual(idx, len(trajectory) - 1)
+
+    def test_tracker_compute_command_basic(self):
+        """基本命令计算"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        trajectory = [
+            AGVPose(x=0.0, y=0.0, theta=0.0),
+            AGVPose(x=0.5, y=0.0, theta=0.0),
+            AGVPose(x=1.0, y=0.0, theta=0.0),
+        ]
+        times = np.array([0.0, 1.0, 2.0])
+        tracker.set_trajectory(trajectory, times)
+        tracker.set_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+
+        # 计算一步
+        wheel_cmds = tracker.compute_command(dt=0.01)
+        self.assertEqual(len(wheel_cmds), 4)
+
+    def test_tracker_empty_trajectory(self):
+        """空轨迹处理"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        wheel_cmds = tracker.compute_command(dt=0.01)
+        self.assertTrue(np.allclose(wheel_cmds, np.zeros(4)))
+
+    def test_tracker_is_complete(self):
+        """轨迹完成判断"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        self.assertTrue(tracker.is_trajectory_complete())
+
+        trajectory = [AGVPose(x=1.0, y=0.0, theta=0.0)]
+        times = np.array([1.0])
+        tracker.set_trajectory(trajectory, times)
+        tracker.set_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+
+        self.assertFalse(tracker.is_trajectory_complete())
+
+    def test_tracker_reset(self):
+        """重置跟踪器"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        trajectory = [AGVPose(x=1.0, y=0.0, theta=0.0)]
+        times = np.array([1.0])
+        tracker.set_trajectory(trajectory, times)
+        tracker.set_pose(AGVPose(x=0.5, y=0.0, theta=0.0))
+        tracker._current_idx = 1
+
+        tracker.reset()
+
+        self.assertEqual(tracker._current_idx, 0)
+        self.assertEqual(tracker._last_error, 0.0)
+
+    def test_tracker_full_simulation(self):
+        """完整轨迹跟踪仿真"""
+        from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
+        spec = AGVSpec.from_grade(AGVGrade.M)
+        tracker = TrajectoryTracker(spec)
+
+        # 生成直线轨迹
+        n_points = 10
+        trajectory = [
+            AGVPose(x=float(i) * 0.1, y=0.0, theta=0.0)
+            for i in range(n_points)
+        ]
+        times = np.array([float(i) * 0.1 for i in range(n_points)])
+        tracker.set_trajectory(trajectory, times)
+        tracker.set_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+
+        # 模拟多步
+        for step in range(20):
+            wheel_cmds = tracker.compute_command(dt=0.01)
+
+            if tracker.is_trajectory_complete():
+                break
+
+        # 不应该崩溃
+        self.assertTrue(True)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

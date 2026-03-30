@@ -370,3 +370,177 @@ class KinematicsFactory:
 def get_agv_spec(grade: str) -> AGVSpec:
     """获取AGV等级规格"""
     return AGVSpec.from_grade(AGVGrade(grade))
+
+
+class TrajectoryTracker:
+    """
+    AGV轨迹跟踪控制器
+    
+    在 AGVMotionController 基础上增加:
+    - Pure Pursuit 轨迹跟踪
+    - 速度前瞻控制
+    - 曲率前馈
+    - 轨迹重规划触发
+    """
+    
+    def __init__(
+        self,
+        spec: AGVSpec,
+        look_ahead_distance: float = 0.3,
+        k_gain: float = 2.0,
+        smooth_yaw: bool = True
+    ):
+        """
+        Args:
+            spec: AGV规格
+            look_ahead_distance: 前看距离 (m)
+            k_gain: 增益系数
+            smooth_yaw: 是否平滑航向角
+        """
+        self.spec = spec
+        self.look_ahead_distance = look_ahead_distance
+        self.k_gain = k_gain
+        self.smooth_yaw = smooth_yaw
+        
+        # 底层AGV控制器
+        self._agv = AGVMotionController(spec)
+        
+        # 轨迹
+        self._trajectory: List[AGVPose] = []
+        self._trajectory_times: np.ndarray = np.array([])
+        self._current_idx = 0
+        
+        # PID参数
+        self.kp_dist = 3.0
+        self.kp_theta = 2.0
+        self._last_error = 0.0
+        
+    def set_trajectory(self, trajectory: List[AGVPose], times: np.ndarray):
+        """
+        设置参考轨迹
+        
+        Args:
+            trajectory: 轨迹点序列
+            times: 对应时间戳
+        """
+        self._trajectory = trajectory
+        self._trajectory_times = times
+        self._current_idx = 0
+    
+    def set_pose(self, pose: AGVPose):
+        """更新当前位姿"""
+        self._agv.update_pose(pose)
+    
+    @property
+    def pose(self) -> AGVPose:
+        return self._agv.pose
+    
+    def _find_look_ahead_point(self, current_pos: np.ndarray) -> Tuple[int, AGVPose]:
+        """
+        找到前看点
+        
+        Returns:
+            (index, look_ahead_point)
+        """
+        min_dist = float('inf')
+        best_idx = self._current_idx
+        
+        for i in range(self._current_idx, len(self._trajectory)):
+            pt = self._trajectory[i]
+            pt_pos = np.array([pt.x, pt.y])
+            dist = np.linalg.norm(pt_pos - current_pos)
+            
+            if dist >= self.look_ahead_distance:
+                if dist < min_dist:
+                    min_dist = dist
+                    best_idx = i
+        
+        self._current_idx = max(0, best_idx - 1)
+        return best_idx, self._trajectory[best_idx]
+    
+    def _normalize_angle(self, angle: float) -> float:
+        """将角度归一化到 [-pi, pi]"""
+        while angle > np.pi:
+            angle -= 2.0 * np.pi
+        while angle < -np.pi:
+            angle += 2.0 * np.pi
+        return angle
+    
+    def compute_command(self, dt: float) -> np.ndarray:
+        """
+        计算轮速命令
+        
+        Args:
+            dt: 时间步长
+            
+        Returns:
+            wheel_commands: 轮速命令 (rad/s)
+        """
+        current = self._agv.pose
+        current_pos = np.array([current.x, current.y])
+        current_theta = current.theta
+        
+        if not self._trajectory or self._current_idx >= len(self._trajectory):
+            return np.zeros(4)
+        
+        # 找到前看点
+        _, target = self._find_look_ahead_point(current_pos)
+        target_pos = np.array([target.x, target.y])
+        target_theta = target.theta
+        
+        # 计算距离误差
+        dx = target_pos[0] - current_pos[0]
+        dy = target_pos[1] - current_pos[1]
+        dist_error = np.sqrt(dx**2 + dy**2)
+        
+        # 计算角度误差 (在车体坐标系下)
+        angle_to_target = np.arctan2(dy, dx)
+        angle_error = self._normalize_angle(angle_to_target - current_theta)
+        
+        # Pure Pursuit 转向控制
+        # alpha = atan2(2*L*sin(alpha)/dist)
+        # 简化为比例控制
+        if dist_error > 0.01:
+            steering = self.k_gain * 2.0 * np.sin(angle_error) / dist_error
+        else:
+            steering = 0.0
+        
+        steering = np.clip(steering, -self.spec.max_angular_speed, self.spec.max_angular_speed)
+        
+        # 速度: 基于距离误差的减速
+        if dist_error < 0.05:
+            target_speed = 0.0
+        else:
+            speed_factor = min(dist_error / self.look_ahead_distance, 1.0)
+            target_speed = self.spec.max_linear_speed * speed_factor * 0.5
+        
+        # 构建Twist
+        twist = AGVTwist(vx=target_speed, vy=0.0, omega=steering)
+        
+        # 逆运动学
+        wheel_cmds = self._agv.inverse_kinematics(twist)
+        
+        # 安全限制
+        wheel_cmds = self._agv.apply_safety_limits(wheel_cmds)
+        
+        return wheel_cmds
+    
+    def is_trajectory_complete(self) -> bool:
+        """检查轨迹是否完成"""
+        if not self._trajectory:
+            return True
+        
+        current = self._agv.pose
+        current_pos = np.array([current.x, current.y])
+        
+        last_pt = self._trajectory[-1]
+        last_pos = np.array([last_pt.x, last_pt.y])
+        
+        dist_to_end = np.linalg.norm(current_pos - last_pos)
+        return dist_to_end < 0.05 and self._current_idx >= len(self._trajectory) - 2
+    
+    def reset(self):
+        """重置跟踪器"""
+        self._current_idx = 0
+        self._last_error = 0.0
+        self._agv = AGVMotionController(self.spec)

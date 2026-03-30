@@ -40,7 +40,8 @@ from .mpc import (
     JointSpaceMPC, CartesianMPC, get_mpc_spec
 )
 from .agv import (
-    AGVMotionController, AGVSpec, AGVPose, AGVTwist, DriveType, AGVGrade,
+    AGVMotionController, TrajectoryTracker, AGVSpec, AGVPose, AGVTwist,
+    DriveType, AGVGrade,
     DifferentialKinematics, MecanumKinematics, get_agv_spec
 )
 
@@ -62,6 +63,7 @@ __all__ = [
     'JointCommand', 'JointState', 'ControlInterfaceMode',
     'ActionGoalStatus', 'ActionFeedback', 'ActionResult',
     'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec',
-    'AGVMotionController', 'AGVSpec', 'AGVPose', 'AGVTwist', 'DriveType', 'AGVGrade',
+    'AGVMotionController', 'TrajectoryTracker', 'AGVSpec', 'AGVPose', 'AGVTwist',
+    'DriveType', 'AGVGrade',
     'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec'
 ]

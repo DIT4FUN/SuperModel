@@ -12,7 +12,7 @@ Gymnasium 环境包装器
 
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Tuple, Optional, List, Dict, Any, Optional
+from typing import Tuple, Optional, List, Dict, Any
 import time
 import gymnasium as gym
 from gymnasium import spaces

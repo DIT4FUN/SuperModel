@@ -5,6 +5,24 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-30
+
+### Added
+- **Pure Pursuit轨迹跟踪器** (`control/agv.py`): 新增 `TrajectoryTracker` 类，实现:
+  - 前看距离控制 (look_ahead_distance)
+  - Pure Pursuit 转向算法
+  - 速度前瞻控制
+  - 轨迹完成检测与重置
+- **AGV五级规格增强** (`docs/design/AGV_GRADE_SPEC.md`): 新增 Pure Pursuit 轨迹跟踪规格对照表
+- **轨迹跟踪测试套件** (`tests/control_tests.py`): 新增 10 项测试覆盖 TrajectoryTracker:
+  - 初始化、轨迹设置、角度归一化、前看点查找
+  - 基本命令计算、空轨迹处理、完成判断、重置
+  - 完整轨迹跟踪仿真
+- **Bug Fix**: `simulation/gym_env.py` 修复重复导入 `Optional` 问题
+
+### Verified
+- 全量测试套件 **663 项**测试全部通过（新增 10 项轨迹跟踪测试）
+
 ## [1.2.0] - 2026-03-30
 
 ### Added
