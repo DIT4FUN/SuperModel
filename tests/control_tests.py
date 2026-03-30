@@ -2292,7 +2292,8 @@ class TestTrajectoryTracker(unittest.TestCase):
     def test_tracker_compute_command_basic(self):
         """基本命令计算"""
         from control.agv import TrajectoryTracker, AGVSpec, AGVGrade, AGVPose
-        spec = AGVSpec.from_grade(AGVGrade.M)
+        # AGVGrade.L 使用 Mecanum 驱动 (4轮)
+        spec = AGVSpec.from_grade(AGVGrade.L)
         tracker = TrajectoryTracker(spec)
 
         trajectory = [
@@ -2304,7 +2305,7 @@ class TestTrajectoryTracker(unittest.TestCase):
         tracker.set_trajectory(trajectory, times)
         tracker.set_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
 
-        # 计算一步
+        # 计算一步 (Mecanum 4轮)
         wheel_cmds = tracker.compute_command(dt=0.01)
         self.assertEqual(len(wheel_cmds), 4)
 
