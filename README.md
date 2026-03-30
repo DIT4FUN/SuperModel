@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-736%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-770%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -29,7 +29,7 @@
 | `learning/` | 自主学习框架 (对比学习/世界模型/好奇心) | ✅ 完成 |
 | `learning/world_model.py` | **Dreamer-style World Model** (RSSM) | ✅ 完成 |
 | `learning/dreamer_agent.py` | **Dreamer Actor-Critic** (想象训练) | ✅ 完成 |
-| `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
+| `control/` | 运动控制 + 多AGV协调 (PID/阻抗/技能库/规划/编队) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
 | `tests/` | 全套单元测试 (**721项全部通过**) | ✅ 完成 |
@@ -349,14 +349,16 @@ SuperModel/
 │   │   ├── planner.py          # HTN 任务规划
 │   │   ├── trajectory.py       # RRT 路径规划 + S曲线
 │   │   ├── ros2_interface.py   # ROS2 Humble 集成
-│   │   └── safety_controller.py # 安全监控 (S~XXL 五级)
+│   │   ├── safety_controller.py # 安全监控 (S~XXL 五级)
+│   │   └── multi_agent.py      # 多AGV协调控制 (L/XL/XXL)
 │   └── simulation/         # 仿真环境
 │       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
-├── tests/                   # 653 项测试全部通过
-│   ├── sensor_tests.py      # 传感器 (74 tests)
-│   ├── fusion_tests.py      # 融合网络 (51 tests)
+├── tests/                   # 770 项测试全部通过
+│   ├── sensor_tests.py      # 传感器 (140 tests)
+│   ├── fusion_tests.py      # 融合网络 (86 tests)
 │   ├── sensorimotor_tests.py # 传感器-执行器融合 (19 tests)
 │   ├── control_tests.py     # 控制模块 (110 tests)
+│   ├── multi_agent_tests.py # 多智能体协调 (34 tests)
 │   ├── ros2_interface_tests.py # ROS2接口 (44 tests)
 │   ├── integration_tests.py # 集成测试 (20 tests)
 │   ├── encoder_tests.py     # 编码器 (34 tests)
@@ -399,7 +401,7 @@ SuperModel/
 
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
-| sensor_tests.py | 90 | ✅ 全部通过 |
+| sensor_tests.py | 140 | ✅ 全部通过 |
 | fusion_tests.py | 63 | ✅ 全部通过 |
 | control_tests.py | 174 | ✅ 全部通过 |
 | ros2_interface_tests.py | 44 | ✅ 全部通过 |
@@ -413,7 +415,8 @@ SuperModel/
 | benchmark_tests.py | 16 | ✅ 全部通过 |
 | mpc_tests.py | 25 | ✅ 全部通过 |
 | test_sensor_manager.py | 27 | ✅ 全部通过 |
-| **总计** | **653** | ✅ **全部通过** |
+| multi_agent_tests.py | 34 | ✅ 全部通过 |
+| **总计** | **770** | ✅ **全部通过** |
 
 ## 技术栈
 

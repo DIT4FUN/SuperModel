@@ -3384,3 +3384,157 @@ class VirtualIMUSensor:
 *最后更新: 2026-03-30*
 
 **2026-03-30 v1.5.0**: 新增第25-27节触觉/力觉/IMU传感器模块完整接口文档，包含 TactileArray、ForceTorqueSensor、IMUSensor、PoseEstimator、VirtualTactileSensor、VirtualForceSensor、VirtualIMUSensor 的类接口、数据结构、AGV五级规格表。可直接用于接口对照和代码生成。
+
+---
+
+## 第28节: 多智能体协调控制 (Multi-Agent Coordination)
+
+### 28.1 MultiAgentCoordinator
+
+多AGV协同控制与编队管理，支持 L/XL/XXL 等级。
+
+```python
+class MultiAgentCoordinator:
+    def __init__(
+        self,
+        communication_range: float = 10.0,  # m
+        safety_distance: float = 0.5,        # m
+        max_agents: int = 20
+    )
+
+    # 智能体管理
+    def register_agent(
+        self,
+        agent_id: str,
+        initial_position: np.ndarray,       # (x, y) or (x, y, theta)
+        leader_id: Optional[str] = None
+    ) -> bool
+
+    def unregister_agent(self, agent_id: str)
+
+    # 编队管理
+    def create_formation(
+        self,
+        formation_id: str,
+        formation_type: FormationType,      # LINE / TRIANGLE / SQUARE / CIRCLE / V_SHAPE / GRID / FREE
+        target_position: np.ndarray,
+        target_heading: float = 0.0,
+        formation_size: Optional[int] = None
+    ) -> CoordinationTask
+
+    def compute_formation_target(
+        self,
+        agent_id: str,
+        leader_position: np.ndarray,
+        leader_heading: float
+    ) -> np.ndarray
+
+    def get_formation_center(self, formation_id: str) -> np.ndarray
+
+    # 碰撞检测与避障
+    def detect_collisions(self) -> List[CollisionRisk]
+    def resolve_collisions(self) -> Dict[str, np.ndarray]  # agent_id -> velocity_correction
+
+    # 任务分配
+    def assign_tasks(self, tasks: List[Tuple[str, np.ndarray]])  # (task_id, task_position)
+
+    # 主循环
+    def step(self, dt: float)
+
+    def get_status(self) -> Dict
+```
+
+**核心数据类型:**
+
+```python
+class FormationType(Enum):
+    LINE = "line"           # 线性队列
+    TRIANGLE = "triangle"   # 三角阵型
+    SQUARE = "square"       # 方形阵型
+    CIRCLE = "circle"       # 圆形阵型
+    V_SHAPE = "v_shape"     # V字形
+    GRID = "grid"           # 网格阵型
+    FREE = "free"           # 自由分布
+
+class CoordinationState(Enum):
+    IDLE = "idle"
+    FORMING = "forming"
+    FORMING_COMPLETE = "formed"
+    NAVIGATING = "navigating"
+    REFORMING = "reforming"
+    DISBANDING = "disbanding"
+    DISBANDED = "disbanded"
+    EMERGENCY = "emergency"
+
+@dataclass
+class AgentState:
+    agent_id: str
+    position: np.ndarray      # (x, y) or (x, y, theta)
+    velocity: np.ndarray
+    target: Optional[np.ndarray]
+    leader_id: Optional[str]
+    neighbors: List[str]
+    in_formation: bool
+    formation_slot: Optional[int]
+    state: CoordinationState
+    battery_level: float      # 0-1
+    task_id: Optional[str]
+
+@dataclass
+class FormationSlot:
+    slot_id: int
+    relative_position: np.ndarray  # 相对于队长的位置
+    tolerance: float = 0.1          # m, 到达容忍度
+    assigned_agent: Optional[str]
+
+@dataclass
+class CollisionRisk:
+    agent_a: str
+    agent_b: str
+    distance: float
+    time_to_collision: float  # s
+    severity: str            # "low" / "medium" / "high" / "critical"
+```
+
+**使用示例:**
+```python
+from control.multi_agent import MultiAgentCoordinator, FormationType
+
+coord = MultiAgentCoordinator(communication_range=10.0, safety_distance=0.5)
+
+# 注册多个AGV
+coord.register_agent("agv_0", np.array([0.0, 0.0]))
+coord.register_agent("agv_1", np.array([1.0, 0.0]))
+coord.register_agent("agv_2", np.array([2.0, 0.0]))
+coord.register_agent("agv_3", np.array([3.0, 0.0]))
+
+# 创建V字形编队
+coord.create_formation("v_formation", FormationType.V_SHAPE, np.array([0.0, 0.0]))
+
+# 协调主循环
+risks = coord.detect_collisions()
+corrections = coord.resolve_collisions()
+coord.step(dt=0.01)
+
+# 任务分配
+coord.assign_tasks([
+    ("task_1", np.array([5.0, 0.0])),
+    ("task_2", np.array([6.0, 1.0])),
+])
+```
+
+**AGV五级协调能力规格:**
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 多AGV协同 | ✗ | ✗ | ✓ (≤4台) | ✓ (≤10台) | ✓ (≤20台) |
+| 编队控制 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 碰撞检测 | ✗ | ✗ | 反应式 | 预测式 | 最优避障 |
+| 编队类型 | - | - | LINE/CIRCLE | 全部 | 全部 |
+| 分布式决策 | - | - | - | ✓ | ✓ |
+| 任务分配 | - | - | 最近邻 | 拍卖算法 | 分布式优化 |
+
+*文档版本: v1.6.0*
+*最后更新: 2026-03-30*
+
+**2026-03-30 v1.6.0**: 新增第28节多智能体协调控制模块 (multi_agent.py)，包含 MultiAgentCoordinator 编队控制、CollisionRisk 碰撞检测、FormationType 编队类型、分布式任务分配，支持 L/XL/XXL 三级协调能力。

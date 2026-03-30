@@ -12,6 +12,7 @@ SuperModel 控制模块
 - ros2_interface: ROS2 Humble 集成接口
 - safety_controller: 安全监控与故障容忍
 - agv: AGV运动学/动力学控制
+- multi_agent: 多智能体协调控制 (L/XL/XXL)
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand
@@ -44,6 +45,11 @@ from .agv import (
     DriveType, AGVGrade,
     DifferentialKinematics, MecanumKinematics, get_agv_spec
 )
+from .multi_agent import (
+    MultiAgentCoordinator, FormationType, CoordinationState,
+    AgentState, FormationSlot, CoordinationTask, CollisionRisk,
+    get_coordination_spec
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand',
@@ -65,5 +71,8 @@ __all__ = [
     'ROSTopics', 'ROSServices', 'ROSParams', 'get_ros2_spec',
     'AGVMotionController', 'TrajectoryTracker', 'AGVSpec', 'AGVPose', 'AGVTwist',
     'DriveType', 'AGVGrade',
-    'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec'
+    'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec',
+    'MultiAgentCoordinator', 'FormationType', 'CoordinationState',
+    'AgentState', 'FormationSlot', 'CoordinationTask', 'CollisionRisk',
+    'get_coordination_spec'
 ]

@@ -5,6 +5,16 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.5.0] - 2026-03-30
+
+### Added
+- **多智能体协调控制模块** (`control/multi_agent.py`): 新增多AGV编队控制、碰撞检测与避障、分布式任务分配，支持 L/XL/XXL 三级协调能力
+- **多智能体测试套件** (`tests/multi_agent_tests.py`): 34项测试覆盖编队/碰撞/任务分配
+- **MODULE_INTERFACE.md 第28节**: 完整多智能体协调控制接口文档
+
+### Verified
+- 全量测试套件 **770 项**测试全部通过 (新增34项)
+
 ## [1.4.5] - 2026-03-30
 
 ### Verified
