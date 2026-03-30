@@ -5,6 +5,19 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-30
+
+### Added
+- **ROS2接口模块测试** (`tests/ros2_interface_tests.py`): 新增 44 项测试，覆盖:
+  - `ROS2JointTrajectoryInterface`: 激活/停用、轨迹发送、状态更新、取消、统计、多种控制模式
+  - `ROS2ActionInterface`: 服务器启停、目标管理(发送/取消/状态)、异步目标、结果等待、统计
+  - `ROS2ParameterInterface`: 参数读写、批量操作、命名空间、前缀过滤、订阅变更、字典导入导出
+  - `ROS2ComponentInterface`: 生命周期状态机(配置/激活/停用/清理/关闭)、回调注册
+  - 关节命令/状态数据类、Action反馈/结果数据类
+
+### Verified
+- 全量测试套件 **653 项**测试全部通过（sensor_tests.py 90项 + fusion_tests.py 63项 + control_tests.py 174项 + ros2_interface_tests.py 44项 + 其他282项）
+
 ## [1.1.0] - 2026-03-30
 
 ### Added
