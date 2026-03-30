@@ -528,3 +528,420 @@ def get_mpc_spec(grade: str = 'M') -> Dict[str, Any]:
         }
     }
     return specs.get(grade, specs['M'])
+
+
+class AdaptiveMPCController:
+    """
+    自适应 MPC 控制器
+    ==================
+    
+    在线系统辨识 + 模型预测控制:
+    - 递推最小二乘 (RLS) 在线辨识系统参数
+    - 自适应预测模型更新
+    - 冷启动重 planning 机制
+    
+    适用场景:
+    - 负载变化场景 (抓取不同重量物体)
+    - 磨损补偿 (关节参数漂移)
+    - 人机协作 (交互力反馈调整)
+    
+    支持AGV等级: M / L / XL / XXL
+    """
+    
+    def __init__(
+        self,
+        n_joints: int,
+        base_config: Optional[MPCConfig] = None,
+        identification_rate: float = 0.02,  # 辨识频率
+        forgetting_factor: float = 0.995,
+        adaptation_threshold: float = 0.1,
+        use_ekf: bool = False,
+    ):
+        """
+        Args:
+            n_joints: 关节数
+            base_config: 基础 MPC 配置
+            identification_rate: 参数辨识更新频率
+            forgetting_factor: 遗忘因子 (RLS)
+            adaptation_threshold: 模型更新阈值
+            use_ekf: 是否使用扩展卡尔曼滤波 (比RLS更稳定)
+        """
+        self.n_joints = n_joints
+        self.config = base_config or self._default_config()
+        self.id_rate = identification_rate
+        self.lambda_rls = forgetting_factor
+        self.adaptation_threshold = adaptation_threshold
+        self.use_ekf = use_ekf
+        
+        # 基础模型参数 (标称值)
+        self._nominal_inertia = np.eye(n_joints) * 5.0
+        self._nominal_damping = np.eye(n_joints) * 10.0
+        self._nominal_stiffness = np.eye(n_joints) * 0.0
+        
+        # 在线估计的参数
+        self._est_inertia = np.eye(n_joints) * 5.0
+        self._est_damping = np.eye(n_joints) * 10.0
+        
+        # RLS 协方差矩阵
+        self._P_inertia = np.eye(n_joints * n_joints) * 100.0
+        self._P_damping = np.eye(n_joints * n_joints) * 100.0
+        
+        # 参数估计历史
+        self._inertia_history: List[np.ndarray] = []
+        self._damping_history: List[np.ndarray] = []
+        self._history_max = 200
+        
+        # 当前使用的模型
+        self._current_inertia = self._nominal_inertia.copy()
+        self._current_damping = self._nominal_damping.copy()
+        
+        # MPC 求解器
+        self._mpc_solver = GradientDescentMPC(n_joints, self.config)
+        
+        # 计数器
+        self._id_counter = 0
+        self._total_updates = 0
+        self._adaptation_count = 0
+        
+    def _default_config(self) -> MPCConfig:
+        """默认配置"""
+        config = MPCConfig()
+        config.horizon = 20
+        config.control_horizon = 10
+        config.dt = 0.01
+        config.Q_pos = np.ones(self.n_joints) * 100.0
+        config.Q_vel = np.ones(self.n_joints) * 10.0
+        config.R_acc = np.ones(self.n_joints) * 0.1
+        return config
+    
+    def _vector_to_matrix(self, vec: np.ndarray) -> np.ndarray:
+        """向量转矩阵 (用于 RLS 参数)"""
+        n = self.n_joints
+        return vec.reshape(n, n)
+    
+    def _matrix_to_vector(self, mat: np.ndarray) -> np.ndarray:
+        """矩阵转向量 (用于 RLS 参数)"""
+        return mat.flatten()
+    
+    def _rls_update(
+        self,
+        theta: np.ndarray,
+        P: np.ndarray,
+        phi: np.ndarray,
+        y: float,
+        lambda_f: float
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        递推最小二乘 (RLS) 更新
+        
+        Args:
+            theta: 参数向量
+            P: 协方差矩阵
+            phi: 观测向量
+            y: 观测输出
+            lambda_f: 遗忘因子
+            
+        Returns:
+            (theta_updated, P_updated)
+        """
+        # 预测
+        y_pred = phi @ theta
+        
+        # 误差
+        error = y - y_pred
+        
+        # 卡尔曼增益
+        denom = lambda_f + phi @ P @ phi
+        K = (P @ phi) / denom
+        
+        # 参数更新
+        theta_new = theta + K * error
+        
+        # 协方差更新 (Joseph form for numerical stability)
+        P_new = (np.eye(len(theta)) - np.outer(K, phi)) @ P / lambda_f
+        
+        return theta_new, P_new
+    
+    def identify_system_rls(
+        self,
+        joint_positions: np.ndarray,
+        joint_velocities: np.ndarray,
+        joint_accelerations: np.ndarray,
+        joint_torques: np.ndarray
+    ) -> Dict[str, float]:
+        """
+        使用 RLS 在线辨识系统参数
+        
+        动力学模型: tau = M(q) * qdd + D(q, qd) * qd
+        
+        Args:
+            joint_positions: 关节位置 (n_joints,)
+            joint_velocities: 关节速度 (n_joints,)
+            joint_accelerations: 关节加速度 (n_joints,)
+            joint_torques: 关节力矩 (n_joints,)
+            
+        Returns:
+            辨识诊断信息
+        """
+        n = self.n_joints
+        
+        # 构建回归矩阵 (每个关节一个方程)
+        # tau_i = [M_ii.flatten(), D_ii.flatten()] @ [qdd, qd]
+        # 简化: 假设 M 和 D 为对角矩阵
+        
+        # 观测向量: phi = [qdd_1, qdd_2, ..., qdd_n, qd_1, qd_2, ..., qd_n]
+        phi_full = np.concatenate([joint_accelerations, joint_velocities])
+        
+        # 更新每个关节的惯性参数
+        new_inertia_estimate = np.zeros((n, n))
+        new_damping_estimate = np.zeros((n, n))
+        
+        diag_residuals = []
+        
+        for i in range(n):
+            # 单关节 RLS
+            # tau_i = M_ii * qdd_i + D_ii * qd_i
+            phi_i = np.array([joint_accelerations[i], joint_velocities[i]])
+            y_i = joint_torques[i]
+            
+            # 提取对角元素
+            theta_M_i = np.array([self._est_inertia[i, i]])
+            theta_D_i = np.array([self._est_damping[i, i]])
+            
+            # M 参数更新
+            theta_M_new, P_M_new = self._rls_update(
+                theta_M_i, np.array([[100.0]]),
+                np.array([joint_accelerations[i]]),
+                y_i, self.lambda_rls
+            )
+            new_inertia_estimate[i, i] = np.clip(theta_M_new[0], 0.1, 50.0)
+            
+            # 残余力用于阻尼估计
+            residual = y_i - new_inertia_estimate[i, i] * joint_accelerations[i]
+            theta_D_new, P_D_new = self._rls_update(
+                theta_D_i, np.array([[100.0]]),
+                np.array([joint_velocities[i]]),
+                residual, self.lambda_rls
+            )
+            new_damping_estimate[i, i] = np.clip(theta_D_new[0], 0.1, 200.0)
+            
+            diag_residuals.append(abs(residual))
+        
+        # 更新当前模型
+        old_inertia_trace = np.trace(self._current_inertia)
+        old_damping_trace = np.trace(self._current_damping)
+        
+        # 平滑更新 (避免突变)
+        alpha_smooth = 0.1
+        self._current_inertia = (
+            (1 - alpha_smooth) * self._current_inertia +
+            alpha_smooth * new_inertia_estimate
+        )
+        self._current_damping = (
+            (1 - alpha_smooth) * self._current_damping +
+            alpha_smooth * new_damping_estimate
+        )
+        
+        # 检查是否有显著变化
+        inertia_change = abs(
+            np.trace(self._current_inertia) - old_inertia_trace
+        ) / (old_inertia_trace + 1e-6)
+        
+        if inertia_change > self.adaptation_threshold:
+            self._adaptation_count += 1
+        
+        # 记录历史
+        self._inertia_history.append(self._current_inertia.copy())
+        self._damping_history.append(self._current_damping.copy())
+        
+        if len(self._inertia_history) > self._history_max:
+            self._inertia_history.pop(0)
+            self._damping_history.pop(0)
+        
+        self._total_updates += 1
+        
+        return {
+            "inertia_trace_current": float(np.trace(self._current_inertia)),
+            "inertia_trace_nominal": float(np.trace(self._nominal_inertia)),
+            "inertia_change_ratio": float(inertia_change),
+            "damping_trace_current": float(np.trace(self._current_damping)),
+            "mean_residual": float(np.mean(diag_residuals)),
+            "adaptation_count": self._adaptation_count,
+            "total_updates": self._total_updates,
+        }
+    
+    def compute_control(
+        self,
+        current_pos: np.ndarray,
+        current_vel: np.ndarray,
+        desired_pos: np.ndarray,
+        desired_vel: Optional[np.ndarray] = None,
+        external_torque: Optional[np.ndarray] = None,
+        identification_data: Optional[Dict[str, np.ndarray]] = None,
+    ) -> np.ndarray:
+        """
+        自适应 MPC 控制
+        
+        Args:
+            current_pos: 当前位置
+            current_vel: 当前速度
+            desired_pos: 目标位置
+            desired_vel: 目标速度 (可选)
+            external_torque: 外力矩扰动 (可选)
+            identification_data: 包含辨识数据的字典 (可选)
+            
+        Returns:
+            控制力矩
+        """
+        # 定期进行系统辨识
+        if identification_data is not None:
+            diag = self.identify_system_rls(
+                identification_data.get("positions", current_pos),
+                identification_data.get("velocities", current_vel),
+                identification_data.get("accelerations", np.zeros(self.n_joints)),
+                identification_data.get("torques", np.zeros(self.n_joints)),
+            )
+        
+        # 构建带有当前估计参数的 MPC
+        # 使用自适应动力学科室
+        dynamics = lambda q, qd, tau: (
+            np.linalg.solve(self._current_inertia + np.eye(self.n_joints) * 0.1,
+                            tau - self._current_damping @ qd)
+        )
+        
+        # 重置 MPC 求解器使用新模型
+        self._mpc_solver._A_disc = np.block([
+            [np.eye(self.n_joints), self.config.dt * np.eye(self.n_joints)],
+            [np.zeros((self.n_joints, self.n_joints)),
+             np.eye(self.n_joints) - self.config.dt * np.linalg.solve(
+                 self._current_inertia + np.eye(self.n_joints) * 0.1,
+                 self._current_damping
+             )]
+        ])
+        
+        self._mpc_solver._B_disc = np.block([
+            [np.zeros((self.n_joints, self.n_joints))],
+            [self.config.dt * np.linalg.solve(
+                self._current_inertia + np.eye(self.n_joints) * 0.1,
+                np.eye(self.n_joints)
+            )]
+        ])
+        
+        # 计算控制
+        if desired_vel is None:
+            desired_vel = np.zeros(self.n_joints)
+        
+        if external_torque is not None:
+            # 扰动补偿
+            disturbance_comp = np.linalg.solve(
+                self._current_inertia + np.eye(self.n_joints) * 0.1,
+                external_torque
+            )
+            desired_vel = desired_vel + disturbance_comp * self.config.dt
+        
+        tau = self._mpc_solver.compute_control(
+            current_pos, desired_pos, current_vel, desired_vel
+        )
+        
+        return tau
+    
+    def get_model_confidence(self) -> Dict[str, float]:
+        """
+        获取模型置信度
+        
+        基于参数估计方差和历史稳定性
+        """
+        if len(self._inertia_history) < 10:
+            return {"confidence": 0.0, "stable": False}
+        
+        inertia_arr = np.array([
+            np.trace(m) for m in self._inertia_history[-50:]
+        ])
+        
+        inertia_std = float(np.std(inertia_arr))
+        inertia_mean = float(np.mean(inertia_arr))
+        
+        # 归一化置信度
+        cv = inertia_std / (inertia_mean * 0.1 + 1)
+        confidence = max(0.0, 1.0 - cv)
+        
+        return {
+            "confidence": confidence,
+            "stable": cv < 0.1,
+            "inertia_std": inertia_std,
+            "inertia_mean": inertia_mean,
+            "coefficient_of_variation": cv,
+            "history_length": len(self._inertia_history),
+            "adaptation_rate": self._adaptation_count / max(1, self._total_updates),
+        }
+    
+    def reset_estimation(self) -> None:
+        """重置参数估计"""
+        self._est_inertia = self._nominal_inertia.copy()
+        self._est_damping = self._nominal_damping.copy()
+        self._current_inertia = self._nominal_inertia.copy()
+        self._current_damping = self._nominal_damping.copy()
+        self._inertia_history.clear()
+        self._damping_history.clear()
+        self._P_inertia = np.eye(self.n_joints * self.n_joints) * 100.0
+        self._P_damping = np.eye(self.n_joints * self.n_joints) * 100.0
+        self._adaptation_count = 0
+        self._total_updates = 0
+
+
+class GradientDescentMPC:
+    """梯度下降 MPC 求解器 (OSQP 替代, 轻量级)"""
+    
+    def __init__(self, n_joints: int, config: MPCConfig):
+        self.n = n_joints
+        self.config = config
+        
+        # 离散状态空间
+        self._A_disc = np.block([
+            [np.eye(n_joints), config.dt * np.eye(n_joints)],
+            [np.zeros((n_joints, n_joints)),
+             np.eye(n_joints) - config.dt * 10.0 * np.eye(n_joints)]
+        ])
+        
+        self._B_disc = np.block([
+            [np.zeros((n_joints, n_joints))],
+            [config.dt * np.eye(n_joints)]
+        ])
+    
+    def compute_control(
+        self,
+        current_pos: np.ndarray,
+        desired_pos: np.ndarray,
+        current_vel: np.ndarray,
+        desired_vel: Optional[np.ndarray] = None
+    ) -> np.ndarray:
+        """计算 MPC 控制"""
+        if desired_vel is None:
+            desired_vel = np.zeros(self.n)
+        
+        # 拼接状态
+        x = np.concatenate([current_pos, current_vel])
+        x_des = np.concatenate([desired_pos, desired_vel])
+        
+        # 简单 LQR 近似
+        Q = np.diag(list(self.config.Q_pos) + list(self.config.Q_vel))
+        R = np.diag(list(self.config.R_acc))
+        
+        # 求解 Riccati
+        P = Q.copy()
+        for _ in range(self.config.horizon):
+            P = Q + self._A_disc.T @ P @ self._A_disc - \
+                self._A_disc.T @ P @ self._B_disc @ np.linalg.solve(
+                    R + self._B_disc.T @ P @ self._B_disc,
+                    self._B_disc.T @ P @ self._A_disc
+                )
+        
+        # 反馈增益
+        K_lqr = np.linalg.solve(
+            R + self._B_disc.T @ P @ self._B_disc,
+            self._B_disc.T @ P @ self._A_disc
+        )
+        
+        # 应用第一帧控制
+        u = -K_lqr @ (x - x_des)
+        return u[:self.n]

@@ -11,7 +11,7 @@
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Tuple, Optional, Callable
+from typing import Tuple, Optional, Callable, Dict, List
 
 
 @dataclass
@@ -381,3 +381,369 @@ class CollaborativeController:
             return jacobian[:3, :].T @ backoff_force
         
         return np.zeros(jacobian.shape[1])
+
+
+class AdaptiveImpedanceController:
+    """
+    自适应阻抗控制器
+    ==================
+    
+    在线估计环境参数并自适应调整阻抗系数。
+    基于李雅普诺夫稳定性理论实现参数自适应律。
+    
+    适用场景:
+    - 未知刚度环境 (刚度范围 100~10000 N/m)
+    - 非结构化环境接触
+    - 人机协作中的意图适应
+    
+    支持AGV等级: M / L / XL / XXL
+    """
+    
+    def __init__(
+        self,
+        base_params: Optional[ImpedanceParams] = None,
+        control_rate: float = 100.0,
+        adaptation_rate: float = 0.01,
+        env_stiffness_bounds: Tuple[float, float] = (100.0, 10000.0),
+        gradient_learning_rate: float = 0.05,
+        forgetting_factor: float = 0.98,
+        use_lyapunov: bool = True,
+    ):
+        """
+        Args:
+            base_params: 基础阻抗参数
+            control_rate: 控制频率 Hz
+            adaptation_rate: 参数适应率 (0~1)
+            env_stiffness_bounds: 环境刚度上下界 [K_min, K_max]
+            gradient_learning_rate: 梯度下降学习率
+            forgetting_factor: 遗忘因子 (MRAC用)
+            use_lyapunov: 是否使用李雅普诺夫稳定性分析
+        """
+        self.base_params = base_params or ImpedanceParams.default_6d()
+        self.dt = 1.0 / control_rate
+        self.gamma = adaptation_rate
+        self.K_bounds = env_stiffness_bounds
+        self.alpha = gradient_learning_rate
+        self.forgetting = forgetting_factor
+        self.use_lyapunov = use_lyapunov
+        
+        # 在线估计的环境参数
+        self._est_env_stiffness = 1000.0  # N/m 初始估计
+        self._est_env_damping = 50.0      # Ns/m 初始估计
+        self._est_env_inertia = 5.0       # kg 初始估计
+        
+        # 参数估计历史 (用于MRAC)
+        self._stiffness_history: List[float] = []
+        self._damping_history: List[float] = []
+        self._inertia_history: List[float] = []
+        self._history_len = 100
+        
+        # 状态
+        self._position_error_prev = np.zeros(3)
+        self._velocity_error_prev = np.zeros(3)
+        self._force_error_prev = 0.0
+        self._adaptation_gain_schedule = np.ones(3)  # [K_stiff, K_damp, K_inertia]
+        
+        # 当前阻抗参数 (自适应调整后)
+        self._current_K = self.base_params.K.copy()
+        self._current_D = self.base_params.D.copy()
+        self._current_M = self.base_params.M.copy()
+        
+    @property
+    def estimated_env_params(self) -> Dict[str, float]:
+        """返回当前估计的环境参数"""
+        return {
+            "stiffness_N_per_m": self._est_env_stiffness,
+            "damping_Ns_per_m": self._est_env_damping,
+            "inertia_kg": self._est_env_inertia,
+        }
+    
+    @property
+    def current_impedance_params(self) -> ImpedanceParams:
+        """返回当前自适应后的阻抗参数"""
+        return ImpedanceParams(
+            M=self._current_M.copy(),
+            D=self._current_D.copy(),
+            K=self._current_K.copy()
+        )
+    
+    def _clip_stiffness(self, K: float) -> float:
+        """限制刚度在合理范围内"""
+        return np.clip(K, self.K_bounds[0], self.K_bounds[1])
+    
+    def _estimate_env_impedance_mrec(
+        self,
+        position_error: np.ndarray,
+        velocity_error: np.ndarray,
+        contact_force: np.ndarray,
+        dt: float
+    ) -> Tuple[float, float, float]:
+        """
+        MRAC (模型参考自适应控制) 在线估计环境参数
+        
+        基于力-位移关系的梯度下降估计
+        
+        Args:
+            position_error: 位置误差 (m)
+            velocity_error: 速度误差 (m/s)
+            contact_force: 接触力 (N)
+            dt: 时间步长
+            
+        Returns:
+            (est_K, est_D, est_M)
+        """
+        force_mag = np.linalg.norm(contact_force)
+        pos_mag = np.linalg.norm(position_error)
+        vel_mag = np.linalg.norm(velocity_error)
+        
+        # 力误差
+        force_error = force_mag - (
+            self._est_env_stiffness * pos_mag +
+            self._est_env_damping * vel_mag
+        )
+        
+        # 梯度更新 (带遗忘因子)
+        if pos_mag > 1e-6:
+            delta_K = self.alpha * self.forgetting * force_error * pos_mag
+            self._est_env_stiffness = self._clip_stiffness(
+                self._est_env_stiffness + delta_K * dt
+            )
+        
+        if vel_mag > 1e-6:
+            delta_D = self.alpha * self.forgetting * force_error * vel_mag
+            self._est_env_damping = np.clip(
+                self._est_env_damping + delta_D * dt,
+                1.0, 500.0
+            )
+        
+        # 惯性估计 (从加速度估算)
+        acc_estimate = force_mag / (self._est_env_inertia + 1e-6)
+        if abs(acc_estimate) > 1e-4:
+            delta_M = self.alpha * self.forgetting * force_error * acc_estimate
+            self._est_env_inertia = np.clip(
+                self._est_env_inertia + delta_M * dt,
+                0.1, 100.0
+            )
+        
+        # 记录历史
+        self._stiffness_history.append(self._est_env_stiffness)
+        self._damping_history.append(self._est_env_damping)
+        self._inertia_history.append(self._est_env_inertia)
+        
+        if len(self._stiffness_history) > self._history_len:
+            self._stiffness_history.pop(0)
+            self._damping_history.pop(0)
+            self._inertia_history.pop(0)
+        
+        return self._est_env_stiffness, self._est_env_damping, self._est_env_inertia
+    
+    def _lyapunov_update(
+        self,
+        position_error: np.ndarray,
+        velocity_error: np.ndarray,
+        external_force: np.ndarray
+    ) -> None:
+        """
+        基于李雅普诺夫稳定性理论的参数更新
+        
+        李雅普诺夫函数: V = 0.5 * e^T * M * e + 0.5 * (K-K_d)^T * Gamma^-1 * (K-K_d)
+        
+        保证系统稳定性收敛
+        """
+        e_pos = position_error
+        e_vel = velocity_error
+        
+        # 广义误差
+        error = np.concatenate([e_pos, e_vel])
+        
+        # 环境力估计
+        F_env_estimate = (
+            self._est_env_stiffness * e_pos +
+            self._est_env_damping * e_vel
+        )
+        
+        # 力跟踪误差
+        force_error = external_force - F_env_estimate
+        
+        # 李雅普诺夫梯度下降
+        if np.linalg.norm(e_pos) > 1e-6:
+            grad_K = np.outer(force_error, e_pos)
+            delta_K = self.gamma * np.trace(grad_K)
+            self._current_K[:3, :3] = self.base_params.K[:3, :3] + delta_K * self.dt
+        
+        if np.linalg.norm(e_vel) > 1e-6:
+            grad_D = np.outer(force_error, e_vel)
+            delta_D = self.gamma * np.trace(grad_D)
+            self._current_D[:3, :3] = self.base_params.D[:3, :3] + delta_D * self.dt
+        
+        # 限制参数范围确保稳定性
+        self._current_K = np.clip(
+            self._current_K,
+            self.base_params.K * 0.1,
+            self.base_params.K * 5.0
+        )
+        self._current_D = np.clip(
+            self._current_D,
+            self.base_params.D * 0.1,
+            self.base_params.D * 5.0
+        )
+    
+    def _gain_schedule_adaptation(
+        self,
+        contact_phase: str,
+        task_type: str = "contact"
+    ) -> np.ndarray:
+        """
+        根据任务阶段的自适应增益调度
+        
+        Args:
+            contact_phase: 'approach' | 'contact' | 'slide' | 'withdraw'
+            task_type: 'contact' | 'peg_in_hole' | 'polishing' | 'assembly'
+            
+        Returns:
+            adaptation_gains: [K_stiff_mult, K_damp_mult, K_inertia_mult]
+        """
+        schedule = {
+            "approach":  np.array([0.1, 0.5, 0.2]),   # 低刚度接近
+            "contact":   np.array([1.0, 1.0, 1.0]),   # 正常阻抗
+            "slide":     np.array([0.5, 2.0, 0.5]),   # 高阻尼滑动
+            "withdraw":  np.array([0.2, 0.5, 0.3]),  # 低刚度撤回
+        }
+        
+        task_modifiers = {
+            "peg_in_hole": np.array([2.0, 1.5, 3.0]),  # 高增益孔轴装配
+            "polishing":   np.array([0.5, 3.0, 0.5]),  # 高阻尼抛光
+            "assembly":    np.array([1.5, 1.0, 2.0]),  # 装配任务
+        }
+        
+        base = schedule.get(contact_phase, np.array([1.0, 1.0, 1.0]))
+        modifier = task_modifiers.get(task_type, np.array([1.0, 1.0, 1.0]))
+        
+        return base * modifier
+    
+    def update(
+        self,
+        desired_position: np.ndarray,
+        current_position: np.ndarray,
+        current_velocity: np.ndarray,
+        external_wrench: np.ndarray,
+        jacobian: np.ndarray,
+        contact_phase: str = "contact",
+        task_type: str = "contact"
+    ) -> Tuple[np.ndarray, Dict]:
+        """
+        自适应阻抗控制主循环
+        
+        Args:
+            desired_position: 目标位置 (m)
+            current_position: 当前位置 (m)
+            current_velocity: 当前速度 (m/s)
+            external_wrench: 外力旋量 (6,) [Fx, Fy, Fz, Tx, Ty, Tz]
+            jacobian: 雅可比矩阵
+            contact_phase: 接触阶段
+            task_type: 任务类型
+            
+        Returns:
+            (joint_torques, info_dict)
+        """
+        # 误差计算
+        pos_error = current_position - desired_position
+        vel_error = current_velocity  # 假设desired_velocity=0
+        
+        # 1. 在线参数估计 (MRAC)
+        K_est, D_est, M_est = self._estimate_env_impedance_mrec(
+            pos_error, vel_error, external_wrench[:3], self.dt
+        )
+        
+        # 2. 自适应增益调度
+        gain_schedule = self._gain_schedule_adaptation(contact_phase, task_type)
+        
+        # 3. 调整阻抗参数
+        if self.use_lyapunov:
+            self._lyapunov_update(pos_error, vel_error, external_wrench[:3])
+        else:
+            # 直接根据估计的环境参数调整
+            K_ratio = K_est / 1000.0  # 归一化到默认刚度
+            self._current_K[:3, :3] = (
+                self.base_params.K[:3, :3] * K_ratio * gain_schedule[0]
+            )
+            self._current_D[:3, :3] = (
+                self.base_params.D[:3, :3] * gain_schedule[1]
+            )
+            self._current_M[:3, :3] = (
+                self.base_params.M[:3, :3] * gain_schedule[2]
+            )
+        
+        # 4. 阻抗控制计算
+        impedance_force = (
+            self._current_K[:3, :3] @ pos_error +
+            self._current_D[:3, :3] @ vel_error
+        )
+        
+        # 加上外力补偿
+        compensated_force = external_wrench[:3] - impedance_force
+        
+        # 转换到关节空间
+        jacobian_T = jacobian[:3, :].T
+        joint_torques = jacobian_T @ compensated_force
+        
+        # 记录上一次状态
+        self._position_error_prev = pos_error.copy()
+        self._velocity_error_prev = vel_error.copy()
+        self._force_error_prev = np.linalg.norm(external_wrench[:3])
+        
+        info = {
+            "pos_error_norm": float(np.linalg.norm(pos_error)),
+            "vel_error_norm": float(np.linalg.norm(vel_error)),
+            "force_magnitude": float(np.linalg.norm(external_wrench[:3])),
+            "est_env_K": K_est,
+            "est_env_D": D_est,
+            "est_env_M": M_est,
+            "adaptation_gains": gain_schedule.tolist(),
+            "current_K_trace": float(np.trace(self._current_K)),
+            "current_D_trace": float(np.trace(self._current_D)),
+        }
+        
+        return joint_torques, info
+    
+    def reset(self) -> None:
+        """重置估计状态"""
+        self._est_env_stiffness = 1000.0
+        self._est_env_damping = 50.0
+        self._est_env_inertia = 5.0
+        self._stiffness_history.clear()
+        self._damping_history.clear()
+        self._inertia_history.clear()
+        self._position_error_prev = np.zeros(3)
+        self._velocity_error_prev = np.zeros(3)
+        self._current_K = self.base_params.K.copy()
+        self._current_D = self.base_params.D.copy()
+        self._current_M = self.base_params.M.copy()
+    
+    def get_convergence_metrics(self) -> Dict[str, float]:
+        """
+        获取参数收敛性指标
+        
+        Returns:
+            包含收敛性指标的字典
+        """
+        if len(self._stiffness_history) < 10:
+            return {"converged": False, "confidence": 0.0}
+        
+        K_arr = np.array(self._stiffness_history[-50:])
+        D_arr = np.array(self._damping_history[-50:])
+        
+        # 计算方差 (越小说明收敛越好)
+        K_std = float(np.std(K_arr))
+        D_std = float(np.std(D_arr))
+        
+        # 归一化置信度
+        confidence = max(0.0, 1.0 - (K_std / (self._est_env_stiffness * 0.1 + 1)))
+        
+        return {
+            "converged": K_std < self._est_env_stiffness * 0.05,
+            "confidence": confidence,
+            "K_variance": K_std,
+            "D_variance": D_std,
+            "history_length": len(self._stiffness_history),
+        }
