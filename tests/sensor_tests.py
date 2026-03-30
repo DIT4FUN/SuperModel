@@ -1075,5 +1075,316 @@ class TestSensorNumericalStability(unittest.TestCase):
             self.assertAlmostEqual(quat_norm, 1.0, places=5)
 
 
+class TestTactileProximityAndSlip(unittest.TestCase):
+    """测试触觉传感器接近觉和滑移检测功能"""
+    
+    def test_capacitive_tactile_has_proximity(self):
+        """电容式触觉传感器应支持接近觉"""
+        tactile = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.CAPACITIVE
+        )
+        tactile.open()
+        frame = tactile.capture()
+        
+        self.assertIsNotNone(frame.proximity)
+        self.assertEqual(frame.proximity.shape, (16, 16))
+        # 接近觉值应在合理范围内
+        self.assertTrue(np.all(frame.proximity >= 0))
+        self.assertTrue(np.all(frame.proximity <= 0.1))  # 无接近时应很小
+        tactile.close()
+    
+    def test_optical_tactile_has_proximity(self):
+        """光学式触觉传感器应支持接近觉"""
+        tactile = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.OPTICAL
+        )
+        tactile.open()
+        frame = tactile.capture()
+        
+        self.assertIsNotNone(frame.proximity)
+        self.assertEqual(frame.proximity.shape, (16, 16))
+        tactile.close()
+    
+    def test_resistive_tactile_no_proximity(self):
+        """电阻式触觉传感器不支持接近觉"""
+        tactile = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.RESISTIVE
+        )
+        tactile.open()
+        frame = tactile.capture()
+        
+        self.assertIsNone(frame.proximity)
+        tactile.close()
+    
+    def test_tactile_slip_signal_after_contact(self):
+        """接触后应产生滑移信号"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        
+        # 先采集几帧建立历史
+        for _ in range(5):
+            tactile.capture()
+        
+        # 之后再采集几帧,滑移信号通过压力梯度变化检测
+        # 滑移信号可能在某些帧出现(梯度变化剧烈时)
+        frame = tactile.capture()
+        # slip_signal可以是None(无显著滑移)或非None(检测到梯度变化)
+        # 主要测试capture()不会崩溃且返回有效frame
+        self.assertIsNotNone(frame.pressure_map)
+        tactile.close()
+    
+    def test_tactile_frame_buffer_growth(self):
+        """触觉帧缓冲区应正确限制大小"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        
+        # 捕获超过100帧,验证缓冲区会被限制
+        for i in range(120):
+            tactile.capture()
+        
+        # 缓冲区在>100时裁剪到50,之后继续增长
+        # 120帧时: 100帧触发裁剪到50,然后再追加20帧
+        # 最终约70帧
+        self.assertGreater(len(tactile._frame_buffer), 50)
+        self.assertLessEqual(len(tactile._frame_buffer), 80)
+        tactile.close()
+    
+    def test_tactile_resistive_quantization(self):
+        """电阻式触觉应有12bit量化"""
+        tactile = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.RESISTIVE
+        )
+        tactile.open()
+        frame = tactile.capture()
+        
+        # 12bit: 1/4096 量化步长
+        lsb = 1.0 / 4096
+        quantized = np.round(frame.pressure_map / lsb) * lsb
+        np.testing.assert_allclose(frame.pressure_map, quantized, atol=1e-6)
+        tactile.close()
+
+
+class TestForceToolCenter(unittest.TestCase):
+    """测试力传感器的工具中心偏移"""
+    
+    def test_force_with_tool_center_offset(self):
+        """力矩应反映工具中心偏移"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.tool_center = np.array([0.0, 0.05, 0.1])  # 5cm Y, 10cm Z 偏移
+        
+        sensor.open()
+        
+        # 捕获多帧检查力矩不为零(因为有重力+偏移)
+        torques = []
+        for _ in range(10):
+            wrench = sensor.capture()
+            torques.append(wrench.torque_magnitude)
+        
+        # 由于工具中心有偏移,力矩应非零
+        self.assertTrue(any(t > 0.01 for t in torques))
+        sensor.close()
+    
+    def test_force_zero_tool_center(self):
+        """工具中心在原点时力矩较小"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.tool_center = np.zeros(3)
+        
+        sensor.open()
+        wrench = sensor.capture()
+        
+        # 理想情况下力矩接近零(噪声范围内)
+        self.assertLess(wrench.torque_magnitude, 1.0)
+        sensor.close()
+    
+    def test_finger_tip_sensor_force_direction(self):
+        """灵巧手指尖力传感器主要承受抓取力"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.FINGER_TIP)
+        sensor.open()
+        
+        forces = []
+        for _ in range(20):
+            wrench = sensor.capture()
+            forces.append(wrench.force)
+        
+        forces = np.array(forces)
+        # Fz 应为主要方向(抓取方向)
+        mean_fz = np.mean(forces[:, 2])
+        self.assertLess(mean_fz, -1.0)  # 负值表示压力
+        sensor.close()
+    
+    def test_joint_torque_sensor(self):
+        """关节力矩传感器应返回关节力矩"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.JOINT_TORQUE)
+        sensor.open()
+        
+        torques = []
+        for _ in range(10):
+            wrench = sensor.capture()
+            torques.append(wrench.torque_magnitude)
+        
+        # 关节力矩 Nm 级
+        self.assertTrue(any(t > 0.5 for t in torques))
+        sensor.close()
+
+
+class TestIMUMagnetometer(unittest.TestCase):
+    """测试IMU磁力计功能"""
+    
+    def test_mpu9250_has_magnetometer(self):
+        """MPU9250应有磁力计"""
+        imu = IMUSensor(sensor_type=IMUSensorType.MPU9250, sample_rate=100)
+        imu.open()
+        frame = imu.capture()
+        
+        self.assertIsNotNone(frame.mag)
+        self.assertEqual(frame.mag.shape, (3,))
+        # 地磁场应在合理范围 (25-65 μT)
+        mag_mag = np.linalg.norm(frame.mag)
+        self.assertGreater(mag_mag, 10)
+        self.assertLess(mag_mag, 100)
+        imu.close()
+    
+    def test_bmi088_no_magnetometer(self):
+        """BMI088无磁力计"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088, sample_rate=200)
+        imu.open()
+        frame = imu.capture()
+        
+        self.assertIsNone(frame.mag)
+        imu.close()
+    
+    def test_virtual_imu_magnetometer(self):
+        """虚拟IMU可配置磁力计"""
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL, sample_rate=100)
+        imu.open()
+        frame = imu.capture()
+        
+        self.assertIsNotNone(frame.mag)
+        imu.close()
+    
+    def test_imu_temperature_self_heating(self):
+        """IMU温度应反映自发热"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088, sample_rate=200)
+        imu.open()
+        
+        # 连续采集多帧
+        temps = []
+        for _ in range(100):
+            frame = imu.capture()
+            temps.append(frame.temperature)
+        
+        # 温度应稳定在合理范围
+        mean_temp = np.mean(temps)
+        self.assertGreater(mean_temp, 20)
+        self.assertLess(mean_temp, 35)  # 自发热后应高于室温但低于35°C
+        
+        # 温度标准差应较小
+        std_temp = np.std(temps)
+        self.assertLess(std_temp, 2.0)
+        imu.close()
+    
+    def test_imu_accel_noise_consistent_with_spec(self):
+        """IMU加速度噪声应符合规格"""
+        imu = IMUSensor(sensor_type=IMUSensorType.ADIS16470, sample_rate=1000)
+        imu.open()
+        
+        # 采集静止数据
+        accels = []
+        for _ in range(200):
+            frame = imu.capture()
+            accels.append(np.linalg.norm(frame.accel))
+        
+        accels = np.array(accels)
+        # 噪声标准差应在合理范围
+        std = np.std(accels)
+        self.assertLess(std, 0.5)  # ADIS16470 应非常安静
+        
+        # 均值应接近 9.81 (重力)
+        mean = np.mean(accels)
+        self.assertGreater(mean, 9.7)
+        self.assertLess(mean, 9.9)
+        imu.close()
+
+
+class TestSensorImprovedSimulation(unittest.TestCase):
+    """测试改进后的传感器仿真"""
+    
+    def test_tactile_improved_simulation_interface_info(self):
+        """触觉传感器应打印接口信息"""
+        tactile = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.CAPACITIVE
+        )
+        # 测试不应抛出异常
+        tactile.open()
+        self.assertTrue(tactile._is_opened)
+        tactile.close()
+    
+    def test_force_improved_simulation_calibration_loaded(self):
+        """力传感器应加载校准参数"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        
+        # 应有校准信息
+        self.assertIsNotNone(sensor.calibration)
+        self.assertTrue(sensor._is_streaming)
+        sensor.close()
+    
+    def test_imu_improved_simulation_start_time(self):
+        """IMU传感器应记录启动时间"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        
+        self.assertIsNotNone(imu._start_time)
+        # 帧ID应从0开始
+        self.assertEqual(imu._frame_id, 0)
+        
+        frame = imu.capture()
+        self.assertEqual(frame.frame_id, 0)
+        imu.close()
+
+
+class TestAGVTactileForceIMUCompliance(unittest.TestCase):
+    """AGV五级触觉/力觉/IMU规格合规测试"""
+    
+    def test_tactile_agv_m_array_size(self):
+        """AGV-M级触觉阵列应为16x16"""
+        spec = get_tactile_spec('M')
+        self.assertEqual(spec['array'], (16, 16))
+        self.assertEqual(spec['freq_hz'], 100)
+    
+    def test_tactile_agv_xxl_array_size(self):
+        """AGV-XXL级触觉阵列应为48x48"""
+        spec = get_tactile_spec('XXL')
+        self.assertEqual(spec['array'], (48, 48))
+        self.assertEqual(spec['freq_hz'], 1000)
+    
+    def test_force_agv_m_six_axis(self):
+        """AGV-M级力觉应为6轴"""
+        spec = get_force_spec('M')
+        self.assertEqual(spec['axes'], 6)
+        self.assertEqual(spec['sampling_hz'], 500)
+    
+    def test_force_agv_xxl_sampling_rate(self):
+        """AGV-XXL级力觉采样率应达5000Hz"""
+        spec = get_force_spec('XXL')
+        self.assertEqual(spec['sampling_hz'], 5000)
+    
+    def test_imu_agv_s_noise_density(self):
+        """AGV-S级IMU噪声密度应符合规格"""
+        spec = get_imu_spec('S')
+        self.assertEqual(spec['noise_density'], 400)  # μg/√Hz
+        self.assertEqual(spec['sample_hz'], 100)
+    
+    def test_imu_agv_xxl_sample_rate(self):
+        """AGV-XXL级IMU采样率应达2000Hz"""
+        spec = get_imu_spec('XXL')
+        self.assertEqual(spec['sample_hz'], 2000)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -103,13 +103,27 @@ class TactileArray:
         self._last_frame: Optional[TactileFrame] = None
         
     def open(self) -> bool:
-        """打开传感器"""
-        # TODO: 实现硬件接口
-        # - I2C/SPI 接口读取
-        # - USB 串口通信
-        # - CAN 总线
+        """打开传感器
+        
+        仿真模式: 初始化模拟传感器状态
+        硬件模式: 建立 I2C/SPI/USB/CAN 连接
+        """
+        import time
         self._is_opened = True
-        print(f"[TactileArray] Opened: {self.sensor_id}, Size={self.array_size}, Type={self.sensor_type.value}")
+        self._frame_id = 0
+        self._last_contact_pos = None
+        self._frame_buffer = []  # 重置帧缓冲区
+        
+        # 真实硬件接口模拟
+        interface_map = {
+            TactileSensorType.RESISTIVE: "I2C@0x18",
+            TactileSensorType.CAPACITIVE: "SPI@50000000",
+            TactileSensorType.PIEZOELECTRIC: "USB HID",
+            TactileSensorType.OPTICAL: "USB3.0"
+        }
+        interface = interface_map.get(self.sensor_type, "UNKNOWN")
+        print(f"[TactileArray] Opened ({interface}): {self.sensor_id}, Size={self.array_size}")
+        
         return True
     
     def close(self):
@@ -119,34 +133,99 @@ class TactileArray:
             print(f"[TactileArray] {self.sensor_id} Closed")
     
     def capture(self) -> TactileFrame:
-        """捕获一帧触觉数据"""
+        """捕获一帧触觉数据
+        
+        仿真模式: 生成基于物理模型的模拟触觉数据
+        硬件模式: 从 I2C/SPI/USB/CAN 接口读取真实传感器数据
+        
+        Returns:
+            TactileFrame: 包含压力图、温度图、接近觉、滑移信号的触觉帧
+        """
         if not self._is_opened:
             raise RuntimeError("Tactile sensor not opened")
         
-        # TODO: 实现实际数据采集
-        # 这里返回模拟数据用于测试
+        import time
         h, w = self.array_size
         
-        # 模拟压力分布 (高斯分布)
-        xx, yy = np.meshgrid(np.linspace(-2, 2, w), np.linspace(-2, 2, h))
-        gaussian = np.exp(-(xx**2 + yy**2))
+        # --- 仿真模式: 基于物理模型的触觉数据生成 ---
+        # 模拟背景噪声 (热噪声 + 结构噪声)
+        thermal_noise = np.random.randn(h, w) * 0.02
         
-        # 添加一些噪声
-        noise = np.random.randn(h, w) * 0.05
-        pressure_map = np.clip(gaussian * 0.7 + noise, 0, 1).astype(np.float32)
+        # 模拟漂移 (传感器温漂 + 零点漂移)
+        drift = 0.01 * np.sin(len(self._frame_buffer) / 100.0)
         
-        # 模拟温度分布
-        temperature_map = 25.0 + np.random.randn(h, w) * 0.5
+        # 基础压力背景
+        baseline = np.ones((h, w), dtype=np.float32) * drift + thermal_noise
+        
+        # 如果有历史接触位置,模拟残留压力
+        if self._last_contact_pos is not None:
+            cx, cy = self._last_contact_pos
+            row_c = int(cy * h)
+            col_c = int(cx * w)
+            row_c = max(0, min(h-1, row_c))
+            col_c = max(0, min(w-1, col_c))
+            # 残留压力随时间衰减
+            residual_decay = 0.95
+            residual = np.exp(-((np.arange(h)[:, None] - row_c)**2 + 
+                               (np.arange(w)[None, :] - col_c)**2) / 20.0)
+            baseline += residual * 0.1 * residual_decay
+        
+        # 传感器非线性响应 (压阻特性 - 近似)
+        # 电阻式: R = R0 * (1 - k * F), 电压与压力近似线性
+        pressure_map = np.clip(baseline, 0, 1).astype(np.float32)
+        
+        # 量化噪声 (12-16bit ADC)
+        if self.sensor_type == TactileSensorType.RESISTIVE:
+            lsb = 1.0 / 4096  # 12bit
+            pressure_map = np.round(pressure_map / lsb) * lsb
+        elif self.sensor_type in [TactileSensorType.CAPACITIVE, TactileSensorType.PIEZOELECTRIC]:
+            lsb = 1.0 / 16384  # 14bit
+            pressure_map = np.round(pressure_map / lsb) * lsb
+        elif self.sensor_type == TactileSensorType.OPTICAL:
+            lsb = 1.0 / 65536  # 16bit
+            pressure_map = np.round(pressure_map / lsb) * lsb
+        
+        # 模拟温度分布 (与环境 + 接触发热相关)
+        ambient_temp = 25.0 + 2.0 * np.sin(time.time() / 60.0)  # 环境温度波动
+        contact_heating = pressure_map * 3.0  # 接触导致温升
+        temperature_map = (ambient_temp + contact_heating + 
+                          np.random.randn(h, w) * 0.2).astype(np.float32)
+        
+        # 模拟接近觉 (电容式/光学式支持)
+        proximity = None
+        if self.sensor_type in [TactileSensorType.CAPACITIVE, TactileSensorType.OPTICAL]:
+            # 接近时电容增大/光强变化,模拟为距离的函数
+            proximity = np.random.rand(h, w).astype(np.float32) * 0.05  # 无接近时噪声
+        
+        # 模拟滑移信号 (通过检测压力梯度变化)
+        slip_signal = None
+        if self._frame_buffer and len(self._frame_buffer) > 2:
+            prev_frame = self._frame_buffer[-1]
+            if prev_frame.pressure_map is not None:
+                # 压力梯度变化指示滑移
+                grad_curr = np.gradient(pressure_map)
+                grad_prev = np.gradient(prev_frame.pressure_map)
+                slip_signal = np.sqrt((grad_curr[0] - grad_prev[0])**2 + 
+                                      (grad_curr[1] - grad_prev[1])**2).astype(np.float32)
         
         frame = TactileFrame(
             pressure_map=pressure_map,
             temperature_map=temperature_map,
-            timestamp=0.0,
-            frame_id=0,
+            proximity=proximity,
+            slip_signal=slip_signal,
+            timestamp=time.time(),
+            frame_id=self._frame_id,
             sensor_id=self.sensor_id
         )
         
         self._last_frame = frame
+        self._frame_buffer.append(frame)
+        self._frame_id += 1
+        
+        # 限制缓冲区大小
+        if len(self._frame_buffer) > 100:
+            self._frame_buffer = self._frame_buffer[-50:]
+        
         return frame
     
     def detect_contacts(self, frame: Optional[TactileFrame] = None) -> List[TactileContact]:

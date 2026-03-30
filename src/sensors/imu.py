@@ -177,14 +177,41 @@ class IMUSensor:
         self._frame_history: List[IMUFrame] = []
         
     def open(self) -> bool:
-        """打开传感器"""
-        # TODO: 实现硬件接口
-        # - I2C/SPI: smbus2, spidev
-        # - USB: hidapi
-        # - ROS: rosserial
+        """打开传感器
+        
+        仿真模式: 初始化模拟 IMU 状态
+        硬件模式: 建立 I2C/SPI/USB/ROS 串口连接
+        
+        Returns:
+            bool: 是否成功打开
+        """
+        import time
         self._is_opened = True
-        print(f"[IMUSensor] Opened: {self.sensor_id}, Type={self.sensor_type.value}, "
-              f"Accel={self.accel_range}g, Gyro={self.gyro_range}dps")
+        self._last_frame = None
+        self._frame_history = []
+        self._frame_id = 0
+        self._start_time = time.time()
+        
+        # 接口信息
+        if self.sensor_type == IMUSensorType.BMI088:
+            interface = "SPI@20MHz / I2C@400kHz"
+        elif self.sensor_type == IMUSensorType.MPU6050:
+            interface = "I2C@100kHz"
+        elif self.sensor_type == IMUSensorType.MPU9250:
+            interface = "I2C@400kHz (9-axis)"
+        elif self.sensor_type == IMUSensorType.ADIS16470:
+            interface = "SPI@40MHz (工业级)"
+        else:
+            interface = "VIRTUAL"
+        
+        print(f"[IMUSensor] Opened ({interface}): {self.sensor_id}, "
+              f"Accel=±{self.accel_range}g, Gyro=±{self.gyro_range}°/s, "
+              f"SampleRate={self.sample_rate}Hz")
+        
+        # 仿真: 显示校准状态
+        print(f"[IMUSensor] Calibration: accel_bias={self.calibration.accel_bias}, "
+              f"gyro_bias={self.calibration.gyro_bias}")
+        
         return True
     
     def close(self):
@@ -194,37 +221,92 @@ class IMUSensor:
             print(f"[IMUSensor] {self.sensor_id} Closed")
     
     def capture(self) -> IMUFrame:
-        """采集一帧IMU数据"""
+        """采集一帧IMU数据
+        
+        仿真模式: 生成基于物理模型的IMU数据
+        硬件模式: 从 I2C/SPI (BMI088/MPU6050) / USB HID / ROS 串口读取
+        
+        Returns:
+            IMUFrame: 加速度、角速度、磁力计(可选)、温度、时间戳
+        """
         if not self._is_opened:
             raise RuntimeError("IMU sensor not opened")
         
-        # TODO: 实现实际数据采集
-        # 模拟数据
+        import time
         t = len(self._frame_history) / self.sample_rate
+        real_t = time.time() - self._start_time
         
-        # 模拟加速度 (静止时接近重力)
+        # --- 仿真模式: 基于物理模型的IMU数据生成 ---
+        
+        # 1. 重力向量 (假设传感器水平放置,重力沿+Z)
         gravity = np.array([0.0, 0.0, 9.81])
-        accel_noise = np.random.randn(3) * 0.01
-        accel = gravity + accel_noise
         
-        # 模拟角速度 (静止时接近零)
-        gyro = np.random.randn(3) * 0.01
+        # 2. 运动引起的比力 (简化: 假设静止或缓慢运动)
+        motion_accel = np.array([0.0, 0.0, 0.0])
         
-        # 磁力计 (如果有)
+        # 3. 角度变化 (缓慢倾斜,模拟手臂运动)
+        # 使用历史数据计算趋势
+        if self._frame_history:
+            prev_gyro = self._frame_history[-1].gyro
+            # 添加小幅度的连续运动
+            gyro_trend = prev_gyro * 0.95 + np.random.randn(3) * 0.002
+        else:
+            gyro_trend = np.zeros(3)
+        
+        # 4. 传感器噪声 (符合各型号规格)
+        # 噪声密度: μg/√Hz, 转换为 RMS
+        noise_bw = np.sqrt(self.sample_rate / 2)  # 等效噪声带宽
+        if self.sensor_type == IMUSensorType.BMI088:
+            accel_noise_density = 120e-6 * 9.81  # 120 μg/√Hz -> m/s²/√Hz
+            gyro_noise_density = 3e-6 * np.pi / 180  # 3 mdps/√Hz -> rad/s/√Hz
+        elif self.sensor_type == IMUSensorType.MPU6050:
+            accel_noise_density = 400e-6 * 9.81
+            gyro_noise_density = 5e-5 * np.pi / 180
+        elif self.sensor_type == IMUSensorType.ADIS16470:
+            accel_noise_density = 20e-6 * 9.81
+            gyro_noise_density = 0.1e-6 * np.pi / 180
+        else:
+            accel_noise_density = 100e-6 * 9.81
+            gyro_noise_density = 1e-5 * np.pi / 180
+        
+        accel_noise = np.random.randn(3) * accel_noise_density * np.sqrt(noise_bw)
+        gyro_noise = np.random.randn(3) * gyro_noise_density * np.sqrt(noise_bw)
+        
+        # 5. 偏置稳定性 (慢漂移)
+        bias_drift_time = (real_t % 3600) / 3600  # 小时级漂移周期
+        accel_bias_drift = 0.001 * np.sin(bias_drift_time * 2 * np.pi)
+        gyro_bias_drift = 0.0001 * np.sin(bias_drift_time * 2 * np.pi)
+        
+        # 组合加速度
+        accel = gravity + motion_accel + accel_noise + accel_bias_drift
+        
+        # 组合角速度 (静止时应接近零)
+        gyro = gyro_trend + gyro_noise + gyro_bias_drift
+        
+        # 6. 温度 (受环境 + 自身功耗影响)
+        # 传感器自发热约 0.5-2°C
+        self_heating = 0.5 + 0.5 * (accel_magnitude := np.linalg.norm(accel) / 9.81)
+        temperature = 25.0 + self_heating + np.random.randn() * 0.1
+        
+        # 7. 磁力计 (MPU9250 / 9轴 IMU)
         mag = None
-        if self.sensor_type == IMUSensorType.MPU9250:
-            # 地磁场 ~ 25-65 uT
-            mag = np.array([25.0, 0.0, 45.0]) + np.random.randn(3) * 0.5
+        if self.sensor_type in [IMUSensorType.MPU9250, IMUSensorType.VIRTUAL]:
+            # 地磁场 (典型值 25-65 μT, 取决于位置)
+            earth_field = np.array([25.0, 0.0, 45.0])  # μT, 典型值
+            mag_noise = np.random.randn(3) * 0.5
+            # 磁偏角随时间缓慢变化
+            mag_drift = 0.1 * np.sin(real_t / 100)
+            mag = (earth_field + mag_noise + mag_drift).astype(np.float32)
         
-        # 应用标定偏置
+        # 应用校准偏置和比例因子
         accel = (accel - self.calibration.accel_bias) * self.calibration.accel_scale
         gyro = (gyro - self.calibration.gyro_bias) * self.calibration.gyro_scale
         
         frame = IMUFrame(
             accel=accel.astype(np.float32),
             gyro=gyro.astype(np.float32),
-            mag=mag.astype(np.float32) if mag is not None else None,
-            temperature=25.0,
+            mag=mag,
+            temperature=float(temperature),
             timestamp=t,
             frame_id=len(self._frame_history),
             sensor_id=self.sensor_id

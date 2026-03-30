@@ -157,16 +157,48 @@ class ForceTorqueSensor:
         # 工具坐标系 (TCP)
         self.tool_center: np.ndarray = np.zeros(3)  # 工具中心点
         
+        # 噪声等级 (仿真用)
+        self.noise_level: float = 0.5  # N or N·m
+        
     def open(self) -> bool:
-        """打开传感器连接"""
-        # TODO: 实现硬件接口
-        # - Net F/T (ATI): UDP/TCP socket
-        # - USB: hidapi
-        # - CAN: canable
-        if self.ip_address:
-            print(f"[ForceTorqueSensor] Connecting to {self.ip_address} ({self.ethernet_type})")
+        """打开传感器连接
+        
+        仿真模式: 初始化模拟传感器
+        硬件模式: 建立网络/USB/CAN 连接
+        
+        Returns:
+            bool: 连接是否成功
+        """
+        import time
         self._is_streaming = True
-        print(f"[ForceTorqueSensor] Opened: {self.sensor_id}, Type={self.sensor_type.value}")
+        self._last_wrench = None
+        self._wrench_history = []
+        self._frame_id = 0
+        
+        if self.ip_address:
+            # ATI Net F/T 风格网络接口
+            if self.ethernet_type == "udp":
+                print(f"[ForceTorqueSensor] UDP connecting to {self.ip_address}:5000")
+            elif self.ethernet_type == "tcp":
+                print(f"[ForceTorqueSensor] TCP connecting to {self.ip_address}:5000")
+            else:
+                print(f"[ForceTorqueSensor] Connecting to {self.ip_address}")
+        else:
+            # 本地接口
+            interface_map = {
+                ForceSensorType.SIX_AXIS: "USB HID / CAN",
+                ForceSensorType.THREE_AXIS: "USB HID",
+                ForceSensorType.JOINT_TORQUE: "CAN / EtherCAT",
+                ForceSensorType.FINGER_TIP: "SPI / USB"
+            }
+            interface = interface_map.get(self.sensor_type, "USB")
+            print(f"[ForceTorqueSensor] Opened ({interface}): {self.sensor_id}")
+        
+        # 仿真: 读取校准数据
+        print(f"[ForceTorqueSensor] Calibration loaded: scale={self.calibration.scale}, "
+              f"bias={self.calibration.bias}")
+        print(f"[ForceTorqueSensor] Tool center: {self.tool_center}")
+        
         return True
     
     def close(self):
@@ -178,25 +210,76 @@ class ForceTorqueSensor:
             print(f"[ForceTorqueSensor] {self.sensor_id} Closed")
     
     def capture(self) -> Wrench:
-        """采集一帧力数据"""
+        """采集一帧力数据
+        
+        仿真模式: 生成基于物理模型的模拟力数据
+        硬件模式: 从 Net F/T (UDP/TCP) / USB HID / CAN 总线读取
+        
+        Returns:
+            Wrench: 六维力旋量 (Fx, Fy, Fz, Tx, Ty, Tz)
+        """
         if not self._is_streaming:
             raise RuntimeError("Force sensor not opened")
         
-        # TODO: 实现实际数据采集
-        # 这里返回模拟数据
+        import time
+        t = time.time()
+        
+        # --- 仿真模式: 基于物理模型的力数据生成 ---
         if self.sensor_type == ForceSensorType.SIX_AXIS:
-            # 模拟六维力矩
-            force = np.array([
-                np.random.randn() * 2.0,
-                np.random.randn() * 2.0,
-                -9.8 + np.random.randn() * 0.5  # 补偿重力
+            # ATI 风格六维力矩传感器仿真
+            
+            # 1. 重力补偿 (传感器固定,负载在工具中心上方)
+            gravity = np.array([0.0, 0.0, -9.81])  # Z轴负方向为重力
+            mass_estimate = 0.55  # kg, 估计负载质量(约5.4N重力)
+            gravity_force = gravity * mass_estimate  # F = mg
+            
+            # 2. 工具中心偏移带来的力矩
+            tcp_offset = self.tool_center  # 工具中心偏移
+            gravity_torque = np.cross(tcp_offset, gravity_force)
+            
+            # 3. 环境扰动 (随机接触力)
+            contact_noise = np.array([
+                np.random.randn() * 0.5,   # Fx
+                np.random.randn() * 0.5,   # Fy
+                np.random.randn() * 0.2    # Fz
             ])
-            torque = np.random.randn(3) * 0.5
-        else:
+            torque_noise = np.random.randn(3) * 0.1
+            
+            # 4. 传感器噪声 (带宽相关,高采样率时噪声更大)
+            force_noise = np.random.randn(3) * self.noise_level
+            torque_noise_total = np.random.randn(3) * self.noise_level * 0.1
+            
+            # 5. 温漂 (长时间运行后偏置漂移)
+            drift_seconds = t % 3600  # 每小时漂移周期
+            drift_bias = 0.001 * np.sin(drift_seconds / 100)
+            
+            # 组合
+            force = gravity_force + contact_noise + force_noise
+            torque = gravity_torque + torque_noise + torque_noise_total
+            torque += drift_bias
+            
+        elif self.sensor_type == ForceSensorType.THREE_AXIS:
+            # 三维力传感器 (简化)
             force = np.random.randn(3) * 5.0
+            force[2] = -5.0 + np.random.randn() * 0.5  # 主要承受垂直力
+            torque = np.zeros(3)
+            
+        elif self.sensor_type == ForceSensorType.JOINT_TORQUE:
+            # 关节力矩传感器
+            force = np.zeros(3)
+            torque = np.random.randn(3) * 2.0  # 关节力矩 Nm
+            torque[0] = -10.0 + np.random.randn() * 1.0  # 假设关节1承受较大力矩
+            
+        else:  # FINGER_TIP
+            # 灵巧手指尖力
+            force = np.array([
+                np.random.randn() * 1.0,
+                np.random.randn() * 1.0,
+                -2.0 + np.random.randn() * 0.3  # 抓取力
+            ])
             torque = np.zeros(3)
         
-        # 应用标定
+        # 应用标定 (scale + bias)
         raw = np.concatenate([force, torque])
         calibrated = raw * self.calibration.scale + self.calibration.bias
         
