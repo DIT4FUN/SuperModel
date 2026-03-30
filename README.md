@@ -402,7 +402,7 @@ SuperModel/
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
 | sensor_tests.py | 140 | ✅ 全部通过 |
-| fusion_tests.py | 63 | ✅ 全部通过 |
+| fusion_tests.py | 86 | ✅ 全部通过 |
 | control_tests.py | 174 | ✅ 全部通过 |
 | ros2_interface_tests.py | 44 | ✅ 全部通过 |
 | integration_tests.py | 20 | ✅ 全部通过 |
