@@ -13,6 +13,7 @@ SuperModel 控制模块
 - safety_controller: 安全监控与故障容忍
 - agv: AGV运动学/动力学控制
 - multi_agent: 多智能体协调控制 (L/XL/XXL)
+- teleop: 遥操作控制 (主从同步/共享控制/力反馈)
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand
@@ -50,6 +51,12 @@ from .multi_agent import (
     AgentState, FormationSlot, CoordinationTask, CollisionRisk,
     get_coordination_spec
 )
+from .teleop import (
+    TeleoperationController, TeleopMode, TeleopState, AuthorityLevel,
+    MasterState, SlaveState, TeleopCommand, TeleopConfig, TeleopMetrics,
+    SafetyMonitor, LatencyCompensator, SharedControlBlender,
+    AGV_TELEOP_GRADES, get_teleop_spec
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand',
@@ -74,5 +81,9 @@ __all__ = [
     'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec',
     'MultiAgentCoordinator', 'FormationType', 'CoordinationState',
     'AgentState', 'FormationSlot', 'CoordinationTask', 'CollisionRisk',
-    'get_coordination_spec'
+    'get_coordination_spec',
+    'TeleoperationController', 'TeleopMode', 'TeleopState', 'AuthorityLevel',
+    'MasterState', 'SlaveState', 'TeleopCommand', 'TeleopConfig', 'TeleopMetrics',
+    'SafetyMonitor', 'LatencyCompensator', 'SharedControlBlender',
+    'AGV_TELEOP_GRADES', 'get_teleop_spec'
 ]
