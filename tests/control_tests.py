@@ -349,6 +349,116 @@ class TestTaskPlanner(unittest.TestCase):
         plan = self.planner.plan(spec)
         self.assertIsInstance(plan, list)
 
+    def test_htn_plan_transport(self):
+        """测试 HTN 搬运任务分解"""
+        spec = TaskSpec(
+            name="transport",
+            goal_state={"object": "box", "destination": "table"}
+        )
+        plan = self.planner.plan(spec)
+        self.assertIsInstance(plan, list)
+        # 搬运任务应完全分解为叶子动作
+        # transport = pickup + navigate + place
+        # pickup -> approach, grasp, lift
+        # navigate -> plan_route, follow_trajectory, reach_target
+        # place -> move_to, release, retract
+        self.assertIn("approach", plan)
+        self.assertIn("grasp", plan)
+        self.assertIn("lift", plan)
+        self.assertIn("plan_route", plan)
+        self.assertIn("follow_trajectory", plan)
+        self.assertIn("reach_target", plan)
+
+    def test_htn_plan_pickup(self):
+        """测试 HTN 拾取任务分解"""
+        spec = TaskSpec(
+            name="pickup",
+            goal_state={"object": "cylinder"}
+        )
+        plan = self.planner.plan(spec)
+        self.assertIsInstance(plan, list)
+        # 拾取应分解为 approach, grasp, lift
+        self.assertTrue(len(plan) >= 3)
+        self.assertIn("approach", plan)
+        self.assertIn("grasp", plan)
+        self.assertIn("lift", plan)
+
+    def test_htn_plan_navigate(self):
+        """测试 HTN 导航任务分解"""
+        spec = TaskSpec(
+            name="navigate",
+            goal_state={"target": "waypoint_a"}
+        )
+        plan = self.planner.plan(spec)
+        self.assertIsInstance(plan, list)
+        # 导航应分解为 plan_route, follow_trajectory, reach_target
+        self.assertTrue(len(plan) >= 3)
+        self.assertIn("plan_route", plan)
+        self.assertIn("follow_trajectory", plan)
+        self.assertIn("reach_target", plan)
+
+    def test_htn_plan_fallback_to_greedy(self):
+        """测试当 HTN 方法不存在时回退到贪心规划"""
+        spec = TaskSpec(
+            name="unknown_task",
+            goal_state={"robot.position": [1, 0, 0]}
+        )
+        plan = self.planner.plan(spec)
+        self.assertIsInstance(plan, list)
+
+    def test_htn_decompose_inspect(self):
+        """测试 HTN 检查任务分解"""
+        spec = TaskSpec(
+            name="inspect",
+            goal_state={"location": "machine_1"}
+        )
+        plan = self.planner.plan(spec)
+        self.assertIsInstance(plan, list)
+        # 检查应分解为 move_to, sense_environment, analyze_data
+        self.assertTrue(len(plan) >= 3)
+        self.assertIn("move_to", plan)
+        self.assertIn("sense_environment", plan)
+        self.assertIn("analyze_data", plan)
+
+    def test_htn_decompose_open_door(self):
+        """测试 HTN 开门任务分解"""
+        spec = TaskSpec(
+            name="open_door",
+            goal_state={"door_position": [1, 0, 0], "target_position": [2, 0, 0]}
+        )
+        plan = self.planner.plan(spec)
+        self.assertIsInstance(plan, list)
+        # 开门应分解为 move_to (door), grasp, pull, move_to (target)
+        self.assertTrue(len(plan) >= 4)
+        self.assertIn("move_to", plan)
+        self.assertIn("grasp", plan)
+        self.assertIn("pull", plan)
+
+    def test_htn_plan_with_action_library(self):
+        """测试 HTN 规划与动作库结合"""
+        from control.planner import Action
+        
+        def approach_precond(state):
+            return True
+        
+        def approach_effect(state, params):
+            state.robot_state["position"] = params.get("target", [0, 0, 0])
+        
+        action = Action(
+            name="approach",
+            precondition=approach_precond,
+            effect=approach_effect,
+            cost=1.0
+        )
+        planner = TaskPlanner(action_library={"approach": action})
+        state = WorldState()
+        state.robot_state["position"] = [0, 0, 0]
+        planner.set_world_state(state)
+        
+        spec = TaskSpec(name="pickup", goal_state={})
+        plan = planner.plan(spec)
+        self.assertIsInstance(plan, list)
+
 
 class TestHierarchicalPlanner(unittest.TestCase):
     """测试层次化任务网络规划器"""

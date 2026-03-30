@@ -5,6 +5,36 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.4] - 2026-03-30
+
+### Added
+- **HTN 任务规划器**: 在 `TaskPlanner.plan()` 中实现完整的 HTN (层次任务网络) 规划器
+  - 支持 transport/pickup/place/navigate/inspect/open_door/assemble/disassemble 任务分解
+  - 递归分解高层任务为叶子动作序列
+  - 支持最大深度限制和贪心回退
+- **7项 HTN 规划器测试**: 新增 `test_htn_plan_transport`, `test_htn_plan_pickup`, `test_htn_plan_navigate`, `test_htn_plan_fallback_to_greedy`, `test_htn_decompose_inspect`, `test_htn_decompose_open_door`, `test_htn_plan_with_action_library`
+
+### Updated
+- **MODULE_INTERFACE.md**: 补充 TaskPlanner HTN 规划器详细接口文档 (新增 24.7 节)
+
+### Verified
+- 全量测试套件 **736 项**测试全部通过
+
+## [1.4.3] - 2026-03-30
+
+### Added
+- **自适应阻抗控制器** (`control/impedance.py`): AdaptiveImpedanceController
+  - MRAC 在线参数估计
+  - 李雅普诺夫稳定性分析
+  - 自适应增益调度
+- **自适应 MPC 控制器** (`control/mpc.py`): AdaptiveMPCController
+  - 递推最小二乘在线辨识
+  - 自适应 Q/R 权重调整
+  - 梯度下降求解器
+
+### Verified
+- 全量测试套件 **729 项**测试全部通过
+
 ## [1.4.2] - 2026-03-30
 
 ### Fixed

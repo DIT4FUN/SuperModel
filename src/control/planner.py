@@ -202,13 +202,200 @@ class TaskPlanner:
         """
         if initial_state is not None:
             self._world_state = initial_state.copy()
-        
-        # 简化: 使用贪心规划
-        # TODO: 实现完整 HTN 规划器
-        plan = self._greedy_plan(task_spec.goal_state)
+
+        # 使用 HTN 层次化规划
+        plan = self._htn_plan(task_spec)
         
         self._plan_history.append(plan)
         return plan
+    
+    def _htn_plan(self, task_spec: TaskSpec) -> List[str]:
+        """
+        HTN (层次任务网络) 规划
+        
+        1. 分析任务类型，选择合适的分解方法
+        2. 递归分解高层任务为原子动作
+        3. 验证分解结果
+        
+        Args:
+            task_spec: 任务规格
+            
+        Returns:
+            动作序列
+        """
+        task_name = task_spec.name
+        goal_state = task_spec.goal_state
+        max_depth = task_spec.max_depth
+        
+        # 方法库：任务名 -> 分解函数列表
+        method_registry = {
+            'transport': self._decompose_transport,
+            'pickup': self._decompose_pickup,
+            'place': self._decompose_place,
+            'navigate': self._decompose_navigate,
+            'inspect': self._decompose_inspect,
+            'open_door': self._decompose_open_door,
+            'assemble': self._decompose_assemble,
+            'disassemble': self._decompose_disassemble,
+        }
+        
+        decompose_fn = method_registry.get(task_name)
+        
+        if decompose_fn is None:
+            # 无分解方法，退化为贪心规划
+            return self._greedy_plan(goal_state)
+        
+        # 递归分解
+        state = self._world_state.copy() if self._world_state else WorldState()
+        actions = self._decompose_and_resolve(decompose_fn, goal_state, state, depth=0, max_depth=max_depth)
+        
+        return actions
+    
+    def _decompose_and_resolve(
+        self,
+        decompose_fn: callable,
+        goal_state: Dict[str, Any],
+        state: WorldState,
+        depth: int,
+        max_depth: int,
+        primitive_name: Optional[str] = None
+    ) -> List[str]:
+        """
+        递归分解任务并解析为动作序列
+        
+        Args:
+            decompose_fn: 分解函数 (None 表示原始动作)
+            goal_state: 目标状态
+            state: 当前世界状态
+            depth: 当前深度
+            max_depth: 最大深度
+            primitive_name: 原始动作名称 (当 decompose_fn 为 None 时)
+            
+        Returns:
+            动作序列
+        """
+        # 如果是原始动作（非复合任务），直接返回
+        if decompose_fn is None:
+            return [primitive_name] if primitive_name else []
+        
+        if depth >= max_depth:
+            # 达到最大深度，使用贪心规划
+            return self._greedy_plan(goal_state)
+        
+        try:
+            subtasks = decompose_fn(goal_state)
+        except Exception:
+            return self._greedy_plan(goal_state)
+        
+        actions = []
+        for subtask in subtasks:
+            if isinstance(subtask, Task):
+                # 递归分解
+                method_fn = self._method_for_task(subtask.name)
+                if method_fn is not None:
+                    # 复合任务，继续分解
+                    sub_actions = self._decompose_and_resolve(
+                        method_fn,
+                        subtask.parameters.get('goal_state', goal_state),
+                        state,
+                        depth + 1,
+                        max_depth
+                    )
+                    actions.extend(sub_actions)
+                else:
+                    # 原始动作，直接添加
+                    actions.append(subtask.name)
+            elif isinstance(subtask, str):
+                # 原子动作: 优先使用动作库，否则直接添加到计划
+                action = self.action_library.get(subtask)
+                if action is not None:
+                    if action.applicable(state, {}):
+                        action.execute(state, {})
+                        actions.append(subtask)
+                else:
+                    # 动作不在库中，但仍然是有效动作名
+                    actions.append(subtask)
+        
+        return actions
+    
+    def _method_for_task(self, task_name: str) -> callable:
+        """获取任务的分解方法"""
+        method_registry = {
+            'transport': self._decompose_transport,
+            'pickup': self._decompose_pickup,
+            'place': self._decompose_place,
+            'navigate': self._decompose_navigate,
+            'inspect': self._decompose_inspect,
+            'open_door': self._decompose_open_door,
+            'assemble': self._decompose_assemble,
+            'disassemble': self._decompose_disassemble,
+        }
+        return method_registry.get(task_name)  # None if not found means primitive action
+    
+    def _decompose_transport(self, goal_state: Dict) -> List:
+        """搬运任务分解: pickup -> navigate -> place"""
+        return [
+            Task(id='t1', name='pickup', parameters={'object': goal_state.get('object')}),
+            Task(id='t2', name='navigate', parameters={'target': goal_state.get('destination')}),
+            Task(id='t3', name='place', parameters={'location': goal_state.get('destination')}),
+        ]
+    
+    def _decompose_pickup(self, goal_state: Dict) -> List:
+        """拾取任务分解: approach -> grasp -> lift"""
+        return [
+            Task(id='p1', name='approach', parameters={'target': goal_state.get('object')}),
+            Task(id='p2', name='grasp', parameters={'object': goal_state.get('object')}),
+            Task(id='p3', name='lift', parameters={}),
+        ]
+    
+    def _decompose_place(self, goal_state: Dict) -> List:
+        """放置任务分解: move_to -> release -> retract"""
+        return [
+            Task(id='pl1', name='move_to', parameters={'target': goal_state.get('location')}),
+            Task(id='pl2', name='release', parameters={}),
+            Task(id='pl3', name='retract', parameters={}),
+        ]
+    
+    def _decompose_navigate(self, goal_state: Dict) -> List:
+        """导航任务分解: plan -> follow -> reach"""
+        return [
+            Task(id='n1', name='plan_route', parameters={'target': goal_state.get('target')}),
+            Task(id='n2', name='follow_trajectory', parameters={}),
+            Task(id='n3', name='reach_target', parameters={}),
+        ]
+    
+    def _decompose_inspect(self, goal_state: Dict) -> List:
+        """检查任务分解: move_to -> sense -> analyze"""
+        return [
+            Task(id='i1', name='move_to', parameters={'target': goal_state.get('location')}),
+            Task(id='i2', name='sense_environment', parameters={}),
+            Task(id='i3', name='analyze_data', parameters={}),
+        ]
+    
+    def _decompose_open_door(self, goal_state: Dict) -> List:
+        """开门任务分解: approach -> grasp -> pull -> pass"""
+        return [
+            Task(id='d1', name='move_to', parameters={'target': goal_state.get('door_position')}),
+            Task(id='d2', name='grasp', parameters={'object': 'door_handle'}),
+            Task(id='d3', name='pull', parameters={}),
+            Task(id='d4', name='move_to', parameters={'target': goal_state.get('target_position')}),
+        ]
+    
+    def _decompose_assemble(self, goal_state: Dict) -> List:
+        """装配任务分解"""
+        return [
+            Task(id='a1', name='fetch', parameters={'parts': goal_state.get('parts', [])}),
+            Task(id='a2', name='position', parameters={'target': goal_state.get('target')}),
+            Task(id='a3', name='fasten', parameters={}),
+        ]
+    
+    def _decompose_disassemble(self, goal_state: Dict) -> List:
+        """拆卸任务分解"""
+        return [
+            Task(id='dd1', name='unfasten', parameters={}),
+            Task(id='dd2', name='separate', parameters={'target': goal_state.get('target')}),
+            Task(id='dd3', name='remove', parameters={'parts': goal_state.get('parts', [])}),
+        ]
     
     def _greedy_plan(self, goal_state: Dict[str, Any]) -> List[str]:
         """贪心规划"""

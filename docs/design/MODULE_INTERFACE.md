@@ -2770,12 +2770,40 @@ class SkillStatus(Enum):
 class TaskPlanner:
     def add_task(self, task: Task)
     def get_next_task(self) -> Optional[Task]
-    def plan(self, spec: TaskSpec) -> List[Action]
+    def plan(self, spec: TaskSpec) -> List[str]
+        # 使用 HTN 层次化规划，返回动作序列
+    def _htn_plan(self, spec: TaskSpec) -> List[str]
+        # HTN 规划核心：任务分解为叶子动作
+    def _decompose_and_resolve(self, decompose_fn, goal_state, state,
+                                depth, max_depth, primitive_name=None) -> List[str]
+        # 递归分解任务为原子动作序列
     def set_world_state(self, state: WorldState)
+
+    # HTN 分解方法 (注册到方法库)
+    def _decompose_transport(self, goal_state) -> List[Task]
+        # transport → pickup + navigate + place
+    def _decompose_pickup(self, goal_state) -> List[Task]
+        # pickup → approach + grasp + lift
+    def _decompose_place(self, goal_state) -> List[Task]
+        # place → move_to + release + retract
+    def _decompose_navigate(self, goal_state) -> List[Task]
+        # navigate → plan_route + follow_trajectory + reach_target
+    def _decompose_inspect(self, goal_state) -> List[Task]
+        # inspect → move_to + sense_environment + analyze_data
+    def _decompose_open_door(self, goal_state) -> List[Task]
+        # open_door → move_to + grasp + pull + move_to
+    def _decompose_assemble(self, goal_state) -> List[Task]
+        # assemble → fetch + position + fasten
+    def _decompose_disassemble(self, goal_state) -> List[Task]
+        # disassemble → unfasten + separate + remove
 
 class HierarchicalPlanner(TaskPlanner):
     def decompose_task(self, task: Task, max_depth=3) -> List[Task]
     def plan_hierarchical(self, spec: TaskSpec) -> List[Task]
+    def plan_with_replanning(self, spec, initial_state, max_replan_attempts=3)
+    def backtrack(self, task, failed_subtasks, attempted_methods=None)
+    def estimate_plan_cost(self, tasks) -> float
+    def validate_plan(self, tasks, initial_state) -> (bool, str)
 
 @dataclass
 class Task:
@@ -2790,6 +2818,12 @@ class TaskStatus(Enum):
     RUNNING = "running"
     COMPLETED = "completed"
     FAILED = "failed"
+
+# HTN 规划策略
+# 1. 根据任务名选择分解方法
+# 2. 递归分解为叶子动作
+# 3. 叶子动作不在方法库中则直接返回
+# 4. 深度超限则回退到贪心规划
 ```
 
 ### 24.8 轨迹生成器 — TrajectoryGenerator
