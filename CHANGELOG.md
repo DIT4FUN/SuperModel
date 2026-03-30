@@ -5,6 +5,15 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.2] - 2026-03-30
+
+### Fixed
+- **测试套件**: 修复 `TestHierarchicalPlanner.backtrack` 相关测试用例，返回值解包错误（Tuple[List, List] → result, attempted）
+- **全部 729 项测试通过**
+
+### Verified
+- 全量测试套件 **729 项**测试全部通过
+
 ## [1.4.1] - 2026-03-30
 
 ### Completed

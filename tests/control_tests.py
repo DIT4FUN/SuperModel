@@ -470,8 +470,9 @@ class TestHierarchicalPlanner(unittest.TestCase):
     def test_backtrack_no_alternative(self):
         """测试回溯无可用替代方法"""
         task = Task(id="unknown", name="nonexistent_task", parameters={})
-        result = self.planner.backtrack(task, ["failed_step"])
+        result, attempted = self.planner.backtrack(task, ["failed_step"])
         self.assertEqual(result, [])
+        self.assertEqual(attempted, [])
     
     def test_backtrack_with_custom_method(self):
         """测试回溯有替代方法"""
@@ -481,7 +482,7 @@ class TestHierarchicalPlanner(unittest.TestCase):
         self.planner.register_method("backtrack_task", alt_method)
         
         task = Task(id="bt", name="backtrack_task", parameters={})
-        result = self.planner.backtrack(task, ["failed"])
+        result, attempted = self.planner.backtrack(task, ["failed"])
         self.assertEqual(len(result), 1)
         self.assertEqual(result[0].name, "alternative_action")
     
