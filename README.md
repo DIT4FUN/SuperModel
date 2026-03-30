@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-522%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-609%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -32,7 +32,7 @@
 | `control/` | 运动控制 (PID/阻抗/技能库/规划) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**522项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**609项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -352,7 +352,7 @@ SuperModel/
 │   │   └── safety_controller.py # 安全监控 (S~XXL 五级)
 │   └── simulation/         # 仿真环境
 │       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
-├── tests/                   # 522 项测试全部通过
+├── tests/                   # 609 项测试全部通过
 │   ├── sensor_tests.py      # 传感器 (74 tests)
 │   ├── fusion_tests.py      # 融合网络 (51 tests)
 │   ├── sensorimotor_tests.py # 传感器-执行器融合 (19 tests)
@@ -410,7 +410,7 @@ SuperModel/
 | benchmark_tests.py | 16 | ✅ 全部通过 |
 | mpc_tests.py | 47 | ✅ 全部通过 |
 | test_sensor_manager.py | 27 | ✅ 全部通过 |
-| **总计** | **522** | ✅ **全部通过** |
+| **总计** | **609** | ✅ **全部通过** |
 
 ## 技术栈
 

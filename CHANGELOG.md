@@ -16,7 +16,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **模态编码器测试**: `TestModalityEncoder` (vision/audio/tactile/force/imu) 共 5 项
 
 ### Verified
-- 全量测试套件 **597 项**测试全部通过（新增融合/传感器边缘用例测试 32 项）
+- 全量测试套件 **609 项**测试全部通过（sensor_tests.py 90项 + fusion_tests.py 63项 + control_tests.py 174项 + 其他282项）
 - 触觉/力觉/IMU 模块功能完整：接触检测、滑移检测、抓取质量评估、六维力矩、姿态估计、轨迹仿真
 - 控制模块完整：AGV运动控制、MPC、阻抗控制、安全监控、ROS2接口
 - 仿真环境完整：RobotSimulator、SuperModelGymEnv、虚拟传感器全套
