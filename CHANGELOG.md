@@ -5,6 +5,19 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.1] - 2026-03-30
+
+### Completed
+- **触觉传感器模块** (`sensors/tactile.py`): 827行，支持电阻/电容/压电/光学式，电子皮肤阵列、压力/温度/接近觉/滑移检测
+- **力觉传感器模块** (`sensors/force.py`): 700行，六维力矩传感器接口、偏置校准、负载估计、接触检测
+- **IMU传感器模块** (`sensors/imu.py`): 支持BMI088/MPU6050/MPU9250/ADIS16470，Madgwick/互补滤波姿态估计
+- **控制模块完善**: AGV运动学/动力学、Pure Pursuit轨迹跟踪、阻抗控制、MPC、ROS2接口、安全控制器
+- **仿真环境**: Gymnasium仿真环境、物理引擎集成、传感器仿真
+- **测试用例**: 721项测试全部通过
+
+### Verified
+- 全量测试套件 **721 项**测试全部通过
+
 ## [1.4.0] - 2026-03-30
 
 ### Added
