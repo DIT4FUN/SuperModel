@@ -847,5 +847,245 @@ class TestFusionMemoryEfficiency(unittest.TestCase):
         self.assertEqual(out.shape, (4, 256))
 
 
+class TestFusionAdvanced(unittest.TestCase):
+    """高级融合测试"""
+
+    def test_cross_attention_with_different_query_lengths(self):
+        """跨模态注意力应支持不同查询长度"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 测试不同的序列长度
+        for seq_len in [1, 5, 10, 20]:
+            vision = torch.randn(2, seq_len, 512)
+            multimodal = MultimodalInput(vision=vision)
+            out = fusion(multimodal)
+            self.assertEqual(out.shape[0], 2)  # batch size
+    
+    def test_fusion_with_very_large_hidden_dim(self):
+        """融合模块应支持大隐藏维度"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=2048, num_heads=8
+        )
+        fusion = CrossModalFusion(config)
+        
+        multimodal = MultimodalInput(
+            vision=torch.randn(1, 512),
+            audio=torch.randn(1, 128),
+            tactile=torch.randn(1, 64),
+            force=torch.randn(1, 32),
+            imu=torch.randn(1, 64)
+        )
+        out = fusion(multimodal)
+        self.assertEqual(out.shape[-1], 2048)
+    
+    def test_fusion_with_very_small_hidden_dim(self):
+        """融合模块应支持小隐藏维度"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=32, num_heads=2
+        )
+        fusion = CrossModalFusion(config)
+        
+        multimodal = MultimodalInput(
+            vision=torch.randn(1, 512),
+            audio=torch.randn(1, 128),
+            tactile=torch.randn(1, 64),
+            force=torch.randn(1, 32),
+            imu=torch.randn(1, 64)
+        )
+        out = fusion(multimodal)
+        self.assertEqual(out.shape[-1], 32)
+    
+    def test_language_encoder_with_token_ids(self):
+        """语言编码器应处理token_ids"""
+        encoder = LanguageEncoder(
+            vocab_size=5000, embed_dim=64, hidden_dim=128, max_len=32
+        )
+        # 短序列
+        token_ids = torch.randint(0, 5000, (2, 8))
+        lang_out = encoder(token_ids)
+        self.assertEqual(lang_out.shape, (2, 128))
+    
+    def test_language_encoder_single_token(self):
+        """语言编码器应处理单token输入"""
+        encoder = LanguageEncoder(
+            vocab_size=5000, embed_dim=64, hidden_dim=128, max_len=32
+        )
+        # 单token
+        token_ids = torch.randint(0, 5000, (1, 1))
+        lang_out = encoder(token_ids)
+        self.assertEqual(lang_out.shape, (1, 128))
+    
+    def test_modality_encoder_with_single_element(self):
+        """模态编码器应处理单元素批次"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 单元素批次
+        vision = torch.randn(1, 512)  # 2D input
+        multimodal = MultimodalInput(vision=vision)
+        out = fusion(multimodal)
+        self.assertEqual(out.shape[0], 1)
+    
+    def test_fusion_with_identical_modalities(self):
+        """融合模块应处理相同模态输入"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 相同的视觉输入多次
+        vision = torch.randn(2, 512)
+        multimodal = MultimodalInput(
+            vision=vision,
+            audio=torch.randn(2, 128),
+            tactile=torch.randn(2, 64)
+        )
+        out = fusion(multimodal)
+        self.assertEqual(out.shape[0], 2)
+    
+    def test_cross_modal_attention_gradient_flow(self):
+        """跨模态注意力应允许梯度流"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=128, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        fusion.train()
+        
+        vision = torch.randn(2, 512, requires_grad=True)
+        audio = torch.randn(2, 128, requires_grad=True)
+        
+        multimodal = MultimodalInput(vision=vision, audio=audio)
+        out = fusion(multimodal)
+        
+        loss = out.sum()
+        loss.backward()
+        
+        self.assertIsNotNone(vision.grad)
+        self.assertIsNotNone(audio.grad)
+    
+    def test_unified_representation_properties(self):
+        """统一表示应具有正确的属性"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        multimodal = MultimodalInput(
+            vision=torch.randn(2, 512),
+            audio=torch.randn(2, 128),
+            tactile=torch.randn(2, 64),
+            force=torch.randn(2, 32),
+            imu=torch.randn(2, 64)
+        )
+        out = fusion(multimodal)
+        
+        self.assertTrue(isinstance(out, torch.Tensor))
+        self.assertEqual(out.dtype, torch.float32)
+        self.assertFalse(torch.isnan(out).any())
+        self.assertFalse(torch.isinf(out).any())
+    
+    def test_fusion_config_all_strategies(self):
+        """融合配置应支持所有融合策略"""
+        for strategy in FusionStrategy:
+            config = FusionConfig(
+                vision_dim=512, audio_dim=128, tactile_dim=64,
+                force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4,
+                strategy=strategy
+            )
+            self.assertEqual(config.strategy, strategy)
+    
+    def test_fusion_config_defaults(self):
+        """融合配置应有正确的默认值"""
+        config = FusionConfig()
+        self.assertEqual(config.hidden_dim, 256)
+        self.assertEqual(config.num_heads, 4)
+        self.assertEqual(config.vocab_size, 10000)
+
+
+class TestModalityEncoderAdvanced(unittest.TestCase):
+    """模态编码器高级测试"""
+
+    def test_encoder_output_shape_consistency(self):
+        """编码器输出形状应一致"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        # Test vision encoder
+        x = torch.randn(2, 512)
+        out = fusion.vision_encoder(x)
+        self.assertEqual(out.shape[0], 2)  # batch size preserved
+        self.assertEqual(out.shape[1], 256)  # hidden_dim
+        
+        # Test audio encoder
+        x = torch.randn(2, 128)
+        out = fusion.audio_encoder(x)
+        self.assertEqual(out.shape[0], 2)
+        self.assertEqual(out.shape[1], 256)
+    
+    def test_encoder_handles_near_zero_input(self):
+        """编码器应处理接近零的输入"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 接近零的输入
+        near_zero = torch.zeros(2, 512) + 1e-6
+        out = fusion.vision_encoder(near_zero)
+        self.assertFalse(torch.isnan(out).any())
+        self.assertFalse(torch.isinf(out).any())
+    
+    def test_encoder_handles_large_magnitude_input(self):
+        """编码器应处理大数值输入"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 大数值输入
+        large_input = torch.randn(2, 512) * 100
+        out = fusion.vision_encoder(large_input)
+        self.assertFalse(torch.isnan(out).any())
+        self.assertFalse(torch.isinf(out).any())
+    
+    def test_all_modality_encoders_work(self):
+        """所有模态编码器应正常工作"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        )
+        fusion = CrossModalFusion(config)
+        
+        encoders = [
+            ('vision', fusion.vision_encoder, 512),
+            ('audio', fusion.audio_encoder, 128),
+            ('tactile', fusion.tactile_encoder, 64),
+            ('force', fusion.force_encoder, 32),
+            ('imu', fusion.imu_encoder, 64),
+        ]
+        
+        for name, encoder, input_dim in encoders:
+            x = torch.randn(4, input_dim)
+            out = encoder(x)
+            self.assertEqual(out.shape, (4, 256), f"{name} encoder failed")
+
+
 if __name__ == '__main__':
     unittest.main()

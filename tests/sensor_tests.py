@@ -1386,5 +1386,247 @@ class TestAGVTactileForceIMUCompliance(unittest.TestCase):
         self.assertEqual(spec['sample_hz'], 2000)
 
 
+class TestSensorTypeCompliance(unittest.TestCase):
+    """传感器类型合规性测试"""
+
+    def test_imu_all_sensor_types_capture(self):
+        """所有IMU传感器类型都能正常采集"""
+        for sensor_type in IMUSensorType:
+            if sensor_type == IMUSensorType.VIRTUAL:
+                continue  # 跳过虚拟类型
+            imu = IMUSensor(sensor_type=sensor_type)
+            imu.open()
+            frame = imu.capture()
+            self.assertIsInstance(frame, IMUFrame)
+            self.assertEqual(frame.accel.shape, (3,))
+            self.assertEqual(frame.gyro.shape, (3,))
+            # MPU9250应该有磁力计
+            if sensor_type == IMUSensorType.MPU9250:
+                self.assertIsNotNone(frame.mag)
+            # 其他6轴IMU不应该有磁力计
+            elif sensor_type == IMUSensorType.BMI088:
+                self.assertIsNone(frame.mag)
+            imu.close()
+
+    def test_force_all_sensor_types_capture(self):
+        """所有力觉传感器类型都能正常采集"""
+        for sensor_type in ForceSensorType:
+            sensor = ForceTorqueSensor(sensor_type=sensor_type)
+            sensor.open()
+            wrench = sensor.capture()
+            self.assertIsInstance(wrench, Wrench)
+            self.assertEqual(wrench.force.shape, (3,))
+            self.assertEqual(wrench.torque.shape, (3,))
+            sensor.close()
+
+    def test_tactile_all_sensor_types_capture(self):
+        """所有触觉传感器类型都能正常采集"""
+        for sensor_type in TactileSensorType:
+            tactile = TactileArray(
+                array_size=(16, 16),
+                sensor_type=sensor_type
+            )
+            tactile.open()
+            frame = tactile.capture()
+            self.assertIsInstance(frame, TactileFrame)
+            self.assertEqual(frame.pressure_map.shape, (16, 16))
+            self.assertIsNotNone(frame.temperature_map)
+            # 电容式和光学式应该有接近觉
+            if sensor_type in [TactileSensorType.CAPACITIVE, TactileSensorType.OPTICAL]:
+                self.assertIsNotNone(frame.proximity)
+            else:
+                self.assertIsNone(frame.proximity)
+            tactile.close()
+
+    def test_imu_sensor_ranges_match_spec(self):
+        """IMU传感器量程应与AGV等级规格匹配"""
+        test_cases = [
+            (IMUSensorType.BMI088, 16, 2000),
+            (IMUSensorType.MPU6050, 8, 1000),
+            (IMUSensorType.ADIS16470, 40, 4000),
+        ]
+        for sensor_type, expected_accel_range, expected_gyro_range in test_cases:
+            imu = IMUSensor(
+                sensor_type=sensor_type,
+                accel_range=expected_accel_range,
+                gyro_range=expected_gyro_range
+            )
+            self.assertEqual(imu.accel_range, expected_accel_range)
+            self.assertEqual(imu.gyro_range, expected_gyro_range)
+            imu.open()
+            frame = imu.capture()
+            self.assertEqual(frame.accel.shape, (3,))
+            imu.close()
+
+    def test_force_sensor_with_ip_address(self):
+        """网络力觉传感器应能设置IP地址"""
+        sensor = ForceTorqueSensor(
+            sensor_type=ForceSensorType.SIX_AXIS,
+            ip_address="192.168.1.100",
+            ethernet_type="TCP"
+        )
+        self.assertEqual(sensor.ip_address, "192.168.1.100")
+        self.assertEqual(sensor.ethernet_type, "TCP")
+        sensor.open()
+        wrench = sensor.capture()
+        self.assertIsInstance(wrench, Wrench)
+        sensor.close()
+
+    def test_tactile_calibration_with_weights(self):
+        """触觉传感器标定应支持已知砝码"""
+        tactile = TactileArray()
+        tactile.open()
+        known_weights = [0.5, 1.0, 2.0, 5.0]  # kg
+        tactile.calibrate(known_weights=known_weights)
+        self.assertIsNotNone(tactile.calibration.force_scale)
+        self.assertGreater(tactile.calibration.force_scale, 0)
+        tactile.close()
+
+    def test_force_calibration_bias(self):
+        """力觉传感器偏置校准"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        sensor.calibrate_bias(num_samples=50)
+        # 偏置应该被更新
+        self.assertIsNotNone(sensor.calibration.bias)
+        self.assertEqual(sensor.calibration.bias.shape, (6,))
+        sensor.close()
+
+    def test_imu_calibrate_accel_all_orientations(self):
+        """IMU加速度计标定支持所有朝向"""
+        orientations = ["level", "up", "down", "left", "right", "front", "back"]
+        for orientation in orientations:
+            imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+            imu.open()
+            imu.calibrate_accel(known_orientation=orientation)
+            self.assertIsNotNone(imu.calibration.accel_scale)
+            imu.close()
+
+    def test_pose_estimator_different_algorithms(self):
+        """姿态估计器支持不同算法"""
+        algorithms = ["madgwick", "complementary", "kalman"]
+        for algo in algorithms:
+            estimator = PoseEstimator(algorithm=algo, sample_rate=100.0)
+            accel = np.array([0.0, 0.0, 9.81])
+            gyro = np.array([0.0, 0.0, 0.0])
+            pose = estimator.update(accel, gyro)
+            self.assertIsInstance(pose, Pose)
+            euler = pose.to_euler()
+            self.assertEqual(euler.shape, (3,))
+
+    def test_wrench_processor_outlier_removal(self):
+        """力矩处理器应能去除异常值"""
+        proc = WrenchProcessor(filter_alpha=0.3, outlier_threshold=3.0)
+        # 正常值
+        normal_wrench = np.array([10.0, 0.0, -9.81, 0.0, 0.0, 0.0])
+        # 异常值
+        outlier_wrench = np.array([100.0, 0.0, -9.81, 0.0, 0.0, 0.0])
+        history = [normal_wrench for _ in range(20)]
+        
+        cleaned = proc.remove_outliers(outlier_wrench, history)
+        self.assertEqual(cleaned.shape, (6,))
+        # 异常值应该被替换为均值
+        self.assertNotEqual(cleaned[0], 100.0)
+
+    def test_wrench_equivalent_at_point(self):
+        """力矩等效变换到指定点"""
+        proc = WrenchProcessor()
+        wrench = np.array([10.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        translation = np.array([0.0, 0.1, 0.0])  # 10cm Y方向偏移，产生Z轴力矩
+        equivalent = proc.compute_equivalent_wrench_at(wrench, translation)
+        self.assertEqual(equivalent.shape, (6,))
+        # 力矩应该变化 - cross((0,0.1,0), (10,0,0)) = (0,0,-1), 所以Tz变为-1
+        self.assertEqual(equivalent[5], -1.0)  # Tz分量
+
+    def test_pressure_processor_centroid(self):
+        """压力分布质心计算"""
+        proc = PressureProcessor()
+        # 创建一个简单的压力分布
+        pressure = np.zeros((16, 16), dtype=np.float32)
+        pressure[8, 8] = 1.0  # 单点峰值
+        cy, cx = proc.compute_centroid(pressure)
+        self.assertEqual(cy, 8.0)
+        self.assertEqual(cx, 8.0)
+
+    def test_pressure_processor_histogram(self):
+        """压力分布直方图计算"""
+        proc = PressureProcessor()
+        pressure = np.random.rand(16, 16).astype(np.float32)
+        hist, edges = proc.compute_pressure_histogram(pressure, bins=10)
+        self.assertEqual(len(hist), 10)
+        self.assertEqual(len(edges), 11)
+
+    def test_virtual_tactile_multiple_contact_positions(self):
+        """虚拟触觉传感器支持多个接触位置"""
+        with VirtualTactileSensor(array_size=(16, 16)) as vt:
+            positions = [(0.3, 0.3), (0.7, 0.7), (0.5, 0.5)]
+            for pos in positions:
+                frame = vt.simulate_contact(pos, 0.2, 10.0)
+                self.assertIsInstance(frame, TactileFrame)
+                self.assertGreater(np.max(frame.pressure_map), 0)
+
+    def test_virtual_force_multiple_contacts(self):
+        """虚拟力觉传感器支持多次接触模拟"""
+        with VirtualForceSensor() as vf:
+            for i in range(5):
+                force = (float(i * 10), 0.0, 0.0)
+                wrench = vf.simulate_contact(force)
+                self.assertIsInstance(wrench, Wrench)
+
+    def test_virtual_imu_trajectory_all_types(self):
+        """虚拟IMU支持所有轨迹类型"""
+        for traj_type in ["circle", "figure8", "linear", "sine"]:
+            with VirtualIMUSensor() as vi:
+                frames = vi.simulate_trajectory(traj_type, duration_s=0.1, dt=0.01)
+                self.assertGreater(len(frames), 5)
+                for f in frames:
+                    self.assertIsInstance(f, IMUFrame)
+                    self.assertEqual(f.accel.shape, (3,))
+                    self.assertEqual(f.gyro.shape, (3,))
+
+    def test_sensor_grades_progressive_rates(self):
+        """AGV等级间传感器采样率应递进"""
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+        
+        tactile_rates = [get_tactile_spec(g)['freq_hz'] for g in grades]
+        force_rates = [get_force_spec(g)['sampling_hz'] for g in grades]
+        imu_rates = [get_imu_spec(g)['sample_hz'] for g in grades]
+        
+        # 验证递进关系
+        for i in range(len(grades) - 1):
+            self.assertLess(tactile_rates[i], tactile_rates[i+1])
+            self.assertLess(force_rates[i], force_rates[i+1])
+            self.assertLess(imu_rates[i], imu_rates[i+1])
+
+    def test_sensor_timestamps_increasing(self):
+        """传感器时间戳应递增或保持非负"""
+        cam = BinocularCamera()
+        mic = BinauralMic()
+        tactile = TactileArray()
+        
+        cam.open()
+        mic.open()
+        tactile.open()
+        
+        for _ in range(5):
+            stereo = cam.capture()
+            audio = mic.capture()
+            tac = tactile.capture()
+            
+            # 验证时间戳非负
+            self.assertGreaterEqual(stereo.timestamp, 0.0)
+            self.assertGreaterEqual(audio.timestamp, 0.0)
+            self.assertGreaterEqual(tac.timestamp, 0.0)
+            
+            # 验证返回了有效数据
+            self.assertIsNotNone(stereo.left_image)
+            self.assertIsNotNone(audio.left_channel)
+            self.assertIsNotNone(tac.pressure_map)
+        
+        cam.close()
+        mic.close()
+        tactile.close()
+
+
 if __name__ == '__main__':
     unittest.main()
