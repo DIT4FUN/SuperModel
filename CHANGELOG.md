@@ -5,6 +5,15 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.6.0] - 2026-03-30
+
+### Added
+- **传感器仿真集成测试扩展**: 新增9项测试覆盖抓取质量评估、滑移动画仿真、碰撞仿真（指数/线性衰减）、负载估计、IMU姿态积分、磁力计支持、轨迹仿真（圆形/八字形）
+- **触觉/力觉/IMU深度测试**: `test_tactile_estimate_grip_quality`, `test_tactile_sliding_simulation`, `test_force_sensor_estimate_payload`, `test_force_collision_simulation`, `test_force_linear_decay_collision`, `test_imu_pose_integrator`, `test_imu_with_magnetometer`, `test_virtual_imu_trajectory_circle`, `test_virtual_imu_trajectory_figure8`
+
+### Verified
+- 全量测试套件 **779 项**测试全部通过 (新增9项)
+
 ## [1.5.0] - 2026-03-30
 
 ### Added

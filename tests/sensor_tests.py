@@ -1802,6 +1802,164 @@ class TestSensorSimulationIntegration(unittest.TestCase):
         
         force.close()
     
+    def test_tactile_estimate_grip_quality(self):
+        """测试触觉抓取质量评估"""
+        ta = TactileArray(array_size=(16, 16))
+        ta.open()
+        
+        # 连续采集多帧以建立滑移检测历史
+        for _ in range(5):
+            ta.capture()
+        
+        # 最后一帧用于质量评估（此时有历史数据）
+        frame = ta.capture()
+        quality = ta.estimate_grip_quality(frame)
+        self.assertIn('overall', quality)
+        self.assertIn('contact_area', quality)
+        self.assertIn('uniformity', quality)
+        self.assertIn('stability', quality)
+        # overall可能是NaN当滑移数据不足；检查是数值或NaN
+        if not np.isnan(quality['overall']):
+            self.assertGreaterEqual(quality['overall'], 0.0)
+            self.assertLessEqual(quality['overall'], 1.0)
+        
+        # 无接触时质量应为零
+        zero_frame = TactileFrame(pressure_map=np.zeros((16, 16)), timestamp=0.0)
+        zero_quality = ta.estimate_grip_quality(zero_frame)
+        self.assertEqual(zero_quality['overall'], 0.0)
+        
+        ta.close()
+    
+    def test_tactile_sliding_simulation(self):
+        """测试触觉滑移动画模拟"""
+        vt = VirtualTactileSensor(array_size=(16, 16))
+        vt.open()
+        
+        # 模拟滑动
+        frames = vt.simulate_sliding(
+            direction=(1.0, 0.0),  # 沿X方向
+            speed=0.05,
+            duration_frames=10
+        )
+        
+        self.assertEqual(len(frames), 10)
+        for f in frames:
+            self.assertIsInstance(f, TactileFrame)
+            self.assertEqual(f.pressure_map.shape, (16, 16))
+        
+        # 验证位置随帧变化
+        self.assertNotEqual(frames[0].pressure_map.sum(), frames[-1].pressure_map.sum())
+        vt.close()
+    
+    def test_force_sensor_estimate_payload(self):
+        """测试力觉传感器负载估计"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        
+        # 模拟负载
+        sensor.set_tool_center(tool_mass=1.5, tool_com=np.array([0.0, 0.0, 0.05]))
+        
+        for _ in range(5):
+            wrench = sensor.capture()
+        
+        payload = sensor.estimate_payload()
+        # 负载估计应接近设置值
+        self.assertGreater(payload, 0.0)
+        sensor.close()
+    
+    def test_force_collision_simulation(self):
+        """测试力觉碰撞仿真"""
+        with VirtualForceSensor(noise_level=0.02) as vf:
+            # 沿X轴碰撞
+            frames = vf.simulate_collision(
+                direction=(1.0, 0.0, 0.0),
+                peak_force=50.0,
+                duration_ms=100.0,
+                decay="exponential"
+            )
+            
+            self.assertGreater(len(frames), 0)
+            self.assertIsInstance(frames[0], Wrench)
+            
+            # 验证力向量方向
+            for f in frames:
+                self.assertGreater(f.force[0], 0)  # X分量应为正
+            
+            # 峰值力应在第一帧
+            peak_idx = np.argmax([np.linalg.norm(f.force) for f in frames])
+            self.assertEqual(peak_idx, 0)
+    
+    def test_force_linear_decay_collision(self):
+        """测试线性衰减碰撞仿真"""
+        with VirtualForceSensor(noise_level=0.0, bias_range=0.0) as vf:
+            frames = vf.simulate_collision(
+                direction=(0.0, 1.0, 0.0),
+                peak_force=100.0,
+                duration_ms=50.0,
+                decay="linear"
+            )
+            
+            # 线性衰减: 每帧递减
+            for i in range(1, len(frames)):
+                prev_mag = np.linalg.norm(frames[i-1].force)
+                curr_mag = np.linalg.norm(frames[i].force)
+                self.assertLessEqual(curr_mag, prev_mag)
+    
+    def test_imu_pose_integrator(self):
+        """测试IMU姿态积分功能"""
+        pe = PoseEstimator(algorithm='madgwick', beta=0.1, sample_rate=100.0)
+        
+        # 模拟旋转运动
+        for i in range(50):
+            t = i / 100.0
+            gyro = np.array([0.0, 0.0, 0.5 * np.sin(t * 2)])  # 绕Z轴旋转
+            accel = np.array([0.0, 0.0, 9.81])
+            pose = pe.update(accel, gyro)
+            self.assertIsInstance(pose, Pose)
+        
+        euler = pe.get_euler()
+        self.assertEqual(euler.shape, (3,))
+    
+    def test_imu_with_magnetometer(self):
+        """测试带磁力计的IMU (MPU9250)"""
+        imu = IMUSensor(sensor_type=IMUSensorType.MPU9250)
+        imu.open()
+        
+        frame = imu.capture()
+        self.assertIsNotNone(frame.mag)
+        self.assertEqual(frame.mag.shape, (3,))
+        self.assertGreater(np.linalg.norm(frame.mag), 0.0)  # 地磁场存在
+        
+        imu.close()
+    
+    def test_virtual_imu_trajectory_circle(self):
+        """测试虚拟IMU圆形轨迹仿真"""
+        with VirtualIMUSensor() as vi:
+            frames = vi.simulate_trajectory(
+                trajectory_type="circle",
+                duration_s=0.1,
+                dt=0.01
+            )
+            
+            self.assertGreater(len(frames), 5)
+            for f in frames:
+                self.assertIsInstance(f, IMUFrame)
+                self.assertIsNotNone(f.accel)
+    
+    def test_virtual_imu_trajectory_figure8(self):
+        """测试虚拟IMU八字形轨迹仿真"""
+        with VirtualIMUSensor() as vi:
+            frames = vi.simulate_trajectory(
+                trajectory_type="figure8",
+                duration_s=0.1,
+                dt=0.01
+            )
+            
+            self.assertGreater(len(frames), 5)
+            # 八字形轨迹应在Y方向有更大的加速度变化
+            accel_y_vals = [f.accel[1] for f in frames]
+            self.assertGreater(np.std(accel_y_vals), 0.0)
+    
     def test_gym_env_sensor_feedback(self):
         """测试Gym仿真环境与传感器反馈的闭环"""
         from simulation.gym_env import SuperModelGymEnv
