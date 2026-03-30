@@ -383,31 +383,129 @@ class HierarchicalPlanner(TaskPlanner):
         """获取任务可用的方法数量"""
         return len(self._methods.get(task_name, []))
     
-    def backtrack(self, task: Task, failed_subtasks: List[str]) -> List[Task]:
+    def backtrack(
+        self,
+        task: Task,
+        failed_subtasks: List[str],
+        attempted_methods: Optional[List[int]] = None
+    ) -> Tuple[List[Task], List[int]]:
         """
         回溯搜索：当子任务失败时尝试替代方法
+        
+        采用深度优先搜索策略遍历方法空间，支持多级回溯。
         
         Args:
             task: 当前任务
             failed_subtasks: 失败的子任务ID列表
+            attempted_methods: 已尝试的方法索引列表 (用于避免重复尝试)
             
         Returns:
-            替代子任务列表
+            (替代子任务列表, 更新后的已尝试方法索引)
         """
+        if attempted_methods is None:
+            attempted_methods = []
+        
         methods = self._methods.get(task.name, [])
         
-        # 尝试下一个方法
-        # 这里简化处理，实际应跟踪已尝试的方法
-        for method in methods:
+        # 尝试下一个未尝试的方法
+        for idx, method in enumerate(methods):
+            if idx in attempted_methods:
+                continue
+            
             try:
                 subtasks = method(task.parameters)
-                if subtasks:
-                    return subtasks
-            except Exception:
+                if subtasks and len(subtasks) > 0:
+                    # 验证子任务可行性
+                    valid_subtasks = []
+                    for st in subtasks:
+                        if st.id not in failed_subtasks:
+                            valid_subtasks.append(st)
+                    
+                    if valid_subtasks:
+                        return valid_subtasks, attempted_methods + [idx]
+            except Exception as e:
+                print(f"[HierarchicalPlanner] Method {idx} for task '{task.name}' failed: {e}")
                 continue
         
         # 无法回溯，返回空
-        return []
+        return [], attempted_methods
+    
+    def plan_with_replanning(
+        self,
+        task_spec: TaskSpec,
+        initial_state: WorldState,
+        max_replan_attempts: int = 3
+    ) -> Tuple[List[Task], Dict[str, Any]]:
+        """
+        带重规划的分层规划
+        
+        当计划执行失败时，自动尝试替代方法。
+        
+        Args:
+            task_spec: 任务规格
+            initial_state: 初始世界状态
+            max_replan_attempts: 最大重规划次数
+            
+        Returns:
+            (最终任务序列, 元数据含重规划历史)
+        """
+        replan_history = []
+        current_state = initial_state.copy()
+        
+        for attempt in range(max_replan_attempts):
+            # 生成计划
+            tasks, metadata = self.plan_hierarchical(
+                task_spec, initial_state=current_state, validate=False
+            )
+            
+            # 验证
+            is_valid, reason = self.validate_plan(tasks, current_state)
+            
+            replan_entry = {
+                "attempt": attempt,
+                "num_tasks": len(tasks),
+                "task_names": [t.name for t in tasks],
+                "is_valid": is_valid,
+                "reason": reason
+            }
+            replan_history.append(replan_entry)
+            
+            if is_valid:
+                metadata["replan_history"] = replan_history
+                metadata["successful_attempt"] = attempt
+                return tasks, metadata
+            
+            # 找到失败点并回溯
+            failed_task_names = []
+            for i, task in enumerate(tasks):
+                action = self.action_library.get(task.name)
+                if action and not action.applicable(current_state, task.parameters):
+                    failed_task_names.append(task.name)
+            
+            if not failed_task_names:
+                break
+            
+            # 尝试回溯重规划
+            root_task = Task(
+                id="root_replan",
+                name=task_spec.name,
+                parameters={"goal_state": task_spec.goal_state}
+            )
+            alt_tasks, _ = self.backtrack(root_task, failed_task_names)
+            
+            if alt_tasks:
+                tasks = alt_tasks
+                is_valid, reason = self.validate_plan(tasks, current_state)
+                if is_valid:
+                    metadata["replan_history"] = replan_history
+                    metadata["successful_attempt"] = attempt
+                    return tasks, metadata
+        
+        # 所有尝试均失败
+        metadata["replan_history"] = replan_history
+        metadata["successful_attempt"] = -1
+        metadata["final_state"] = str(current_state)
+        return [], metadata
     
     def estimate_plan_cost(self, tasks: List[Task]) -> float:
         """

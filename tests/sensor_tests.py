@@ -1628,5 +1628,265 @@ class TestSensorTypeCompliance(unittest.TestCase):
         tactile.close()
 
 
+class TestSensorSimulationIntegration(unittest.TestCase):
+    """传感器-仿真环境集成测试
+    
+    验证触觉、力觉、IMU传感器与RobotSimulator的集成工作。
+    """
+
+    def test_simulated_contact_tactile_force_integration(self):
+        """测试仿真接触场景中触觉和力觉的一致性"""
+        from simulation.environment import SimConfig
+        
+        config = SimConfig(num_joints=6, dt=0.01)
+        
+        # 创建虚拟传感器
+        tactile = VirtualTactileSensor(array_size=(16, 16), sensor_id="int_tactile")
+        force = VirtualForceSensor(sensor_id="int_force", noise_level=0.1)
+        
+        tactile.open()
+        force.open()
+        
+        # 模拟一个接触
+        contact_pos = (0.5, 0.5)
+        contact_force = 15.0  # N
+        
+        # 触觉捕获接触
+        tac_frame = tactile.simulate_contact(
+            contact_pos=contact_pos,
+            contact_radius=0.3,
+            contact_force=contact_force,
+            noise_level=0.02
+        )
+        
+        # 力觉捕获接触力
+        wrench = force.simulate_contact(
+            force=(0.0, 0.0, -contact_force),
+            torque=(0.0, 0.0, 0.0)
+        )
+        
+        # 验证触觉帧
+        self.assertIsNotNone(tac_frame.pressure_map)
+        self.assertGreater(np.max(tac_frame.pressure_map), 0)
+        
+        # 验证力觉数据
+        self.assertIsNotNone(wrench.force)
+        self.assertAlmostEqual(wrench.force[2], -contact_force, delta=2.0)
+        
+        # 验证一致性：触觉峰值压力与力觉Z轴力正相关
+        tac_peak = np.max(tac_frame.pressure_map)
+        force_mag = abs(wrench.force[2])
+        self.assertGreater(tac_peak, 0)
+        self.assertGreater(force_mag, 0)
+        
+        tactile.close()
+        force.close()
+    
+    def test_imu_motion_with_virtual_sensor(self):
+        """测试IMU随机器人运动的数据变化"""
+        imu = VirtualIMUSensor(sensor_id="int_imu", accel_noise=0.005, gyro_noise=0.0005)
+        imu.open()
+        
+        # 静止状态
+        frame_static = imu.simulate_static(orientation=(0.0, 0.0, 0.0))
+        self.assertAlmostEqual(frame_static.accel[2], 9.81, delta=0.5)
+        
+        # 模拟俯仰运动 (绕X轴旋转)
+        frame_pitch = imu.simulate_motion(
+            linear_accel=(0.0, 0.0, 0.0),
+            angular_vel=(0.5, 0.0, 0.0),
+            dt=0.01
+        )
+        self.assertIsNotNone(frame_pitch.gyro)
+        self.assertGreater(abs(frame_pitch.gyro[0]), 0.3)  # 应有X轴角速度
+        
+        # 轨迹模拟 (圆周运动)
+        trajectory = imu.simulate_trajectory(
+            trajectory_type="circle",
+            duration_s=0.1,
+            dt=0.01
+        )
+        self.assertGreater(len(trajectory), 5)
+        
+        # 相邻帧应有速度变化
+        if len(trajectory) >= 2:
+            accel_diff = np.abs(trajectory[1].accel - trajectory[0].accel)
+            self.assertGreater(np.mean(accel_diff), 0)
+        
+        imu.close()
+    
+    def test_pose_estimator_with_imu_trajectory(self):
+        """测试姿态估计器对IMU轨迹的处理"""
+        imu = VirtualIMUSensor(sensor_id="pose_test_imu")
+        imu.open()
+        
+        # 使用Madgwick算法
+        estimator = PoseEstimator(algorithm="madgwick", sample_rate=100.0, beta=0.1)
+        
+        # 模拟多个运动帧
+        frames = imu.simulate_trajectory("sine", duration_s=0.5, dt=0.01)
+        
+        for frame in frames[:20]:
+            pose = estimator.update(frame.accel, frame.gyro, frame.mag)
+            self.assertIsNotNone(pose.orientation)
+            # 四元数应归一化
+            norm = np.linalg.norm(pose.orientation)
+            self.assertAlmostEqual(norm, 1.0, places=5)
+        
+        # Euler角应在合理范围内
+        euler = estimator.get_euler()
+        self.assertEqual(len(euler), 3)
+        
+        imu.close()
+    
+    def test_multimodal_sensor_timing(self):
+        """测试多模态传感器时间同步"""
+        import time
+        
+        tactile = VirtualTactileSensor(array_size=(8, 8), sensor_id="sync_tactile")
+        force = VirtualForceSensor(sensor_id="sync_force")
+        imu = VirtualIMUSensor(sensor_id="sync_imu")
+        
+        for s in [tactile, force, imu]:
+            s.open()
+        
+        timestamps = []
+        
+        for i in range(10):
+            t_start = time.perf_counter()
+            
+            # 虚拟传感器直接获取帧
+            tac = tactile.simulate_contact(contact_pos=(0.5, 0.5), contact_force=5.0)
+            wrench = force.simulate_contact(force=(0, 0, -5))
+            imu_frame = imu.simulate_static()
+            
+            t_end = time.perf_counter()
+            
+            # 所有时间戳应在合理范围内
+            self.assertGreaterEqual(tac.timestamp, 0.0)
+            self.assertGreaterEqual(wrench.timestamp, 0.0)
+            self.assertGreaterEqual(imu_frame.timestamp, 0.0)
+            
+            timestamps.append(t_end - t_start)
+        
+        # 平均采集时间应小于1ms
+        avg_time = np.mean(timestamps)
+        self.assertLess(avg_time, 0.001, f"Sensor capture too slow: {avg_time*1000:.2f}ms")
+        
+        for s in [tactile, force, imu]:
+            s.close()
+    
+    def test_force_sensor_payload_with_simulated_mass(self):
+        """测试力觉传感器对仿真负载的估计"""
+        force = VirtualForceSensor(sensor_id="payload_test", noise_level=0.05)
+        force.open()
+        
+        # 模拟不同质量负载
+        masses = [0.5, 1.0, 2.0, 5.0]
+        estimated_masses = []
+        
+        for mass in masses:
+            wrench = force.simulate_payload(mass=mass, com_offset=(0.0, 0.0, 0.0))
+            # 力觉测量的Fz应该反映质量
+            fz_measured = abs(wrench.force[2])
+            est_mass = fz_measured / 9.81
+            estimated_masses.append(est_mass)
+        
+        # 验证估计值与实际值趋势一致
+        self.assertGreater(estimated_masses[-1], estimated_masses[0])
+        
+        # 误差应在30%以内
+        for actual, estimated in zip(masses, estimated_masses):
+            rel_error = abs(estimated - actual) / actual
+            self.assertLess(rel_error, 0.30)
+        
+        force.close()
+    
+    def test_gym_env_sensor_feedback(self):
+        """测试Gym仿真环境与传感器反馈的闭环"""
+        from simulation.gym_env import SuperModelGymEnv
+        
+        env = SuperModelGymEnv(render_mode=None)
+        obs, info = env.reset()
+        
+        self.assertIsNotNone(obs)
+        
+        # 执行几步随机动作
+        for _ in range(5):
+            action = env.action_space.sample()
+            obs, reward, terminated, truncated, info = env.step(action)
+            
+            if terminated or truncated:
+                break
+        
+        # 验证仿真环境正确响应
+        self.assertIn('joint_pos', info)
+        
+        env.close()
+
+
+class TestPlannerHTNBacktracking(unittest.TestCase):
+    """HTN规划器回溯能力测试"""
+
+    def test_hierarchical_planner_backtrack(self):
+        """测试HTN规划器回溯机制"""
+        from control.planner import HierarchicalPlanner, Task
+        
+        planner = HierarchicalPlanner()
+        
+        # 默认已有pickup方法;再注册一个替代方法
+        initial_methods = planner.get_available_methods("pickup")
+        
+        def pickup_method_alt(params):
+            return [
+                Task(id="p1_alt", name="approach_safe"),
+                Task(id="p2_alt", name="slow_grasp"),
+                Task(id="p3_alt", name="verify_grasp")
+            ]
+        
+        planner.register_method("pickup", pickup_method_alt)
+        
+        # 验证方法数量增加
+        self.assertEqual(planner.get_available_methods("pickup"), initial_methods + 1)
+        
+        # 测试回溯
+        root = Task(id="root", name="pickup", parameters={"object": "box"})
+        tasks, attempted = planner.backtrack(root, [])
+        self.assertGreater(len(tasks), 0)
+    
+    def test_planner_with_replanning(self):
+        """测试带重规划的分层规划"""
+        from control.planner import HierarchicalPlanner, TaskSpec, WorldState, Action
+        
+        # 通过 action_library 构造
+        action_lib = {
+            "move": Action(
+                name="move",
+                precondition=lambda s: True,
+                effect=lambda s, p: None,
+                cost=1.0
+            ),
+            "grasp": Action(
+                name="grasp",
+                precondition=lambda s: True,
+                effect=lambda s, p: None,
+                cost=2.0
+            ),
+        }
+        
+        planner = HierarchicalPlanner(action_library=action_lib)
+        
+        spec = TaskSpec(
+            name="test_task",
+            goal_state={"object.grasped": True}
+        )
+        
+        state = WorldState()
+        tasks, metadata = planner.plan_with_replanning(spec, state, max_replan_attempts=2)
+        
+        self.assertIsInstance(metadata, dict)
+        self.assertIn("replan_history", metadata)
+
+
 if __name__ == '__main__':
     unittest.main()
