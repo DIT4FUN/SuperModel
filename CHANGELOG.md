@@ -5,6 +5,17 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.4.5] - 2026-03-30
+
+### Verified
+- 全量测试套件 **736 项**测试全部通过
+- 所有核心模块完成度 100%
+
+### Updated
+- **传感器模块文档**: 完善触觉/力觉/IMU 模块接口文档
+- **AGV五级规格表**: 补充完整传感器规格速查表 (触觉/力觉/IMU/融合/MPC/Gymnasium)
+- **MODULE_INTERFACE.md**: 补充所有传感器类型和虚拟传感器的接口定义
+
 ## [1.4.4] - 2026-03-30
 
 ### Added
