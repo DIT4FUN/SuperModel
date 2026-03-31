@@ -461,5 +461,137 @@
 
 ---
 
-*文档版本: v1.0.3*
-*最后更新: 2026-03-30*
+## 附录D: AGV World Model 世界模型规格
+
+### D.1 RSSM 世界模型架构
+
+World Model 采用 Dreamer-style RSSM (Recurrent State Space Model) 架构：
+
+```
+观测 o_t → [Encoder] → obs_embed
+                          ↓
+动作 a_{t-1} + 隐状态 h_{t-1} + z_{t-1} → [RSSM] → h_t, z_t
+                          ↓                              ↓
+                     [先验 p]                      [后验 q]
+                          ↓                              ↓
+                     z_t 的分布 ←———— obs_embed ——→ z_t 的分布
+                          ↓
+                       [Decoder] → 预测观测
+                          ↓
+                       [Reward] → 预测奖励
+```
+
+**RSSM 核心组件:**
+
+| 组件 | 功能 | 输入 | 输出 |
+|------|------|------|------|
+| Encoder | 观测编码 | 原始传感器数据 | 观测嵌入向量 |
+| RSSM | 序列状态转移 | a_{t-1}, h_{t-1}, z_{t-1} | h_t, z_t |
+| 先验网络 | 预测隐变量分布 | h_t | p(z_t\|h_t) |
+| 后验网络 | 估计隐变量分布 | h_t, obs_embed | q(z_t\|h_t, obs_embed) |
+| Decoder | 观测重建 | h_t, z_t | 预测观测 |
+| Reward网络 | 奖励预测 | h_t, z_t | 预测奖励 |
+
+### D.2 AGV 五级 World Model 配置
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 隐状态维度 (h) | 128 | 256 | 512 | 768 | 1024 |
+| 隐藏维度 | 256 | 512 | 1024 | 1536 | 2048 |
+| 潜空间维度 (z) | 32 | 64 | 128 | 192 | 256 |
+| 想象步数 (imagination_horizon) | 10 | 15 | 20 | 25 | 30 |
+| RSSM循环层数 | 1 | 2 | 2 | 3 | 4 |
+| Actor隐层维度 | 256 | 512 | 1024 | 1536 | 2048 |
+| Critic隐层维度 | 256 | 512 | 1024 | 1536 | 2048 |
+| **参数量** | **~1M** | **~5M** | **~20M** | **~50M** | **~100M** |
+| 观测编码器 | CNN (轻量) | CNN | CNN+Transformer | CNN+Transformer | 多尺度CNN+Transformer |
+| 动作空间类型 | 离散 | 离散+连续 | 连续 | 连续 | 连续+多模态 |
+
+### D.3 World Model 训练规格
+
+| 训练参数 | S | M | L | XL | XXL |
+|----------|---|---|---|---|-----|
+| 批次大小 (batch_size) | 16 | 64 | 128 | 256 | 512 |
+| 经验回放缓冲区 | 10K | 100K | 500K | 1M | 5M |
+| 训练频率 | 每 episode | 每 100步 | 每 50步 | 每 20步 | 每 10步 |
+| 免费操作数 (free_nats) | 0.5 | 0.3 | 0.2 | 0.1 | 0.05 |
+| KL 散度权重 | 1.0 | 1.0 | 1.0 | 1.0 | 1.0 |
+| 想象 rollout 长度 | 10 | 15 | 20 | 25 | 30 |
+| 学习率 | 1e-3 | 5e-4 | 3e-4 | 2e-4 | 1e-4 |
+| 梯度裁剪 | 100 | 100 | 50 | 50 | 10 |
+| 优化器 | Adam | Adam | AdamW | AdamW | AdamW |
+| 学习率衰减 | ✗ | ✗ | 余弦退火 | 余弦退火 | 余弦退火+Warmup |
+
+### D.4 World Model 推理性能规格
+
+| 推理指标 | S | M | L | XL | XXL |
+|----------|---|---|---|---|-----|
+| 单步推理延迟 (ms) | < 5 | < 10 | < 20 | < 50 | < 100 |
+| 100步想象 rollout (ms) | < 50 | < 100 | < 300 | < 800 | < 2000 |
+| 模型加载内存 (MB) | 50 | 200 | 800 | 2GB | 8GB |
+| 推理功耗 (W) | < 0.5 | < 2 | < 5 | < 15 | < 50 |
+| 支持实时控制 | ✓ | ✓ | ✓ (简化) | ✓ | ✓ |
+| 嵌入式部署 (RDK) | ✓ | ✓ | ✗ | ✗ | ✗ |
+
+### D.5 World Model 功能覆盖
+
+| 功能特性 | S | M | L | XL | XXL |
+|----------|---|---|---|---|-----|
+| 观测重建 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 奖励预测 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 动作选择 (Actor) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 价值估计 (Critic) | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 想象训练 (Dreamer) | - | ✓ | ✓ | ✓ | ✓ |
+| 跨任务迁移 | - | ✓ | ✓ | ✓ | ✓ |
+| 多步预测 | - | ✓ | ✓ | ✓ | ✓ |
+| 不确定性估计 | - | - | ✓ | ✓ | ✓ |
+| 安全约束 (CVAR) | - | - | - | ✓ | ✓ |
+| 多智能体世界模型 | - | - | - | ✓ | ✓ |
+| 在线学习/持续适应 | - | - | - | ✓ | ✓ |
+| 物理一致性约束 | - | - | - | - | ✓ |
+
+### D.6 World Model AGV 集成接口
+
+```python
+# World Model 智能体创建
+from learning.world_model import create_world_model_agent, get_world_model_spec
+
+# 创建 M 级世界模型智能体
+spec = get_world_model_spec('M')
+agent = create_world_model_agent('M', obs_dims=128, action_dim=6)
+
+# 选择动作
+action = agent.select_action(observations, deterministic=True)
+
+# 存储经验
+agent.store_transition(obs, action, reward, next_obs, done)
+
+# 训练
+losses = agent.train_step(batch_size=64)
+
+# 获取规格
+print(f"M级参数量: {spec['params']:.1f}M")
+print(f"隐状态维度: {spec['hidden_dim']}")
+print(f"想象步数: {spec['imagination_horizon']}")
+```
+
+**AGV五级 World Model 规格速查:**
+
+| 等级 | 参数量 | 隐状态 | 想象步数 | 推荐硬件 |
+|------|--------|--------|----------|----------|
+| S | ~1M | 128 | 10 | RK3566/RDK X3 |
+| M | ~5M | 256 | 15 | RK3588/RDK X5 |
+| L | ~20M | 512 | 20 | RK3588/RDK X5 Ultra |
+| XL | ~50M | 768 | 25 | RK3588/RDK X5 Ultra + NPU |
+| XXL | ~100M | 1024 | 30 | 独立GPU服务器 |
+
+---
+
+*文档版本: v1.1.0*
+*最后更新: 2026-04-01*
+
+**2026-04-01 v1.1.0**: 新增附录D - AGV World Model 世界模型规格
+- RSSM 架构组件详解 (D.1)
+- AGV五级 World Model 配置表 (D.2)
+- 训练规格 (D.3) 和推理性能 (D.4)
+- 功能覆盖表 (D.5) 和集成接口 (D.6)
