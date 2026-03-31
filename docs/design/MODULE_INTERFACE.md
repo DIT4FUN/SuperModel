@@ -4169,3 +4169,823 @@ for step in range(1000):
 *最后更新: 2026-03-31*
 
 **2026-03-31 v1.9.0**: 新增第29节完整传感器-控制集成流水线，包含 SuperModelPipeline 端到端闭环、MultimodalDataLogger 数据记录器、SensorImuFusionFilter 紧耦合滤波、AGV五级流水线配置模板 (S/M/L/XL/XXL)。
+
+---
+
+## 33. 触觉-控制集成实战 (Tactile-Control Integration)
+
+### 33.1 触觉伺服控制
+
+```python
+from sensors.tactile import TactileArray, TactileSensorType, TactileFrame
+from sensors.force import ForceTorqueSensor, Wrench, ForceSensorType
+from control.impedance import ImpedanceController
+import numpy as np
+
+class TactileServoController:
+    """
+    触觉伺服控制器
+    
+    基于触觉反馈的实时力/位置控制:
+    1. 触觉感知接触区域和压力分布
+    2. 计算期望抓取力
+    3. 阻抗控制维持稳定抓取
+    4. 滑移检测和响应
+    """
+    
+    def __init__(
+        self,
+        target_force: float = 5.0,    # 目标抓取力 (N)
+        stiffness: float = 1000.0,    # 刚度 (N/m)
+        damping: float = 50.0         # 阻尼 (N·s/m)
+    ):
+        self.target_force = target_force
+        self.controller = ImpedanceController(
+            dim=1,
+            Kp=stiffness,
+            Kd=damping
+        )
+        
+    def compute_control(
+        self,
+        tactile_frame: TactileFrame,
+        wrench: Wrench,
+        tactile_contacts: list,
+        dt: float = 0.01
+    ) -> np.ndarray:
+        """
+        计算控制输出
+        
+        Args:
+            tactile_frame: 当前触觉帧
+            wrench: 当前力旋量
+            tactile_contacts: 检测到的接触列表
+            dt: 控制周期
+            
+        Returns:
+            控制量 (位置增量或力增量)
+        """
+        # 当前总接触力
+        current_force = wrench.magnitude if wrench else 0.0
+        
+        # 力误差
+        force_error = self.target_force - current_force
+        
+        # 滑移检测
+        slip_detected = False
+        for contact in tactile_contacts:
+            if contact.slip_probability > 0.5:
+                slip_detected = True
+                break
+        
+        # 滑移响应: 增加抓取力
+        if slip_detected:
+            force_error += 2.0  # 增加2N
+        
+        # 阻抗控制
+        control_output = self.controller.compute(
+            error=force_error,
+            error_dot=0.0,
+            dt=dt
+        )
+        
+        return np.array([control_output])
+```
+
+### 33.2 触觉引导的抓取控制
+
+```python
+class TactileGuidedGraspController:
+    """
+    触觉引导抓取控制器
+    
+    使用触觉传感器引导物体抓取:
+    1. 扫描物体表面获取形状信息
+    2. 规划抓取点和抓取角度
+    3. 渐进式闭合手指直到触觉触发
+    4. 评估抓取质量并调整
+    """
+    
+    def __init__(
+        self,
+        tactile_array: TactileArray,
+        grasp_force: float = 8.0,
+        approach_speed: float = 0.05
+    ):
+        self.tactile = tactile_array
+        self.grasp_force = grasp_force
+        self.approach_speed = approach_speed
+        
+    def scan_object(
+        self,
+        approach_direction: np.ndarray,
+        num_scan_points: int = 20
+    ) -> Dict:
+        """
+        扫描物体获取形状信息
+        
+        Returns:
+            {'center': (x,y,z), 'normal': (nx,ny,nz), 'contact_area': float}
+        """
+        pressure_maps = []
+        
+        for i in range(num_scan_points):
+            # 接近一步
+            frame = self.tactile.capture()
+            contacts = self.tactile.detect_contacts(frame)
+            
+            if contacts:
+                pressure_maps.append(frame.pressure_map)
+        
+        # 从压力分布估算物体形状
+        if pressure_maps:
+            avg_pressure = np.mean(pressure_maps, axis=0)
+            quality = self.tactile.estimate_grip_quality(pressure_maps[-1])
+            return {
+                'avg_pressure': avg_pressure,
+                'quality': quality,
+                'num_contacts': len(contacts)
+            }
+        return {}
+    
+    def execute_grasp(
+        self,
+        target_object_pose: np.ndarray,
+        gripper_width: float
+    ) -> Tuple[bool, float]:
+        """
+        执行抓取
+        
+        Args:
+            target_object_pose: 目标物体位姿 (x, y, z, roll, pitch, yaw)
+            gripper_width: 初始夹爪宽度
+            
+        Returns:
+            (success, final_grip_quality)
+        """
+        # 1. 移动到物体上方
+        above_pose = target_object_pose.copy()
+        above_pose[2] += 0.05  # 抬升5cm
+        
+        # 2. 渐进式下降
+        current_z = above_pose[2]
+        while current_z > target_object_pose[2]:
+            current_z -= self.approach_speed
+            frame = self.tactile.capture()
+            contacts = self.tactile.detect_contacts(frame)
+            
+            if contacts and any(c.peak_pressure > 0.5 for c in contacts):
+                break  # 触觉触发
+        
+        # 3. 闭合夹爪直到达到目标力
+        force_history = []
+        while len(force_history) < 100:
+            frame = self.tactile.capture()
+            contacts = self.tactile.detect_contacts(frame)
+            
+            if contacts:
+                total_force = sum(c.contact_force for c in contacts)
+                force_history.append(total_force)
+                
+                if total_force >= self.grasp_force:
+                    quality = self.tactile.estimate_grip_quality(frame)
+                    return quality['overall'] > 0.6, quality['overall']
+        
+        return False, 0.0
+```
+
+### 33.3 触觉-控制集成AGV等级配置
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 触觉阵列 | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| 采样频率 (Hz) | 50 | 100 | 200 | 500 | 1000 |
+| 触觉伺服 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 滑移检测响应 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 抓取质量评估 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 多指协调 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 动态重抓取 | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+---
+
+## 34. 力觉-控制集成实战 (Force-Control Integration)
+
+### 34.1 力控运动基元
+
+```python
+from sensors.force import ForceTorqueSensor, Wrench, ForceSensorType
+from control.impedance import ImpedanceController
+from control.motion import MotionController
+import numpy as np
+
+class ForceMotionPrimitive:
+    """
+    力控运动基元库
+    
+    包含常用的力控运动模式:
+    - 恒力跟踪
+    - 力顺应
+    - 零力导引
+    - 碰撞响应
+    """
+    
+    PRIMITIVES = [
+        'constant_force',    # 恒力跟踪
+        'force_compliance', # 力顺应
+        'zero_force_guide',  # 零力导引
+        'collision_response',  # 碰撞响应
+        'surface_following',  # 表面跟踪
+        'insertion'          # 插孔任务
+    ]
+    
+    def __init__(
+        self,
+        sensor: ForceTorqueSensor,
+        impedance_ctrl: ImpedanceController,
+        motion_ctrl: MotionController
+    ):
+        self.sensor = sensor
+        self.impedance = impedance_ctrl
+        self.motion = motion_ctrl
+        
+    def constant_force_tracking(
+        self,
+        target_force: np.ndarray,
+        motion_direction: np.ndarray,
+        target_velocity: float = 0.01,
+        Kp_force: float = 1.0
+    ) -> np.ndarray:
+        """
+        恒力跟踪
+        
+        在指定方向上保持恒定接触力
+        
+        Args:
+            target_force: 目标力向量 (Fx, Fy, Fz)
+            motion_direction: 运动方向 (归一化)
+            target_velocity: 目标运动速度
+            Kp_force: 力控制增益
+            
+        Returns:
+            velocity_command: 速度指令
+        """
+        wrench = self.sensor.capture()
+        current_force = wrench.force.copy()
+        
+        # 力误差
+        force_error = target_force - current_force
+        
+        # 速度修正
+        velocity_correction = Kp_force * force_error
+        
+        # 沿运动方向的速度
+        motion_velocity = motion_direction * target_velocity
+        
+        # 组合
+        velocity_cmd = motion_velocity + velocity_correction * 0.1
+        
+        return velocity_cmd
+    
+    def surface_following(
+        self,
+        contact_normal: np.ndarray,
+        target_normal_force: float,
+        tangential_speed: float = 0.02
+    ) -> Tuple[np.ndarray, bool]:
+        """
+        表面跟踪
+        
+        沿表面切向移动，保持法向力恒定
+        
+        Args:
+            contact_normal: 表面法向量 (归一化)
+            target_normal_force: 目标法向力
+            tangential_speed: 切向速度
+            
+        Returns:
+            (velocity_command, is_contact)
+        """
+        wrench = self.sensor.capture()
+        
+        # 检测接触
+        is_contact = wrench.magnitude > 0.5
+        
+        # 法向力
+        normal_force = np.dot(wrench.force, contact_normal)
+        
+        # 调整法向速度修正力
+        normal_correction = (target_normal_force - normal_force) * 0.5
+        
+        # 切向速度
+        tangent_velocity = np.cross(contact_normal, np.array([0, 0, 1]))
+        if np.linalg.norm(tangent_velocity) < 1e-6:
+            tangent_velocity = np.cross(contact_normal, np.array([1, 0, 0]))
+        tangent_velocity = tangent_velocity / (np.linalg.norm(tangent_velocity) + 1e-6)
+        tangent_velocity *= tangential_speed
+        
+        # 法向修正
+        normal_velocity = contact_normal * normal_correction
+        
+        velocity_cmd = tangent_velocity + normal_velocity
+        
+        return velocity_cmd, is_contact
+    
+    def insertion_task(
+        self,
+        insertion_depth: float,
+        target_force: float = 2.0,
+        max_force: float = 10.0
+    ) -> Tuple[np.ndarray, bool]:
+        """
+        插孔任务
+        
+        精密插入操作，力控优先
+        
+        Returns:
+            (velocity_command, success)
+        """
+        wrench = self.sensor.capture()
+        
+        # 监测力
+        if wrench.magnitude > max_force:
+            return np.zeros(3), False  # 过力保护
+        
+        # 插入方向
+        insertion_dir = np.array([0, 0, -1])  # 假设-Z插入
+        
+        # 速度控制
+        if wrench.magnitude < target_force:
+            velocity = insertion_dir * 0.005  # 慢速接近
+        else:
+            velocity = insertion_dir * 0.001  # 精细调整
+        
+        return velocity, True
+```
+
+### 34.2 碰撞检测与响应
+
+```python
+class CollisionDetector:
+    """
+    基于力矩传感器的碰撞检测
+    
+    方法:
+    - 阈值法: 力/力矩超过阈值触发
+    - 变化率法: 力矩突变检测
+    - 统计法: 基于历史数据的异常检测
+    """
+    
+    def __init__(
+        self,
+        force_sensor: ForceTorqueSensor,
+        torque_threshold: float = 5.0,  # N·m
+        force_threshold: float = 20.0    # N
+    ):
+        self.sensor = force_sensor
+        self.torque_threshold = torque_threshold
+        self.force_threshold = force_threshold
+        self.history = []
+        
+    def detect(self) -> Tuple[bool, str]:
+        """
+        碰撞检测
+        
+        Returns:
+            (collision_detected, collision_type)
+            collision_type: 'none' / 'collision' / 'obstruction' / 'wall'
+        """
+        wrench = self.sensor.capture()
+        
+        # 1. 阈值检测
+        if wrench.magnitude > self.force_threshold:
+            if wrench.torque_magnitude > self.torque_threshold:
+                return True, 'collision'
+            return True, 'wall'
+        
+        # 2. 突变检测
+        self.history.append(wrench.to_vector())
+        if len(self.history) > 50:
+            self.history.pop(0)
+            
+            # 计算变化率
+            recent = np.array(self.history[-10:])
+            mean = np.mean(recent, axis=0)
+            std = np.std(recent, axis=0)
+            
+            current = wrench.to_vector()
+            deviation = np.abs(current - mean) / (std + 1e-6)
+            
+            if np.any(deviation > 3.0):  # 3σ 检测
+                return True, 'obstruction'
+        
+        return False, 'none'
+    
+    def get_collision_direction(self) -> np.ndarray:
+        """
+        获取碰撞方向向量
+        
+        用于碰撞后的避让运动
+        """
+        wrench = self.sensor.capture()
+        if wrench.magnitude < 1e-6:
+            return np.zeros(3)
+        
+        # 力方向的反方向
+        return -wrench.force / wrench.magnitude
+```
+
+### 34.3 力控AGV等级配置
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 力传感器 | 3轴 | 6轴 | 6轴 | 6轴 | 6轴 |
+| 采样频率 (Hz) | 100 | 500 | 1000 | 2000 | 5000 |
+| 恒力跟踪 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 表面跟踪 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 碰撞检测 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 阻抗控制 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 力反馈遥操作 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 多传感器融合 | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+---
+
+## 35. IMU-控制集成实战 (IMU-Control Integration)
+
+### 35.1 姿态稳定控制
+
+```python
+from sensors.imu import IMUSensor, IMUFrame, Pose, PoseEstimator, IMUSensorType
+from control.motion import MotionController
+import numpy as np
+
+class AttitudeStabilizer:
+    """
+    IMU姿态稳定控制器
+    
+    使用IMU反馈实现:
+    - 姿态保持
+    - 平衡控制
+    - 颠簸补偿
+    """
+    
+    def __init__(
+        self,
+        imu: IMUSensor,
+        estimator: PoseEstimator,
+        Kp_roll: float = 5.0,
+        Kp_pitch: float = 5.0,
+        Kd_gyro: float = 0.5
+    ):
+        self.imu = imu
+        self.estimator = estimator
+        self.Kp_roll = Kp_roll
+        self.Kp_pitch = Kp_pitch
+        self.Kd_gyro = Kd_gyro
+        
+        # 目标姿态
+        self.target_euler = np.array([0.0, 0.0, 0.0])
+        
+    def compute_balance_control(
+        self,
+        disturbance_force: np.ndarray
+    ) -> np.ndarray:
+        """
+        抗干扰平衡控制
+        
+        Args:
+            disturbance_force: 外部扰动力 (Fx, Fy)
+            
+        Returns:
+            torque_command: 关节力矩指令
+        """
+        frame = self.imu.capture()
+        pose = self.estimator.update(frame.accel, frame.gyro)
+        euler = pose.to_euler()
+        
+        # 姿态误差
+        roll_error = euler[0] - self.target_euler[0]  # roll
+        pitch_error = euler[1] - self.target_euler[1]  # pitch
+        
+        # PD控制
+        roll_torque = self.Kp_roll * roll_error + self.Kd_gyro * frame.gyro[0]
+        pitch_torque = self.Kp_pitch * pitch_error + self.Kd_gyro * frame.gyro[1]
+        
+        # 前馈补偿外部扰动
+        disturbance_compensation = disturbance_force * 0.1
+        
+        return np.array([roll_torque, pitch_torque, 0.0]) + disturbance_compensation
+    
+    def compute_sway_compensation(
+        self,
+        target_position: np.ndarray,
+        current_position: np.ndarray
+    ) -> np.ndarray:
+        """
+        颠簸补偿
+        
+        在移动平台上补偿地面不平带来的颠簸
+        
+        Returns:
+            height_adjustment: 高度调整量
+        """
+        frame = self.imu.capture()
+        pose = self.estimator.get_pose()
+        euler = pose.to_euler()
+        
+        # 计算姿态角
+        roll, pitch = euler[0], euler[1]
+        
+        # 位置误差
+        pos_error = target_position - current_position
+        
+        # 颠簸补偿: 基于倾斜角调整目标高度
+        # 简化: 假设平台高1m, 倾斜角θ对应高度变化≈h*(1-cosθ)
+        platform_height = 1.0
+        roll_comp = platform_height * (1 - np.cos(roll))
+        pitch_comp = platform_height * (1 - np.cos(pitch))
+        
+        return np.array([0, 0, roll_comp + pitch_comp])
+```
+
+### 35.2 运动估计
+
+```python
+class MotionEstimator:
+    """
+    基于IMU的运动估计
+    
+    功能:
+    - 速度积分
+    - 位置积分
+    - 漂移校正
+    """
+    
+    def __init__(
+        self,
+        imu: IMUSensor,
+        estimator: PoseEstimator,
+        gravity: np.ndarray = np.array([0, 0, 9.81])
+    ):
+        self.imu = imu
+        self.estimator = estimator
+        self.gravity = gravity
+        
+        # 状态
+        self.velocity = np.zeros(3)
+        self.position = np.zeros(3)
+        
+        # 零速检测
+        self.is_stationary = False
+        self.stationary_threshold = 0.1  # m/s^2
+        
+    def update(self, dt: float) -> Tuple[np.ndarray, np.ndarray, bool]:
+        """
+        更新运动估计
+        
+        Args:
+            dt: 时间步长
+            
+        Returns:
+            (velocity, position, is_stationary)
+        """
+        frame = self.imu.capture()
+        
+        # 去除重力
+        accel = frame.accel - self.gravity
+        
+        # 检测静止状态 (加速度接近零)
+        if np.linalg.norm(frame.accel - self.gravity) < self.stationary_threshold:
+            self.is_stationary = True
+            # 零速更新
+            self.velocity *= 0.9  # 衰减
+        else:
+            self.is_stationary = False
+            # 积分速度
+            self.velocity += accel * dt
+        
+        # 积分位置
+        self.position += self.velocity * dt
+        
+        return self.velocity.copy(), self.position.copy(), self.is_stationary
+    
+    def reset(self):
+        """重置估计"""
+        self.velocity = np.zeros(3)
+        self.position = np.zeros(3)
+        self.estimator.reset()
+```
+
+### 35.3 IMU-控制AGV等级配置
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| IMU型号 | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| 采样频率 (Hz) | 100 | 200 | 500 | 1000 | 2000 |
+| 姿态估计 | 互补滤波 | Madgwick | Madgwick | 卡尔曼滤波 | 自适应 |
+| 姿态稳定 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 颠簸补偿 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 速度估计 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| SLAM融合 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 运动预测 | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+---
+
+## 36. 多传感器-控制联合集成
+
+### 36.1 传感器-控制联合标定
+
+```python
+class SensorControlCalibrator:
+    """
+    传感器-控制联合标定
+    
+    标定内容:
+    1. 触觉传感器到末端执行器的TF
+    2. 力传感器到关节坐标系的转换
+    3. IMU相对于机器人本体的安装位置/角度
+    4. 视觉与机器人坐标系的注册
+    """
+    
+    def __init__(self):
+        self.tactile_to_ee = np.eye(4)  # 触觉->末端执行器
+        self.force_to_joint = np.eye(4)  # 力传感器->关节坐标系
+        self.imu_to_base = np.eye(4)  # IMU->基座
+        self.camera_to_base = np.eye(4)  # 相机->基座
+        
+    def calibrate_tactile_to_ee(
+        self,
+        tactile: TactileArray,
+        ee_position: np.ndarray,  # 末端执行器位置
+        contacts: list
+    ) -> np.ndarray:
+        """
+        标定触觉传感器相对于末端执行器的TF
+        
+        通过已知位置触发触觉传感器，估算相对TF
+        """
+        if not contacts:
+            return self.tactile_to_ee
+        
+        # 触觉接触位置 (阵列像素坐标)
+        contact_pos = np.array([contacts[0].centroid[1], contacts[0].centroid[0], 0])
+        
+        # 归一化到米
+        tactile_scale = 0.001  # 假设1像素=1mm
+        contact_pos *= tactile_scale
+        
+        # 末端执行器位置
+        ee_pos = ee_position[:3]
+        
+        # 估算相对TF (简化: 仅平移)
+        self.tactile_to_ee[:3, 3] = ee_pos - contact_pos
+        
+        return self.tactile_to_ee
+    
+    def calibrate_imu_to_base(
+        self,
+        imu: IMUSensor,
+        base_pose: Pose,
+        num_samples: int = 100
+    ) -> np.ndarray:
+        """
+        标定IMU相对于基座的TF
+        
+        在已知基座姿态的情况下，采集IMU数据估算安装角度
+        """
+        frames = [imu.capture() for _ in range(num_samples)]
+        
+        # 计算平均加速度方向
+        avg_accel = np.mean([f.accel for f in frames], axis=0)
+        avg_accel = avg_accel / np.linalg.norm(avg_accel)
+        
+        # 理论重力方向 (基座坐标系)
+        base_gravity = np.array([0, 0, -1])  # 假设基座水平
+        
+        # 计算旋转矩阵
+        # R @ avg_accel = base_gravity
+        # R = outer(base_gravity, avg_accel) (简化)
+        self.imu_to_base[:3, :3] = np.outer(base_gravity, avg_accel)
+        
+        # 正交化
+        U, S, Vt = np.linalg.svd(self.imu_to_base[:3, :3])
+        self.imu_to_base[:3, :3] = U @ Vt
+        
+        return self.imu_to_base
+```
+
+### 36.2 统一控制周期管理
+
+```python
+class UnifiedControlLoop:
+    """
+    统一控制循环
+    
+    多传感器-多控制器协调:
+    1. 传感器同步采集
+    2. 数据预处理与滤波
+    3. 融合与状态估计
+    4. 控制器计算
+    5. 执行器指令下发
+    
+    控制周期配置:
+    - 高速 (1-2kHz): 电流环/力矩控制
+    - 中速 (100-500Hz): 阻抗/位置控制  
+    - 低速 (20-50Hz): 视觉伺服/规划
+    """
+    
+    def __init__(
+        self,
+        sensors: Dict[str, Any],
+        controllers: Dict[str, Any],
+        control_rates: Dict[str, float]
+    ):
+        """
+        Args:
+            sensors: {'vision': cam, 'tactile': tactile, 'force': force, 'imu': imu}
+            controllers: {'motion': motion_ctrl, 'impedance': impedance_ctrl}
+            control_rates: {'motion': 100, 'impedance': 500, 'vision': 30}
+        """
+        self.sensors = sensors
+        self.controllers = controllers
+        self.rates = control_rates
+        
+        # 相位偏移
+        self.phase_offsets = {k: 0.0 for k in control_rates}
+        
+        # 数据缓冲
+        self.latest_data = {}
+        
+    def spin(self, dt: float):
+        """
+        主循环迭代
+        
+        Args:
+            dt: 基础控制周期
+        """
+        # 1. 传感器采集
+        self._capture_sensors()
+        
+        # 2. 控制器计算
+        commands = {}
+        for name, rate in self.rates.items():
+            if name in self.controllers:
+                ctrl = self.controllers[name]
+                if name == 'motion':
+                    commands[name] = ctrl.compute(
+                        self.latest_data.get('position'),
+                        self.latest_data.get('velocity')
+                    )
+                elif name == 'impedance':
+                    commands[name] = ctrl.compute(
+                        self.latest_data.get('wrench'),
+                        dt
+                    )
+        
+        # 3. 指令融合/选择
+        final_command = self._fuse_commands(commands)
+        
+        # 4. 下发执行
+        self._send_command(final_command)
+        
+    def _capture_sensors(self):
+        """采集所有传感器"""
+        if 'vision' in self.sensors:
+            self.latest_data['vision'] = self.sensors['vision'].capture()
+        if 'tactile' in self.sensors:
+            self.latest_data['tactile'] = self.sensors['tactile'].capture()
+        if 'force' in self.sensors:
+            self.latest_data['force'] = self.sensors['force'].capture()
+        if 'imu' in self.sensors:
+            self.latest_data['imu'] = self.sensors['imu'].capture()
+            
+    def _fuse_commands(self, commands: Dict) -> np.ndarray:
+        """融合多控制器指令"""
+        # 简单优先级融合
+        if 'impedance' in commands:
+            return commands['impedance']
+        return commands.get('motion', np.zeros(6))
+```
+
+### 36.3 联合集成AGV等级配置
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 控制频率 (Hz) | 50 | 100 | 200 | 500 | 1000 |
+| 传感器数量 | 3 | 4 | 5 | 6 | 6+ |
+| 联合标定 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 异构周期管理 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 主动感知 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 预测控制 | ✗ | ✗ | ✗ | ✓ | ✓ |
+| 自主重标定 | ✗ | ✗ | ✗ | ✗ | ✓ |
+
+---
+
+*文档版本: v1.14.0*
+*最后更新: 2026-03-31*
+
+**2026-03-31 v1.14.0**: 新增第33-36节传感器-控制集成实战指南，包含:
+- 触觉伺服控制和抓取控制 (TactileServoController, TactileGuidedGraspController)
+- 力控运动基元库 (ForceMotionPrimitive, CollisionDetector)
+- IMU姿态稳定控制和运动估计 (AttitudeStabilizer, MotionEstimator)
+- 多传感器-控制联合标定和统一控制周期管理 (SensorControlCalibrator, UnifiedControlLoop)
+- 完整AGV五级配置对照表

@@ -397,3 +397,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Testing
 - 279 tests passed (sensor_tests.py + fusion_tests.py)
+
+---
+
+## v1.14.0 (2026-03-31)
+
+### 文档增强
+- **MODULE_INTERFACE.md**: 新增第33-36节传感器-控制集成实战指南 (~1500行)
+  - 第33节: 触觉-控制集成 (TactileServoController, TactileGuidedGraspController)
+  - 第34节: 力觉-控制集成 (ForceMotionPrimitive, CollisionDetector)
+  - 第35节: IMU-控制集成 (AttitudeStabilizer, MotionEstimator)
+  - 第36节: 多传感器-控制联合集成 (SensorControlCalibrator, UnifiedControlLoop)
+  - 完整AGV五级配置对照表 (S/M/L/XL/XXL)
+
+### 测试状态
+- 892 项测试全部通过 ✅
+  - sensor_tests.py: 181 tests ✅
+  - fusion_tests.py: 98 tests ✅
+  - control_tests.py: 210+ tests ✅
+  - 其他集成测试: 403+ tests ✅
+
+### 技术规格
+- AGV五级传感器规格表: 触觉/力觉/IMU全覆盖
+- 传感器-控制集成周期: S(50Hz) → M(100Hz) → L(200Hz) → XL(500Hz) → XXL(1000Hz)
