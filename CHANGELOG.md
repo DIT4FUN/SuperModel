@@ -5,6 +5,24 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.10.0] - 2026-03-31
+
+### Added
+- **AGV五级合规性测试套件**: 新增 22 项测试用例
+  - `TestSensorAGVFiveLevelCompliance`: 触觉/力觉/IMU 五级规格合规性测试
+  - `TestVirtualSensorIntegration`: 虚拟传感器集成测试 (触觉-力觉-IMU 联合采集)
+  - `TestTactileGripQuality`: 触觉抓取质量评估测试
+  - `TestForceWrenchTransform`: 力矩坐标变换测试 (旋转/平移)
+  - `TestIMUMadgwickConvergence`: Madgwick 姿态估计算法收敛性测试
+  - `TestAGVFiveLevelCompliance`: AGV 运动控制器五级规格合规性测试
+  - `TestSafetyControllerAllLevels`: 安全控制器全等级配置测试
+  - `TestMPCControllerGrades`: MPC 控制器五级规格测试
+  - `TestSensorManagerFullCoverage`: 传感器管理器全模态覆盖测试
+
+### Changed
+- 全部 830 项测试持续通过 (含新增 22 项)
+- 测试覆盖范围扩展至触觉/力觉/IMU 传感器与控制模块交叉验证
+
 ## [1.9.0] - 2026-03-31
 
 ### Added

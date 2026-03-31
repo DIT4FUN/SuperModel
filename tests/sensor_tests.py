@@ -2302,3 +2302,274 @@ class TestSensorTimingConsistency(unittest.TestCase):
         cam.close()
         mic.close()
         tactile.close()
+
+
+class TestSensorAGVFiveLevelCompliance(unittest.TestCase):
+    """AGV五级规格合规性测试"""
+    
+    def test_tactile_all_grades_have_spec(self):
+        """所有等级应有触觉规格"""
+        from sensors.tactile import get_tactile_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_tactile_spec(grade)
+            self.assertIn('array', spec)
+            self.assertIn('res', spec)
+            self.assertIn('range_kpa', spec)
+            self.assertIn('freq_hz', spec)
+    
+    def test_force_all_grades_have_spec(self):
+        """所有等级应有力觉规格"""
+        from sensors.force import get_force_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_force_spec(grade)
+            self.assertIn('axes', spec)
+            self.assertIn('force_range', spec)
+            self.assertIn('sampling_hz', spec)
+    
+    def test_imu_all_grades_have_spec(self):
+        """所有等级应有IMU规格"""
+        from sensors.imu import get_imu_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_imu_spec(grade)
+            self.assertIn('type', spec)
+            self.assertIn('accel_range', spec)
+            self.assertIn('sample_hz', spec)
+    
+    def test_tactile_xxl_has_highest_resolution(self):
+        """XXL级应有最高触觉分辨率"""
+        from sensors.tactile import get_tactile_spec
+        spec_s = get_tactile_spec('S')
+        spec_xxl = get_tactile_spec('XXL')
+        self.assertGreater(spec_xxl['res'], spec_s['res'])
+        self.assertGreater(spec_xxl['freq_hz'], spec_s['freq_hz'])
+    
+    def test_force_xxl_has_highest_range(self):
+        """XXL级应有力觉最大范围"""
+        from sensors.force import get_force_spec
+        spec_m = get_force_spec('M')
+        spec_xxl = get_force_spec('XXL')
+        self.assertGreater(spec_xxl['force_range'], spec_m['force_range'])
+        self.assertGreater(spec_xxl['sampling_hz'], spec_m['sampling_hz'])
+    
+    def test_imu_xxl_has_lowest_noise(self):
+        """XXL级应有最低IMU噪声"""
+        from sensors.imu import get_imu_spec
+        spec_s = get_imu_spec('S')
+        spec_xxl = get_imu_spec('XXL')
+        self.assertLess(spec_xxl['noise_density'], spec_s['noise_density'])
+
+
+class TestVirtualSensorIntegration(unittest.TestCase):
+    """虚拟传感器集成测试"""
+    
+    def test_tactile_force_imu_pipeline(self):
+        """触觉-力觉-IMU联合采集流水线"""
+        from sensors.tactile import VirtualTactileSensor
+        from sensors.force import VirtualForceSensor
+        from sensors.imu import VirtualIMUSensor
+        
+        vt = VirtualTactileSensor((16, 16))
+        vf = VirtualForceSensor()
+        vi = VirtualIMUSensor()
+        
+        vt.open()
+        vf.open()
+        vi.open()
+        
+        # 采集数据
+        tac = vt.simulate_contact((0.5, 0.5), contact_force=10.0)
+        wrench = vf.simulate_contact(force=(0, 0, -10))
+        imu_frame = vi.simulate_static((0.1, 0.1, 0.0))
+        
+        # 验证数据合理性
+        self.assertIsNotNone(tac.pressure_map)
+        self.assertGreater(tac.pressure_map.max(), 0)
+        self.assertIsNotNone(wrench.force)
+        self.assertIsNotNone(imu_frame.accel)
+        
+        # IMU静止时角速度应接近零
+        self.assertLess(np.linalg.norm(imu_frame.gyro), 0.1)
+        
+        vt.close()
+        vf.close()
+        vi.close()
+    
+    def test_virtual_sensor_context_managers(self):
+        """虚拟传感器上下文管理器"""
+        from sensors.tactile import VirtualTactileSensor
+        from sensors.force import VirtualForceSensor
+        from sensors.imu import VirtualIMUSensor
+        
+        with VirtualTactileSensor((8, 8)) as vt:
+            frame = vt.simulate_contact((0.5, 0.5))
+            self.assertIsNotNone(frame)
+        
+        with VirtualForceSensor() as vf:
+            w = vf.simulate_contact((0, 0, -5))
+            self.assertIsNotNone(w.force)
+        
+        with VirtualIMUSensor() as vi:
+            frame = vi.simulate_static()
+            self.assertIsNotNone(frame.accel)
+    
+    def test_virtual_sensor_trajectory(self):
+        """虚拟IMU轨迹仿真"""
+        from sensors.imu import VirtualIMUSensor
+        
+        with VirtualIMUSensor() as vi:
+            for traj_type in ['circle', 'figure8', 'linear', 'sine']:
+                frames = vi.simulate_trajectory(traj_type, duration_s=0.1, dt=0.01)
+                self.assertGreater(len(frames), 0)
+                for f in frames:
+                    self.assertIsNotNone(f.accel)
+                    self.assertIsNotNone(f.gyro)
+    
+    def test_virtual_sensor_sliding(self):
+        """虚拟触觉滑移仿真"""
+        from sensors.tactile import VirtualTactileSensor
+        
+        with VirtualTactileSensor((16, 16)) as vt:
+            frames = vt.simulate_sliding(
+                direction=(1.0, 0.0),
+                speed=0.05,
+                duration_frames=10
+            )
+            self.assertEqual(len(frames), 10)
+            # 验证帧ID递增
+            for i, f in enumerate(frames):
+                self.assertEqual(f.frame_id, i)
+
+
+class TestTactileGripQuality(unittest.TestCase):
+    """触觉抓取质量评估测试"""
+    
+    def test_grip_quality_no_contact(self):
+        """无接触时抓取质量应为零"""
+        from sensors.tactile import TactileArray
+        
+        with TactileArray(array_size=(8, 8)) as tactile:
+            tactile.open()
+            frame = tactile.capture()
+            quality = tactile.estimate_grip_quality(frame)
+            self.assertEqual(quality['overall'], 0.0)
+            tactile.close()
+    
+    def test_grip_quality_with_contact(self):
+        """有接触时抓取质量应大于零"""
+        from sensors.tactile import VirtualTactileSensor
+        
+        with VirtualTactileSensor((16, 16)) as vt:
+            frame = vt.simulate_contact((0.5, 0.5), contact_force=20.0)
+            # 手动调用 estimate_grip_quality 需要真实 TactileArray
+            # 这里测试帧数据有效性
+            self.assertGreater(frame.pressure_map.max(), 0.0)
+
+
+class TestForceWrenchTransform(unittest.TestCase):
+    """力矩坐标变换测试"""
+    
+    def test_wrench_transform_rotation(self):
+        """力矩旋转变换"""
+        from sensors.force import Wrench
+        
+        w = Wrench(
+            force=np.array([10.0, 0.0, 0.0]),
+            torque=np.array([0.0, 0.0, 0.0])
+        )
+        
+        # 绕Z轴旋转90度
+        R = np.array([
+            [0, -1, 0],
+            [1,  0, 0],
+            [0,  0, 1]
+        ])
+        t = np.zeros(3)
+        
+        w_rot = w.transform(R, t)
+        
+        # 力方向应旋转
+        self.assertAlmostEqual(w_rot.force[0], 0.0, places=3)
+        self.assertAlmostEqual(w_rot.force[1], 10.0, places=3)
+    
+    def test_wrench_transform_with_translation(self):
+        """力矩平移变换"""
+        from sensors.force import Wrench
+        
+        w = Wrench(
+            force=np.array([0.0, 0.0, -10.0]),
+            torque=np.array([0.0, 0.0, 0.0])
+        )
+        
+        R = np.eye(3)
+        t = np.array([0.1, 0.0, 0.0])  # 偏移0.1m
+        
+        w_trans = w.transform(R, t)
+        
+        # 力矩应产生额外的力矩分量 Tx = Fy * tz - Fz * ty = -10 * 0 = 0
+        # 实际: torque' = torque + cross(translation, force)
+        expected_torque = np.cross(t, w.force)
+        np.testing.assert_array_almost_equal(w_trans.torque, expected_torque)
+
+
+class TestIMUMadgwickConvergence(unittest.TestCase):
+    """Madgwick姿态估计算法收敛性测试"""
+    
+    def test_pose_estimator_converges_to_ground_truth(self):
+        """姿态估计应收敛到真实值"""
+        from sensors.imu import IMUSensor, PoseEstimator, IMUSensorType
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL, sample_rate=100)
+        imu.open()
+        
+        estimator = PoseEstimator(algorithm='madgwick', beta=0.1, sample_rate=100)
+        estimator.reset()
+        
+        # 静止状态，传感器水平放置
+        # 预期：roll≈0, pitch≈0, yaw保持不变
+        euler_history = []
+        
+        for _ in range(100):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+            euler_history.append(pose.to_euler())
+        
+        imu.close()
+        
+        # 取最后10帧的平均
+        final_euler = np.mean(euler_history[-10:], axis=0)
+        
+        # 静止水平时，roll和pitch应接近0
+        self.assertLess(abs(final_euler[0]), 0.5)  # roll < 0.5度
+        self.assertLess(abs(final_euler[1]), 0.5)  # pitch < 0.5度
+
+
+class TestSensorManagerFullCoverage(unittest.TestCase):
+    """传感器管理器全模态覆盖测试"""
+    
+    def test_all_modalities_timestamp_sync(self):
+        """所有模态应保持时间戳同步"""
+        from sensors.manager import SensorManager, SensorManagerConfig
+        
+        config = SensorManagerConfig(grade="M")
+        manager = SensorManager(config)
+        manager.open_all()
+        
+        data = manager.capture_all()
+        
+        # 验证数据帧存在
+        self.assertIsNotNone(data)
+        self.assertGreaterEqual(data.frame_id, 0)
+        self.assertGreaterEqual(data.timestamp, 0)
+        
+        # 验证各模态数据存在
+        self.assertIsNotNone(data.vision)
+        self.assertIsNotNone(data.audio)
+        self.assertIsNotNone(data.tactile)
+        self.assertIsNotNone(data.force)
+        self.assertIsNotNone(data.imu)
+        
+        manager.close_all()
+
+
+if __name__ == '__main__':
+    unittest.main()

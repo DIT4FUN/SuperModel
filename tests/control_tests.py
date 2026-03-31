@@ -2800,3 +2800,119 @@ class TestTeleoperationController(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class TestAGVFiveLevelCompliance(unittest.TestCase):
+    """AGV五级控制规格合规性测试"""
+    
+    def test_agv_spec_from_grade_all_levels(self):
+        """所有AGV等级应有规格定义"""
+        from control.agv import AGVSpec, AGVGrade
+        for grade in [AGVGrade.S, AGVGrade.M, AGVGrade.L, AGVGrade.XL, AGVGrade.XXL]:
+            spec = AGVSpec.from_grade(grade)
+            self.assertIsNotNone(spec.max_linear_speed)
+            self.assertIsNotNone(spec.max_angular_speed)
+            self.assertGreater(spec.max_linear_speed, 0)
+    
+    def test_agv_motion_limits_scale_with_grade(self):
+        """AGV运动限制应随等级提升"""
+        from control.agv import AGVSpec, AGVGrade
+        
+        spec_s = AGVSpec.from_grade(AGVGrade.S)
+        spec_xxl = AGVSpec.from_grade(AGVGrade.XXL)
+        
+        self.assertGreater(spec_xxl.max_linear_speed, spec_s.max_linear_speed)
+        self.assertGreater(spec_xxl.max_linear_accel, spec_s.max_linear_accel)
+    
+    def test_agv_controller_initialization_all_grades(self):
+        """所有AGV等级控制器应正常初始化"""
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade
+        for grade in [AGVGrade.S, AGVGrade.M, AGVGrade.L, AGVGrade.XL, AGVGrade.XXL]:
+            spec = AGVSpec.from_grade(grade)
+            ctrl = AGVMotionController(spec)
+            self.assertIsNotNone(ctrl.pose)
+            self.assertIsNotNone(ctrl.twist)
+
+
+class TestSafetyControllerAllLevels(unittest.TestCase):
+    """安全控制器全等级测试"""
+    
+    def test_safety_config_all_levels(self):
+        """所有安全等级应有配置"""
+        from control.safety_controller import SafetyConfig, SafetyLevel
+        import numpy as np
+        
+        for level in [SafetyLevel.S, SafetyLevel.M, SafetyLevel.L, 
+                      SafetyLevel.XL, SafetyLevel.XXL]:
+            config = SafetyConfig(
+                joint_limits_lower=np.array([-3.14]*6),
+                joint_limits_upper=np.array([3.14]*6),
+                velocity_limits=np.array([2.0]*6),
+                acceleration_limits=np.array([5.0]*6),
+                torque_limits=np.array([100.0]*6),
+                safety_level=level
+            )
+            self.assertEqual(config.safety_level, level)
+    
+    def test_safety_check_result_structure(self):
+        """安全检查结果应包含必要字段"""
+        from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+        import numpy as np
+        
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-1.0]*6),
+            joint_limits_upper=np.array([1.0]*6),
+            velocity_limits=np.array([2.0]*6),
+            acceleration_limits=np.array([5.0]*6),
+            torque_limits=np.array([100.0]*6),
+            safety_level=SafetyLevel.M
+        )
+        safety = SafetyController(config)
+        safety.enable()
+        
+        # 正常状态应安全
+        state = JointStateSnapshot(
+            positions=np.array([0.0]*6),
+            velocities=np.array([0.5]*6),
+            accelerations=np.array([0.0]*6),
+            torques=np.array([10.0]*6),
+            timestamp=0.0
+        )
+        
+        result = safety.check(state)
+        self.assertTrue(result.safe)
+        
+        # 超出限制应不安全
+        state_bad = JointStateSnapshot(
+            positions=np.array([5.0]*6),  # 超出限制
+            velocities=np.array([0.5]*6),
+            accelerations=np.array([0.0]*6),
+            torques=np.array([10.0]*6),
+            timestamp=0.0
+        )
+        
+        result_bad = safety.check(state_bad)
+        self.assertFalse(result_bad.safe)
+
+
+class TestMPCControllerGrades(unittest.TestCase):
+    """MPC控制器等级规格测试"""
+    
+    def test_mpc_config_for_all_grades(self):
+        """MPC配置应支持所有等级"""
+        from control.mpc import MPCConfig
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            config = MPCConfig.for_grade(grade, num_joints=6)
+            self.assertIsNotNone(config.horizon)
+            self.assertGreater(config.horizon, 0)
+    
+    def test_mpc_horizon_increases_with_grade(self):
+        """MPC预测步数应随等级提升"""
+        from control.mpc import MPCConfig
+        config_s = MPCConfig.for_grade('S', num_joints=6)
+        config_xxl = MPCConfig.for_grade('XXL', num_joints=6)
+        self.assertGreater(config_xxl.horizon, config_s.horizon)
+
+
+if __name__ == '__main__':
+    unittest.main()
