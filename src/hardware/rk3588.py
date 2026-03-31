@@ -2,7 +2,10 @@
 RK3588 平台支持
 ================
 
-瑞芯微 RK3588/RK3588S 系列芯片支持。
+瑞芯微 Rockchip RK3588/RK3588S 系列芯片支持。
+
+注意: 此模块用于瑞芯微 RK3588 芯片，
+地瓜机器人 RDK 系列使用旭日(Sunrise)芯片，详见 digu_robot.py
 
 RK3588 规格:
 - CPU: 4x Cortex-A76 + 4x Cortex-A55 (big.LITTLE)

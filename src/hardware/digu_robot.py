@@ -2,13 +2,14 @@
 地瓜机器人 RDK 系列支持
 ========================
 
-地瓜机器人 (Digu Robot) RDK 开发板系列:
+地瓜机器人 (D-Robotics) RDK 开发板系列:
 
-- **RDK X3**: 边缘推理棒/模块，RK3588V2，6 TOPS NPU
-- **RDK X5 Ultra**: 旗舰开发板，RK3588，12 TOPS NPU
-- **RDK S100**: 入门级，RK3562，3 TOPS NPU
+- **RDK X3**: 基于旭日X3派 (Sunrise X3 Pi)，5 TOPS NPU
+- **RDK X5**: 基于旭日5 (Sunrise 5)，10 TOPS NPU
+- **RDK S100**: 入门级，旭日系列芯片
 
-官方文档: https://developer.digirobot.com/
+注意: 旭日芯片来自地平线机器人 (D-Robotics，原地平线机器人)
+官方文档: https://developer.d-robotics.cc/rdk_doc/
 """
 
 import os
@@ -30,48 +31,49 @@ class DiguRobotSeries(Enum):
 
 
 # RDK 系列主板规格表
+# 注意: 旭日(Sunrise)芯片来自地平线机器人(D-Robotics)
 RDK_SPECS = {
     DiguRobotSeries.RDK_X3: {
-        'name': '地瓜机器人 RDK X3',
-        'chip': 'RK3588V2',
-        'cpu': '4x Cortex-A76 + 4x Cortex-A55',
-        'cpu_cores': 8,
-        'cpu_freq_mhz': 2200,
-        'npu_tops': 6.0,
-        'npu_type': 'RKNN INT8/FP16',
-        'memory_mb': 8192,  # 8GB LPDDR5
-        'gpu': 'Mali-G610 MP4',
-        'video': '8K@30fps 解码, 4K@60fps 编码',
-        'interfaces': ['HDMI 2.1', 'USB 3.0', 'MIPI-CSI x4', 'MIPI-DSI x2', 'PCIe 3.0', 'Gbit Ethernet'],
-        'price_range': '¥500-800',
+        'name': '地瓜机器人 RDK X3 (旭日X3派)',
+        'chip': '旭日X3 (Sunrise X3)',
+        'cpu': '4x Cortex-A55',
+        'cpu_cores': 4,
+        'cpu_freq_mhz': 1500,
+        'npu_tops': 5.0,
+        'npu_type': 'BPU (地平线AI引擎)',
+        'memory_mb': 4096,  # 4GB LPDDR4
+        'gpu': 'G31',
+        'video': '1080p@30fps 编码',
+        'interfaces': ['HDMI 2.0', 'USB 3.0', 'MIPI-CSI x2', 'WiFi/BT'],
+        'price_range': '¥299-499',
     },
     DiguRobotSeries.RDK_X5_ULTRA: {
-        'name': '地瓜机器人 RDK X5 Ultra',
-        'chip': 'RK3588',
-        'cpu': '4x Cortex-A76 + 4x Cortex-A55',
-        'cpu_cores': 8,
-        'cpu_freq_mhz': 2400,
-        'npu_tops': 12.0,
-        'npu_type': 'RKNN INT8/FP16/BFP16',
-        'memory_mb': 16384,  # 16GB LPDDR5
-        'gpu': 'Mali-G610 MP4',
-        'video': '8K@60fps 解码, 8K@30fps 编码',
-        'interfaces': ['HDMI 2.1 x2', 'USB 3.2 x4', 'MIPI-CSI x4', 'MIPI-DSI x2', 'PCIe 4.0 x2', '2.5G Ethernet x2'],
-        'price_range': '¥1200-1800',
-    },
-    DiguRobotSeries.RDK_S100: {
-        'name': '地瓜机器人 RDK S100',
-        'chip': 'RK3562',
+        'name': '地瓜机器人 RDK X5 (旭日5)',
+        'chip': '旭日5 (Sunrise 5)',
         'cpu': '4x Cortex-A55',
         'cpu_cores': 4,
         'cpu_freq_mhz': 1800,
-        'npu_tops': 3.0,
-        'npu_type': 'RKNN INT8/FP16',
-        'memory_mb': 4096,  # 4GB LPDDR4
-        'gpu': 'Mali-G52 2EE',
-        'video': '4K@30fps 解码',
-        'interfaces': ['HDMI 2.0', 'USB 2.0 x2', 'MIPI-CSI x2', 'MIPI-DSI x1', 'eMMC'],
-        'price_range': '¥200-350',
+        'npu_tops': 10.0,
+        'npu_type': 'BPU (地平线AI引擎)',
+        'memory_mb': 8192,  # 8GB LPDDR5
+        'gpu': 'G57 MC1',
+        'video': '4K@60fps 解码, 1080p@60fps 编码',
+        'interfaces': ['HDMI 2.0', 'USB 3.0 x2', 'MIPI-CSI x4', '2x Ethernet', 'WiFi6'],
+        'price_range': '¥549-699',
+    },
+    DiguRobotSeries.RDK_S100: {
+        'name': '地瓜机器人 RDK S100',
+        'chip': '旭日系列 (入门级)',
+        'cpu': '2x Cortex-A55',
+        'cpu_cores': 2,
+        'cpu_freq_mhz': 1200,
+        'npu_tops': 2.0,
+        'npu_type': 'BPU (地平线AI引擎)',
+        'memory_mb': 2048,  # 2GB LPDDR4
+        'gpu': 'G31',
+        'video': '1080p@30fps 解码',
+        'interfaces': ['HDMI', 'USB 2.0', 'MIPI-CSI'],
+        'price_range': '¥199-299',
     },
 }
 
@@ -351,28 +353,30 @@ class RDKS100(DiguRobotPlatform):
 
 # RDK 系列速查表
 RDK_COMPARISON = """
-地瓜机器人 RDK 系列对比表
-==========================
+地瓜机器人 RDK 系列对比表 (旭日芯片)
+=====================================
 
-| 规格       | RDK S100      | RDK X3        | RDK X5 Ultra   |
-|-----------|---------------|---------------|----------------|
-| 芯片      | RK3562        | RK3588V2      | RK3588         |
-| CPU       | 4x A55        | 4x A76 + 4x A55 | 4x A76 + 4x A55 |
-| CPU主频   | 1.8 GHz       | 2.2 GHz       | 2.4 GHz        |
-| NPU       | 3 TOPS        | 6 TOPS        | 12 TOPS        |
-| 内存      | 4 GB LPDDR4   | 8 GB LPDDR5   | 16 GB LPDDR5   |
-| GPU       | Mali-G52 2EE  | Mali-G610 MP4 | Mali-G610 MP4  |
-| 视频解码  | 4K@30fps      | 8K@30fps      | 8K@60fps       |
-| 视频编码  | 1080p@30fps   | 4K@60fps      | 8K@30fps       |
-| 视频接口  | HDMI 2.0      | HDMI 2.1      | HDMI 2.1 x2    |
-| USB       | USB 2.0 x2    | USB 3.0       | USB 3.2 x4     |
-| 以太网    | -             | Gbit          | 2.5G x2        |
-| PCIe      | -             | PCIe 3.0      | PCIe 4.0 x2    |
-| 价格      | ¥200-350      | ¥500-800      | ¥1200-1800     |
-| 定位      | 入门级        | 主流          | 旗舰           |
+| 规格       | RDK S100      | RDK X3 (X3派)   | RDK X5 (X5)       |
+|-----------|---------------|-----------------|-------------------|
+| 芯片      | 旭日系列      | 旭日X3          | 旭日5              |
+| 架构      | 2x A55        | 4x A55          | 4x A55            |
+| CPU主频   | 1.2 GHz       | 1.5 GHz         | 1.8 GHz           |
+| NPU算力   | 2 TOPS        | 5 TOPS          | 10 TOPS           |
+| NPU类型   | BPU           | BPU             | BPU               |
+| 内存      | 2 GB LPDDR4   | 4 GB LPDDR4     | 8 GB LPDDR5       |
+| GPU       | G31           | G31             | G57 MC1           |
+| 视频解码  | 1080p@30fps   | 1080p@30fps     | 4K@60fps          |
+| 视频编码  | -             | 1080p@30fps     | 1080p@60fps       |
+| 视频接口  | HDMI          | HDMI 2.0        | HDMI 2.0          |
+| USB       | USB 2.0       | USB 3.0         | USB 3.0 x2        |
+| CSI       | MIPI-CSI      | MIPI-CSI x2     | MIPI-CSI x4       |
+| 价格      | ¥199-299      | ¥299-499        | ¥549-699          |
+| 定位      | 入门级        | 主流            | 高端              |
 
 典型应用场景:
 - RDK S100: 学习入门、物联网网关、简单视觉处理
-- RDK X3: 边缘推理、ROS2 机器人、消费级 AI 设备
-- RDK X5 Ultra: 具身智能大脑、工业机器人、高端 AIoT
+- RDK X3 (旭日X3派): 边缘推理、ROS2 机器人、消费级 AI 设备
+- RDK X5 (旭日5): 具身智能大脑、工业机器人、高端 AIoT
+
+芯片来源: 地平线机器人 (D-Robotics) 旭日系列 AI 芯片
 """
