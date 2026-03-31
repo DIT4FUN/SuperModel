@@ -1474,6 +1474,54 @@ class TestAGVMotionController(unittest.TestCase):
         self.assertAlmostEqual(body_twist.vx, 0.0, places=3)
         self.assertAlmostEqual(body_twist.vy, 1.0, places=3)
     
+    def test_skid_steer_kinematics(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, DriveType
+        from control.agv import SkidSteerKinematics
+        
+        spec = AGVSpec.from_grade(AGVGrade.L)
+        spec.drive_type = DriveType.SWISS
+        agv = AGVMotionController(spec)
+        
+        # 滑移转向: 直行时左右轮速相同
+        body_twist = agv.forward_kinematics(np.array([2.0, 2.0]))
+        self.assertAlmostEqual(body_twist.vx, 0.2, places=3)  # 2.0 * wheel_radius (L: 0.1m)
+        self.assertAlmostEqual(body_twist.vy, 0.0, places=3)   # 无侧向速度
+        
+        # 原地转向: 左右轮速相反
+        body_twist = agv.forward_kinematics(np.array([-1.0, 1.0]))
+        self.assertAlmostEqual(body_twist.vx, 0.0, places=3)   # 净纵向速度为0
+        self.assertNotEqual(body_twist.omega, 0.0)              # 有角速度
+        
+        # 逆运动学回环检验
+        from control.agv import AGVTwist
+        twist = AGVTwist(vx=1.0, vy=0.0, omega=0.5)
+        wheel_vel = agv.inverse_kinematics(twist)
+        body_twist_rec = agv.forward_kinematics(wheel_vel)
+        self.assertAlmostEqual(body_twist_rec.vx, 1.0, places=2)
+    
+    def test_ackermann_kinematics(self):
+        from control.agv import AGVMotionController, AGVSpec, AGVGrade, DriveType
+        from control.agv import AckermannKinematics
+        
+        spec = AGVSpec.from_grade(AGVGrade.XL)
+        spec.drive_type = DriveType.ACKERMANN
+        agv = AGVMotionController(spec)
+        
+        # 阿克曼: 纯直行时后轮速度相同
+        body_twist = agv.forward_kinematics(np.array([2.0, 2.0]))
+        self.assertAlmostEqual(body_twist.vx, 0.30, places=2)  # 2.0 * wheel_radius
+        self.assertAlmostEqual(body_twist.vy, 0.0, places=5)
+        
+        # 转向角计算
+        ack_kin = agv._kinematics
+        omega = ack_kin.steering_angle_to_omega(steering_angle=0.1, vx=1.0)
+        self.assertGreater(omega, 0.0)
+        
+        # 夹角限制
+        omega_clamped = ack_kin.steering_angle_to_omega(steering_angle=1.0, vx=1.0)
+        self.assertAlmostEqual(abs(omega_clamped), 
+            abs(ack_kin.steering_angle_to_omega(ack_kin.max_steering_angle, 1.0)), places=5)
+    
     def test_agv_pose_update(self):
         from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose
         

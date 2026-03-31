@@ -5,6 +5,20 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.0] - 2026-03-31
+
+### Added
+- **AGV 运动学扩展** (`src/control/agv.py`): 新增两种驱动运动学
+  - `SkidSteerKinematics`: 滑移转向运动学, 用于履带式AGV (农业/室外/复杂地形)
+  - `AckermannKinematics`: 阿克曼转向运动学, 用于汽车式AGV (室内物流车)
+  - `KinematicsFactory`: 更新支持 SWISS (履带) 和 ACKERMANN 驱动类型
+- **新增 AGV 控制测试** (`tests/control_tests.py`): +2 测试用例
+  - `test_skid_steer_kinematics`: 滑移转向正/逆运动学回环检验
+  - `test_ackermann_kinematics`: 阿克曼转向角计算及夹角限制测试
+
+### Changed
+- 测试总数: 950 → 952 项, 全部通过 ✅
+
 ## [1.16.0] - 2026-03-31
 
 ### Added

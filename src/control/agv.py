@@ -352,13 +352,147 @@ class MecanumKinematics(KinematicsBase):
         return np.array([w_fl, w_fr, w_rl, w_rr], dtype=np.float32)
 
 
+class SkidSteerKinematics(KinematicsBase):
+    """
+    滑移转向运动学 (Skid Steering)
+    
+    用于履带式AGV (农业/室外/复杂地形)
+    特点: 原地转向时两侧履带反向驱动产生滑移
+    与差速驱动的区别: 需要更大的转向力矩,轮胎侧向摩擦力辅助转向
+    
+    参考模型: 简化线性滑移模型
+    vx = (vL + vR) / 2
+    vy = 0 (无侧向滑动,理想情况)
+    omega = (vR - vL) / track_width
+    """
+    
+    def __init__(self, spec: AGVSpec):
+        self.wheelbase = spec.wheelbase
+        self.track_width = spec.track_width  # 履带中心距
+        self.wheel_radius = spec.wheel_radius
+        # 滑移系数 (转向时侧向滑动量与纵向滑动量之比)
+        # 履带式通常0.1-0.3, 橡胶轮胎差速驱动接近0
+        self.slip_factor = 0.15
+    
+    def wheel_to_body(self, wheel_velocities: np.ndarray) -> AGVTwist:
+        """
+        滑移转向正运动学
+        
+        wheel_velocities: [left_vel, right_vel] rad/s
+        """
+        v_l = wheel_velocities[0] * self.wheel_radius
+        v_r = wheel_velocities[1] * self.wheel_radius
+        
+        vx = (v_l + v_r) / 2.0
+        # 滑移补偿: 转向时产生侧向速度
+        omega = (v_r - v_l) / self.track_width
+        vy = self.slip_factor * omega * self.track_width / 2.0
+        
+        return AGVTwist(vx=vx, vy=vy, omega=omega)
+    
+    def body_to_wheel(self, twist: AGVTwist) -> np.ndarray:
+        """
+        滑移转向逆运动学
+        
+        返回: [left_vel, right_vel] rad/s
+        """
+        vx, vy, omega = twist.vx, twist.vy, twist.omega
+        
+        # 逆滑移补偿
+        omega_effective = omega * (1 + self.slip_factor)
+        
+        v_l = vx - omega_effective * self.track_width / 2.0
+        v_r = vx + omega_effective * self.track_width / 2.0
+        
+        w_l = v_l / self.wheel_radius
+        w_r = v_r / self.wheel_radius
+        
+        return np.array([w_l, w_r], dtype=np.float32)
+
+
+class AckermannKinematics(KinematicsBase):
+    """
+    阿克曼转向运动学 (Ackermann Steering)
+    
+    用于汽车式AGV (室内物流车/无人搬运车)
+    特点: 高速直线行驶稳定, 转向时内外轮转角不同
+    
+    简化模型: 不考虑车辆动力学, 仅几何关系
+    """
+    
+    def __init__(self, spec: AGVSpec):
+        self.wheelbase = spec.wheelbase
+        self.track_width = spec.track_width
+        self.wheel_radius = spec.wheel_radius
+        # 最大转向角 (rad)
+        self.max_steering_angle = np.radians(30)
+    
+    def wheel_to_body(self, wheel_velocities: np.ndarray) -> AGVTwist:
+        """
+        阿克曼正运动学 (从轮速推算车体速度)
+        
+        wheel_velocities: [rear_left_vel, rear_right_vel] rad/s
+        (阿克曼只有后轮驱动,前轮转向)
+        """
+        v_l = wheel_velocities[0] * self.wheel_radius
+        v_r = wheel_velocities[1] * self.wheel_radius
+        
+        vx = (v_l + v_r) / 2.0
+        # 阿克曼转向角由前轮决定, 此处从后轮速度无法直接得出角速度
+        # 简化: 假设纯滚动, omega由差速估算
+        omega = (v_r - v_l) / self.track_width
+        
+        return AGVTwist(vx=vx, vy=0.0, omega=omega)
+    
+    def body_to_wheel(self, twist: AGVTwist) -> np.ndarray:
+        """
+        阿克曼逆运动学 (从车体速度推算轮速)
+        
+        对于后轮驱动阿克曼:
+        - 后轮: 纯滚动, v_rl = v_rr = vx
+        - 前轮: 根据Ackermann几何计算转向角
+          tan(omega) = vx / (wheelbase / tan(delta))
+        
+        返回: [rear_left_vel, rear_right_vel] rad/s
+        """
+        vx, vy, omega = twist.vx, twist.vy, twist.omega
+        
+        # 纯滚动假设: 后轮速度等于车体纵向速度
+        w_rl = vx / self.wheel_radius
+        w_rr = vx / self.wheel_radius
+        
+        return np.array([w_rl, w_rr], dtype=np.float32)
+    
+    def steering_angle_to_omega(self, steering_angle: float, vx: float) -> float:
+        """
+        从转向角和速度计算瞬时转向角速度
+        
+        Ackemann转向几何:
+        tan(omega) = vx * tan(steering_angle) / wheelbase
+        
+        Args:
+            steering_angle: 前轮平均转向角 (rad)
+            vx: 纵向速度 (m/s)
+            
+        Returns:
+            omega: 转向角速度 (rad/s)
+        """
+        if abs(self.wheelbase) < 1e-6:
+            return 0.0
+        tan_delta = np.tan(np.clip(steering_angle, -self.max_steering_angle, self.max_steering_angle))
+        omega = vx * tan_delta / self.wheelbase
+        return omega
+
+
 class KinematicsFactory:
     """运动学工厂"""
     
     _map = {
         DriveType.DIFFERENTIAL: DifferentialKinematics,
         DriveType.MECANUM: MecanumKinematics,
-        DriveType.OMNIDIRECTIONAL: MecanumKinematics,  # 简化为相同
+        DriveType.OMNIDIRECTIONAL: MecanumKinematics,
+        DriveType.SWISS: SkidSteerKinematics,
+        DriveType.ACKERMANN: AckermannKinematics,
     }
     
     @classmethod
