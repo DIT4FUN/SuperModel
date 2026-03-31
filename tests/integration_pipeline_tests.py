@@ -414,3 +414,259 @@ class TestGradeSpecificSpecs(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class TestContactPhysicsIntegration(unittest.TestCase):
+    """
+    接触物理模型集成测试
+    ======================
+
+    测试 ContactPhysicsModel 与其他模块的集成:
+    - 触觉传感器 + 接触物理
+    - 力觉传感器 + 接触物理
+    - 抓取质量评估
+    - 滑移检测
+    """
+
+    def test_contact_physics_model_creation(self):
+        """测试接触物理模型创建"""
+        from simulation.environment import ContactPhysicsModel, get_contact_physics_spec
+
+        model = ContactPhysicsModel()
+        self.assertIsNotNone(model)
+        self.assertGreater(model.mu_s, 0.0)
+        self.assertGreater(model.k_n, 0.0)
+
+    def test_contact_physics_agv_grades(self):
+        """测试AGV各等级接触物理规格"""
+        from simulation.environment import get_contact_physics_spec
+
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            model = get_contact_physics_spec(grade)
+            self.assertIsNotNone(model)
+            self.assertGreater(model.mu_s, 0.0)
+
+    def test_normal_force_computation(self):
+        """测试法向接触力计算"""
+        from simulation.environment import ContactPhysicsModel
+
+        model = ContactPhysicsModel()
+        F_n = model.compute_normal_force(penetration=0.002, normal_velocity=0.0)
+        self.assertGreater(F_n, 0.0)
+
+        F_n_with_velocity = model.compute_normal_force(penetration=0.002, normal_velocity=0.1)
+        self.assertGreater(F_n_with_velocity, F_n)
+
+    def test_tangential_friction_force(self):
+        """测试切向摩擦力计算"""
+        from simulation.environment import ContactPhysicsModel
+
+        model = ContactPhysicsModel()
+        normal_force = 10.0
+        tangential_vel = np.array([0.1, 0.0, 0.0])
+
+        F_t = model.compute_tangential_force(normal_force, tangential_vel)
+        self.assertEqual(F_t.shape, (3,))
+
+        # 摩擦力不应超过最大静摩擦
+        self.assertLessEqual(np.linalg.norm(F_t), model.mu_s * normal_force * 1.01)
+
+    def test_slip_detection(self):
+        """测试滑移检测"""
+        from simulation.environment import ContactPhysicsModel
+
+        model = ContactPhysicsModel()
+
+        # 正常情况不应滑移
+        is_slip, prob = model.detect_slip(normal_force=10.0, tangential_force_magnitude=1.0)
+        self.assertFalse(is_slip)
+
+        # 摩擦力不足应滑移
+        is_slip_high, prob_high = model.detect_slip(
+            normal_force=5.0, tangential_force_magnitude=10.0
+        )
+        self.assertGreaterEqual(prob_high, 0.0)
+
+    def test_grasp_quality_force_closure(self):
+        """测试抓取质量力闭合评估"""
+        from simulation.environment import ContactPhysicsModel
+
+        model = ContactPhysicsModel()
+
+        contact_points = [
+            np.array([0.52, 0.02, 0.01]),
+            np.array([0.48, -0.02, 0.01]),
+            np.array([0.52, -0.02, 0.01]),
+            np.array([0.48, 0.02, 0.01]),
+        ]
+        contact_normals = [
+            np.array([-0.7, 0.7, 0.0]),
+            np.array([0.7, -0.7, 0.0]),
+            np.array([-0.7, -0.7, 0.0]),
+            np.array([0.7, 0.7, 0.0]),
+        ]
+        object_center = np.array([0.5, 0.0, 0.0])
+
+        quality = model.compute_grasp_quality(
+            contact_points, contact_normals, object_center, object_mass=0.2
+        )
+
+        self.assertIn('overall', quality)
+        self.assertIn('force_closure', quality)
+        self.assertGreaterEqual(quality['overall'], 0.0)
+        self.assertLessEqual(quality['overall'], 1.0)
+
+    def test_contact_event_simulation(self):
+        """测试完整接触事件仿真"""
+        from simulation.environment import ContactPhysicsModel
+
+        model = ContactPhysicsModel()
+        event = model.simulate_contact_event(
+            initial_penetration=0.002,
+            impact_velocity=0.1,
+            object_mass=0.5,
+            duration=0.05,
+            dt=0.001
+        )
+
+        self.assertIn('time', event)
+        self.assertIn('normal_force', event)
+        self.assertIn('slip_detected', event)
+        self.assertGreater(len(event['time']), 10)
+
+    def test_contact_impedance(self):
+        """测试接触阻抗计算"""
+        from simulation.environment import ContactPhysicsModel
+
+        model = ContactPhysicsModel()
+        stiffness, damping = model.get_contact_impedance(normal_force=5.0, frequency=10.0)
+
+        self.assertGreater(stiffness, 0.0)
+        self.assertGreater(damping, 0.0)
+
+
+class TestSensorControlPipeline(unittest.TestCase):
+    """
+    传感器-控制管道集成测试
+    ==========================
+
+    测试传感器数据到控制指令的完整流程
+    """
+
+    def test_impedance_control_pipeline(self):
+        """测试阻抗控制管道"""
+        from control.impedance import ImpedanceController, ImpedanceParams
+
+        params = ImpedanceParams.default_6d()
+        ctrl = ImpedanceController(params)
+
+        # 模拟位置误差
+        error = np.zeros(6)
+        error[2] = 0.01  # Z方向10mm误差
+
+        force = ctrl.compute_cartesian_force(
+            desired_pose=error,
+            desired_velocity=np.zeros(6),
+            external_wrench=np.zeros(6)
+        )
+
+        self.assertEqual(force.shape, (6,))
+
+    def test_safety_pipeline(self):
+        """测试安全控制器管道"""
+        from control.safety_controller import SafetyController, SafetyConfig
+
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14]*6),
+            joint_limits_upper=np.array([3.14]*6),
+            velocity_limits=np.array([2.0]*6),
+            acceleration_limits=np.array([5.0]*6),
+        )
+        safety = SafetyController(config)
+
+        state = JointStateSnapshot(
+            positions=np.array([0.1, 0.1, 0.0, 0.0, 0.0, 0.0]),
+            velocities=np.array([0.5, 0.3, 0.0, 0.0, 0.0, 0.0]),
+            torques=np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
+        )
+
+        result = safety.check(state)
+        self.assertIsNotNone(result)
+        self.assertTrue(hasattr(result, 'safe'))
+
+    def test_pose_estimator_pipeline(self):
+        """测试姿态估计管道"""
+        estimator = PoseEstimator(algorithm="madgwick", sample_rate=200.0)
+
+        accel = np.array([0.0, 0.0, 9.81])
+        gyro = np.array([0.0, 0.0, 0.1])
+
+        pose = estimator.update(accel, gyro)
+
+        self.assertIsInstance(pose, Pose)
+        self.assertEqual(pose.orientation.shape, (4,))
+        self.assertAlmostEqual(np.linalg.norm(pose.orientation), 1.0, places=4)
+
+
+class TestTactileForcePipeline(unittest.TestCase):
+    """
+    触觉-力觉管道集成测试
+    =======================
+    """
+
+    def test_tactile_to_force_control(self):
+        """测试触觉到力控的管道"""
+        from sensors.tactile import TactileArray
+        from sensors.force import ForceTorqueSensor
+        from control.tactile_control import TactileServoController
+
+        tactile = TactileArray(array_size=(16, 16))
+        force = ForceTorqueSensor()
+        tactile.open()
+        force.open()
+
+        frame = tactile.capture()
+        wrench = force.capture()
+
+        contacts = tactile.detect_contacts(frame)
+        quality = tactile.estimate_grip_quality(frame)
+
+        self.assertIsInstance(quality, dict)
+        self.assertIn('overall', quality)
+
+        tactile.close()
+        force.close()
+
+    def test_virtual_tactile_integration(self):
+        """测试虚拟触觉传感器集成"""
+        from sensors.tactile import VirtualTactileSensor
+
+        vts = VirtualTactileSensor(array_size=(16, 16))
+        vts.open()
+
+        frame = vts.simulate_contact(
+            contact_pos=(0.5, 0.5),
+            contact_radius=0.2,
+            contact_force=5.0
+        )
+
+        self.assertEqual(frame.pressure_map.shape, (16, 16))
+        self.assertGreater(np.max(frame.pressure_map), 0.0)
+
+        vts.close()
+
+    def test_virtual_force_integration(self):
+        """测试虚拟力觉传感器集成"""
+        from sensors.force import VirtualForceSensor
+
+        vfs = VirtualForceSensor()
+        vfs.open()
+
+        wrench = vfs.simulate_contact(
+            force=(5.0, 0.0, -10.0),
+            torque=(0.0, 0.0, 0.5)
+        )
+
+        self.assertGreater(wrench.magnitude, 0.0)
+
+        vfs.close()

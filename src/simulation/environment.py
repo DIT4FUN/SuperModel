@@ -602,3 +602,429 @@ PRESET_SCENES = {
 def create_scene(scene_name: str) -> Dict:
     """创建仿真场景"""
     return PRESET_SCENES.get(scene_name, PRESET_SCENES["tabletop"])
+
+
+class ContactPhysicsModel:
+    """
+    物理-based 接触模型
+    ==================
+
+    精确建模机器人与环境交互的物理过程:
+    - 库伦摩擦锥 (Coulomb Friction Cone)
+    - 法向接触力 (Hertz/Spring-Damper)
+    - 切向力与静/动摩擦转换
+    - 接触柔顺性 (Compliance)
+    - 力闭合检测 (Force Closure)
+
+    适用于:
+    - 抓取稳定性和 slip 检测
+    - 力控装配 (螺栓拧紧/插销配合)
+    - 触觉感知物理仿真
+    """
+
+    def __init__(
+        self,
+        static_friction_coeff: float = 0.4,
+        dynamic_friction_coeff: float = 0.3,
+        contact_stiffness: float = 10000.0,   # N/m
+        contact_damping: float = 200.0,        # N·s/m
+        restitution: float = 0.1,              # 恢复系数
+        contact_area_radius: float = 0.01,     # m
+    ):
+        """
+        Args:
+            static_friction_coeff: 静摩擦系数 (μ_s)
+            dynamic_friction_coeff: 动摩擦系数 (μ_d)
+            contact_stiffness: 接触刚度 (N/m)
+            contact_damping: 接触阻尼 (N·s/m)
+            restitution: 法向恢复系数 (e ∈ [0,1])
+            contact_area_radius: 接触区域半径 (m)
+        """
+        self.mu_s = static_friction_coeff
+        self.mu_d = dynamic_friction_coeff
+        self.k_n = contact_stiffness
+        self.c_n = contact_damping
+        self.restitution = restitution
+        self.contact_radius = contact_area_radius
+
+        # 接触状态
+        self._penetration_history: List[float] = []
+        self._tangential_slip_history: List[float] = []
+        self._normal_force_history: List[float] = []
+
+    def compute_normal_force(
+        self,
+        penetration: float,
+        normal_velocity: float
+    ) -> float:
+        """
+        计算法向接触力 (Spring-Damper 模型)
+
+        F_n = k_n * δ + c_n * δ̇
+
+        Args:
+            penetration: 侵入深度 (m, 正值表示接触)
+            normal_velocity: 法向相对速度 (m/s, 正值表示接近)
+
+        Returns:
+            F_n: 法向接触力 (N, 正值表示推力)
+        """
+        if penetration <= 0:
+            return 0.0
+
+        # 弹簧力 (Hertz 接触简化)
+        spring_force = self.k_n * penetration
+
+        # 阻尼力 (防止反弹震荡)
+        damping_force = self.c_n * max(0, normal_velocity)
+
+        F_n = spring_force + damping_force
+
+        # 记录历史
+        self._normal_force_history.append(F_n)
+        if len(self._normal_force_history) > 100:
+            self._normal_force_history.pop(0)
+
+        return max(0.0, F_n)
+
+    def compute_tangential_force(
+        self,
+        normal_force: float,
+        tangential_velocity: np.ndarray,
+        object_velocity: Optional[np.ndarray] = None,
+        dt: float = 0.001
+    ) -> np.ndarray:
+        """
+        计算切向摩擦力 (库伦摩擦 + 粘滞摩擦混合)
+
+        Args:
+            normal_force: 法向接触力 (N)
+            tangential_velocity: 接触点切向速度 (m/s)
+            object_velocity: 物体运动速度 (可选, 用于相对速度)
+            dt: 时间步长
+
+        Returns:
+            F_t: 切向摩擦力向量 (N)
+        """
+        if normal_force <= 0 or np.linalg.norm(tangential_velocity) < 1e-9:
+            return np.zeros(3)
+
+        # 相对速度
+        rel_vel = tangential_velocity
+        if object_velocity is not None:
+            rel_vel = tangential_velocity - object_velocity
+
+        speed = np.linalg.norm(rel_vel)
+        if speed < 1e-9:
+            return np.zeros(3)
+
+        direction = rel_vel / speed
+
+        # 粘滞摩擦分量 (低速度时主导)
+        viscous_coeff = self.mu_s * 0.5  # 粘滞摩擦系数
+        F_viscous = viscous_coeff * normal_force * (1 - np.exp(-speed * 50)) * direction
+
+        # 库伦摩擦分量 (高速度时主导)
+        # 判断静/动摩擦临界速度
+        slip_threshold = 0.05  # m/s
+
+        if speed < slip_threshold:
+            # 静摩擦区域: F_t ≤ μ_s * F_n
+            max_static = self.mu_s * normal_force
+            F_t_magnitude = np.linalg.norm(F_viscous)
+            if F_t_magnitude > max_static:
+                F_t_magnitude = max_static
+                F_t = F_t_magnitude * direction
+            else:
+                F_t = F_viscous
+
+            # 记录滑移量
+            self._tangential_slip_history.append(0.0)
+        else:
+            # 动摩擦区域: F_t = μ_d * F_n
+            F_t = self.mu_d * normal_force * direction
+            self._tangential_slip_history.append(speed * dt)
+
+        if len(self._tangential_slip_history) > 100:
+            self._tangential_slip_history.pop(0)
+
+        return F_t
+
+    def compute_friction_cone_force(
+        self,
+        contact_force: np.ndarray,
+        contact_normal: np.ndarray,
+        tangential_velocity: np.ndarray,
+        dt: float = 0.001
+    ) -> np.ndarray:
+        """
+        完整摩擦锥力计算
+
+        将接触力分解为法向和切向分量, 并在摩擦锥内计算平衡力
+
+        Args:
+            contact_force: 接触力向量 (N)
+            contact_normal: 接触法向 (归一化)
+            tangential_velocity: 切向速度 (m/s)
+
+        Returns:
+            F_total: 摩擦锥约束下的接触力 (N)
+        """
+        # 法向分量
+        F_n_scalar = np.dot(contact_force, contact_normal)
+        F_n_vec = F_n_scalar * contact_normal
+
+        # 切向分量
+        F_t_vec = contact_force - F_n_vec
+
+        # 计算法向力
+        normal_force = self.compute_normal_force(
+            penetration=F_n_scalar / self.k_n if self.k_n > 0 else 0,
+            normal_velocity=0.0
+        )
+
+        # 计算切向摩擦力
+        F_t = self.compute_tangential_force(
+            normal_force=normal_force,
+            tangential_velocity=tangential_velocity,
+            dt=dt
+        )
+
+        # 组合
+        F_total = F_n_vec + F_t
+        return F_total
+
+    def detect_slip(
+        self,
+        normal_force: float,
+        tangential_force_magnitude: float,
+        object_mass: float = 0.1,
+        gravity: float = 9.81
+    ) -> Tuple[bool, float]:
+        """
+        滑移检测
+
+        基于力闭合 (Force Closure) 和摩擦锥约束判断是否滑移
+
+        Args:
+            normal_force: 法向接触力 (N)
+            tangential_force_magnitude: 切向力大小 (N)
+            object_mass: 物体质量 (kg)
+            gravity: 重力加速度 (m/s²)
+
+        Returns:
+            (is_slip, slip_probability): 是否滑移, 滑移概率
+        """
+        # 重力引起的切向力
+        gravity_tangential = object_mass * gravity * self.mu_s
+
+        # 摩擦锥极限
+        max_friction = self.mu_s * normal_force
+
+        # 安全裕度
+        safety_margin = max_friction - tangential_force_magnitude
+        slip_threshold = gravity_tangential * 0.1  # 10% 容差
+
+        if safety_margin < 0:
+            # 摩擦力不足,必然滑移
+            return True, 1.0
+        elif safety_margin < slip_threshold:
+            # 接近临界,概率性滑移
+            slip_prob = 1.0 - (safety_margin / slip_threshold)
+            return np.random.rand() < slip_prob, slip_prob
+        else:
+            # 稳定抓取
+            return False, 0.0
+
+    def compute_grasp_quality(
+        self,
+        contact_points: List[np.ndarray],
+        contact_normals: List[np.ndarray],
+        object_center: np.ndarray,
+        object_mass: float = 0.1
+    ) -> Dict[str, float]:
+        """
+        计算抓取质量 (基于力闭合指标)
+
+        Args:
+            contact_points: 接触点列表 (每个3D坐标)
+            contact_normals: 各接触点法向列表
+            object_center: 物体几何中心
+            object_mass: 物体质量 (kg)
+
+        Returns:
+            grasp_quality: 包含各项抓取质量指标的字典
+        """
+        n_contacts = len(contact_points)
+        if n_contacts < 2:
+            return {'overall': 0.0, 'force_closure': 0.0, 'stiffness': 0.0, 'min_margin': 0.0}
+
+        # 重力向量
+        gravity = np.array([0, 0, -object_mass * 9.81])
+
+        # 力闭合检测 (简化版本)
+        # 对于每个接触点, 计算在摩擦锥内的最大可平衡重力
+        total_resistive_force = 0.0
+        min_margin = float('inf')
+
+        for i, (cp, cn) in enumerate(zip(contact_points, contact_normals)):
+            # 计算接触点到物体中心的向量
+            lever_arm = cp - object_center
+            torque = np.cross(lever_arm, gravity)
+
+            # 法向力方向与重力方向的夹角
+            gravity_dir = gravity / (np.linalg.norm(gravity) + 1e-9)
+            alignment = np.dot(-cn, gravity_dir)  # 法向朝向重力方向时为正
+
+            if alignment > 0:
+                # 该接触点可以提供法向支持
+                max_friction = self.mu_s * alignment * 10.0  # 假设法向力上限 10N
+                total_resistive_force += max_friction
+
+                # 计算安全裕度
+                margin = max_friction - abs(torque[i % 3]) if n_contacts > 2 else max_friction - np.linalg.norm(torque) * 0.1
+                min_margin = min(min_margin, margin)
+
+        # 力闭合率
+        required_force = np.linalg.norm(gravity)
+        force_closure = min(total_resistive_force / required_force, 1.0) if required_force > 0 else 0.0
+
+        # 接触刚度指标 (接触数量越多,刚度越高)
+        stiffness_score = min(n_contacts / 4.0, 1.0)
+
+        # 综合质量
+        overall = 0.5 * force_closure + 0.3 * stiffness_score + 0.2 * (min(min_margin, 1.0) if min_margin > 0 else 0.0)
+
+        return {
+            'overall': float(overall),
+            'force_closure': float(force_closure),
+            'stiffness': float(stiffness_score),
+            'min_margin': float(min(min_margin, 1.0)) if min_margin > 0 else 0.0,
+            'num_contacts': float(n_contacts)
+        }
+
+    def simulate_contact_event(
+        self,
+        initial_penetration: float = 0.002,
+        impact_velocity: float = 0.1,
+        object_mass: float = 0.5,
+        duration: float = 0.1,
+        dt: float = 0.001
+    ) -> Dict[str, Any]:
+        """
+        模拟一次完整的接触事件
+
+        包含:
+        1. 初始碰撞 (法向冲击)
+        2. 压陷阶段 (静力平衡)
+        3. 滑移/稳定判断
+
+        Args:
+            initial_penetration: 初始侵入深度 (m)
+            impact_velocity: 碰撞法向速度 (m/s)
+            object_mass: 接触物体质量 (kg)
+            duration: 模拟总时长 (s)
+            dt: 仿真时间步长
+
+        Returns:
+            contact_event: 接触事件数据
+        """
+        n_steps = int(duration / dt)
+        event_data = {
+            'time': [],
+            'penetration': [],
+            'normal_force': [],
+            'tangential_force_magnitude': [],
+            'slip_detected': [],
+            'slip_probability': []
+        }
+
+        penetration = initial_penetration
+        velocity = impact_velocity
+
+        for step in range(n_steps):
+            t = step * dt
+
+            # 法向接触力
+            F_n = self.compute_normal_force(penetration, velocity)
+
+            # 切向力 (假设切向速度从某值逐渐衰减)
+            tangential_vel = np.array([0.0, velocity * 0.1 * np.sin(step * 0.1), 0.0])
+            F_t_mag = np.linalg.norm(self.compute_tangential_force(F_n, tangential_vel, dt=dt))
+
+            # 滑移检测
+            is_slip, slip_prob = self.detect_slip(F_n, F_t_mag, object_mass)
+
+            # 动力学更新
+            # 加速度 = 力 / 质量 (仅考虑法向)
+            acc = F_n / object_mass if object_mass > 0 else 0
+            velocity = velocity - acc * dt  # 反弹导致减速
+            penetration = max(0, penetration - abs(velocity) * dt)  # 压陷深度变化
+
+            # 记录
+            event_data['time'].append(t)
+            event_data['penetration'].append(penetration)
+            event_data['normal_force'].append(F_n)
+            event_data['tangential_force_magnitude'].append(F_t_mag)
+            event_data['slip_detected'].append(is_slip)
+            event_data['slip_probability'].append(slip_prob)
+
+            # 穿透太深或速度太低则停止
+            if penetration < 1e-6 and abs(velocity) < 1e-4:
+                break
+
+        return event_data
+
+    def get_contact_impedance(
+        self,
+        normal_force: float,
+        frequency: float = 10.0
+    ) -> Tuple[float, float]:
+        """
+        计算接触阻抗
+
+        用于阻抗控制中的接触刚度/阻尼估计
+
+        Args:
+            normal_force: 稳态法向接触力 (N)
+            frequency: 扰动频率 (Hz)
+
+        Returns:
+            (stiffness, damping): 等效刚度和阻尼
+        """
+        omega = 2 * np.pi * frequency
+
+        # 动态接触刚度 (简化的 Hertz 模型)
+        if normal_force > 0:
+            dynamic_stiffness = self.k_n * (1 + np.sqrt(normal_force / self.k_n))
+        else:
+            dynamic_stiffness = self.k_n
+
+        # 阻尼比
+        zeta = self.c_n / (2 * np.sqrt(self.k_n * dynamic_stiffness))
+        critical_damping = 2 * np.sqrt(self.k_n * dynamic_stiffness)
+        equivalent_damping = zeta * critical_damping
+
+        return float(dynamic_stiffness), float(equivalent_damping)
+
+
+# AGV五级接触物理规格
+AGV_CONTACT_PHYSICS_GRADES = {
+    'S':  {'mu_s': 0.3,  'mu_d': 0.2,  'stiffness': 5000,  'damping': 100,  'contact_area_mm': 5},
+    'M':  {'mu_s': 0.4,  'mu_d': 0.3,  'stiffness': 10000, 'damping': 200,  'contact_area_mm': 8},
+    'L':  {'mu_s': 0.5,  'mu_d': 0.35, 'stiffness': 20000, 'damping': 400,  'contact_area_mm': 10},
+    'XL': {'mu_s': 0.55, 'mu_d': 0.4,  'stiffness': 50000, 'damping': 800,  'contact_area_mm': 15},
+    'XXL': {'mu_s': 0.6, 'mu_d': 0.45, 'stiffness': 100000,'damping': 1500, 'contact_area_mm': 20},
+}
+
+
+def get_contact_physics_spec(grade: str) -> ContactPhysicsModel:
+    """获取AGV指定等级的接触物理模型"""
+    spec = AGV_CONTACT_PHYSICS_GRADES.get(grade, AGV_CONTACT_PHYSICS_GRADES['M'])
+    return ContactPhysicsModel(
+        static_friction_coeff=spec['mu_s'],
+        dynamic_friction_coeff=spec['mu_d'],
+        contact_stiffness=spec['stiffness'],
+        contact_damping=spec['damping'],
+        contact_area_radius=spec['contact_area_mm'] / 1000.0
+    )
