@@ -4592,9 +4592,135 @@ class CollisionDetector:
         
         # 力方向的反方向
         return -wrench.force / wrench.magnitude
+
+### 34.3 ForceController 力觉控制
+
+```python
+from control.force_control import ForceController, ForceControlParams, HybridForcePositionController
+import numpy as np
+
+class ForceController:
+    """
+    力觉控制器 (导纳控制 + 碰撞检测)
+    
+    基于六维力矩传感器的闭环力控制:
+    1. 导纳控制: 将力误差转换为位置调整
+    2. 碰撞检测: 检测异常接触力并触发响应
+    3. 力限幅: 防止过大接触力损坏物体
+    """
+    
+    def __init__(
+        self,
+        params: ForceControlParams,
+        sensor_id: str = "ft_0"
+    ):
+        self.params = params
+        self.sensor_id = sensor_id
+        self._collision_callback = None
+        
+    def compute_admittance(
+        self,
+        wrench: np.ndarray,
+        target_force: np.ndarray,
+        dt: float
+    ) -> np.ndarray:
+        """
+        导纳控制计算
+        
+        Args:
+            wrench: 当前六维力旋量 (Fx, Fy, Fz, Tx, Ty, Tz)
+            target_force: 目标六维力旋量
+            dt: 控制周期
+            
+        Returns:
+            velocity_cmd: 速度指令 (vx, vy, vz, wx, wy, wz)
+        """
+        
+    def detect_collision(
+        self,
+        wrench: np.ndarray,
+        history: list
+    ) -> Tuple[bool, str]:
+        """
+        碰撞检测
+        
+        Returns:
+            (collision_detected, collision_type)
+            collision_type: 'none' / 'collision' / 'obstruction' / 'wall'
+        """
+        
+    def set_collision_callback(self, callback):
+        """设置碰撞响应回调函数"""
+        
+    def compute_force_control(
+        self,
+        current_wrench: np.ndarray,
+        target_wrench: np.ndarray,
+        dt: float
+    ) -> np.ndarray:
+        """
+        力控计算 (PD控制)
+        
+        Args:
+            current_wrench: 当前力旋量
+            target_wrench: 目标力旋量
+            dt: 控制周期
+            
+        Returns:
+            force_error_derivative: 力误差变化率
+        """
+
+class HybridForcePositionController:
+    """
+    力位混合控制器
+    
+    同时控制力和位置 (力控自由度 + 位控自由度的组合):
+    1. 在任务空间指定力和位置控制轴
+    2. 串联或并联混合控制
+    3. 重力补偿和摩擦补偿
+    """
+    
+    def __init__(
+        self,
+        force_dims: list,      # 力控维度 [0,1,2] = Fx,Fy,Fz
+        position_dims: list,   # 位控维度 [3,4,5] = Rx,Ry,Rz
+        force_params: ForceControlParams,
+        position_params: dict
+    ):
+        self.force_dims = force_dims
+        self.position_dims = position_dims
+        
+    def compute(
+        self,
+        current_pose: np.ndarray,
+        target_pose: np.ndarray,
+        current_wrench: np.ndarray,
+        target_wrench: np.ndarray,
+        dt: float
+    ) -> np.ndarray:
+        """
+        力位混合控制计算
+        
+        Args:
+            current_pose: 当前末端位姿 (6D)
+            target_pose: 目标位姿
+            current_wrench: 当前力旋量
+            target_wrench: 目标力旋量
+            dt: 控制周期
+            
+        Returns:
+            control_output: 混合控制输出 (6D)
+        """
+        
+    def set_impedance(
+        self,
+        force_dims_stiffness: dict,
+        position_dims_stiffness: dict
+    ):
+        """设置各维度刚度"""
 ```
 
-### 34.3 力控AGV等级配置
+### 34.4 力控AGV等级配置
 
 | 功能 | S | M | L | XL | XXL |
 |------|---|---|---|---|-----|
@@ -4610,6 +4736,118 @@ class CollisionDetector:
 ---
 
 ## 35. IMU-控制集成实战 (IMU-Control Integration)
+
+### 35.0 核心接口定义
+
+```python
+from control.imu_control import AttitudeStabilizer, IMUControlParams, MotionEstimator
+from sensors.imu import IMUSensor, PoseEstimator, IMUSensorType
+import numpy as np
+
+class AttitudeStabilizer:
+    """
+    IMU姿态稳定控制器
+    
+    使用IMU反馈实现:
+    - 姿态保持 (Roll/Pitch/Yaw)
+    - 平衡控制 (抗倾倒)
+    - 颠簸/振动补偿
+    - 抗干扰控制
+    """
+    
+    def __init__(
+        self,
+        params: IMUControlParams,
+        imu: IMUSensor,
+        estimator: PoseEstimator
+    ):
+        self.params = params
+        self.imu = imu
+        self.estimator = estimator
+        
+        # 目标姿态
+        self.target_euler = np.array([0.0, 0.0, 0.0])
+        
+    def stabilize(self, dt: float) -> np.ndarray:
+        """
+        姿态稳定控制计算
+        
+        Args:
+            dt: 控制周期
+            
+        Returns:
+            torque_command: 关节力矩指令 (6D)
+        """
+        
+    def compute_balance_control(
+        self,
+        disturbance_force: np.ndarray
+    ) -> np.ndarray:
+        """
+        抗干扰平衡控制
+        
+        Args:
+            disturbance_force: 外部扰动力 (Fx, Fy)
+            
+        Returns:
+            torque_command: 关节力矩指令
+        """
+        
+    def compensate_tilt(
+        self,
+        platform_height: float
+    ) -> np.ndarray:
+        """
+        倾角补偿 (颠簸路面)
+        
+        Args:
+            platform_height: 平台高度 (m)
+            
+        Returns:
+           补偿位移 (3D)
+        """
+
+class MotionEstimator:
+    """
+    基于IMU的运动估计器
+    
+    功能:
+    - 零速更新 (ZUPT)
+    - 速度/位置积分
+    - IMU里程计
+    - 漂移校正
+    """
+    
+    def __init__(
+        self,
+        imu: IMUSensor,
+        estimator: PoseEstimator,
+        gravity: np.ndarray = np.array([0, 0, 9.81])
+    ):
+        self.imu = imu
+        self.estimator = estimator
+        self.gravity = gravity
+        self.velocity = np.zeros(3)
+        self.position = np.zeros(3)
+        self.is_stationary = False
+        
+    def update(self, dt: float) -> Tuple[np.ndarray, np.ndarray, bool]:
+        """
+        更新运动估计
+        
+        Args:
+            dt: 时间步长
+            
+        Returns:
+            (velocity, position, is_stationary)
+        """
+        
+    def reset(self):
+        """重置估计状态"""
+        self.velocity = np.zeros(3)
+        self.position = np.zeros(3)
+        self.estimator.reset()
+```
 
 ### 35.1 姿态稳定控制
 
@@ -4980,8 +5218,19 @@ class UnifiedControlLoop:
 
 ---
 
-*文档版本: v1.14.0*
+*文档版本: v1.18.1*
 *最后更新: 2026-03-31*
+
+**2026-03-31 v1.18.1**: 补充力控/IMU控制模块接口设计:
+- ForceController: 导纳控制 + 碰撞检测接口
+- HybridForcePositionController: 力位混合控制接口
+- AGV五级控制规格表补充触觉控制(19.6)、力控(19.7)、IMU姿态控制(19.8)
+
+**2026-03-31 v1.18.0**: 新增触觉/力觉/IMU控制模块:
+- TactileServoController, GraspQualityController
+- ForceController, HybridForcePositionController
+- AttitudeStabilizer, MotionEstimator
+- sensor_control_integration_tests.py (+23项测试)
 
 **2026-03-31 v1.14.0**: 新增第33-36节传感器-控制集成实战指南，包含:
 - 触觉伺服控制和抓取控制 (TactileServoController, TactileGuidedGraspController)
