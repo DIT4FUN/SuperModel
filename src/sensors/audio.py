@@ -67,36 +67,50 @@ class BinauralMic:
         
     def open(self) -> bool:
         """打开音频流"""
-        # TODO: 实现 PyAudio / sounddevice 接口
-        # try:
-        #     import sounddevice as sd
-        #     self._stream = sd.InputStream(
-        #         channels=2,
-        #         samplerate=self.sample_rate,
-        #         blocksize=self.chunk_size,
-        #         device=self.device_id,
-        #         callback=self._audio_callback
-        #     )
-        # except ImportError:
-        #     pass
-        self._is_recording = True
-        print(f"[BinauralMic] Opened: SR={self.sample_rate}, Chunks={self.chunk_size}")
-        return True
+        # 优先尝试 sounddevice
+        try:
+            import sounddevice as sd
+            self._stream = sd.InputStream(
+                channels=2,
+                samplerate=self.sample_rate,
+                blocksize=self.chunk_size,
+                device=self.device_id,
+                dtype='float32',
+                callback=self._audio_callback
+            )
+            self._stream.start()
+            self._use_sounddevice = True
+            print(f"[BinauralMic] Opened with sounddevice: SR={self.sample_rate}, Chunks={self.chunk_size}")
+            self._is_recording = True
+            return True
+        except (ImportError, OSError):
+            # Fallback: 模拟模式
+            self._use_sounddevice = False
+            self._sim_t = 0.0
+            self._is_recording = True
+            print(f"[BinauralMic] Opened in SIMULATION mode: SR={self.sample_rate}, Chunks={self.chunk_size}")
+            return True
     
     def _audio_callback(self, indata, frames, time, status):
         """音频回调"""
         if status:
             print(f"[BinauralMic] Status: {status}")
         # 双声道: [左, 右]
-        left = indata[:, 0].copy()
-        right = indata[:, 1].copy()
-        self._buffer.append(AudioFrame(left, right, self.sample_rate, time.current_time))
+        left = indata[:, 0].copy().astype(np.float32)
+        right = indata[:, 1].copy().astype(np.float32)
+        frame = AudioFrame(left, right, self.sample_rate, time.current_time, len(self._buffer))
+        self._buffer.append(frame)
+        # 限制缓冲区大小
+        if len(self._buffer) > 10:
+            self._buffer = self._buffer[-5:]
     
     def close(self):
         """关闭音频流"""
         self._is_recording = False
-        if self._stream:
+        if getattr(self, '_stream', None):
+            self._stream.stop()
             self._stream.close()
+        self._buffer.clear()
         print("[BinauralMic] Closed")
     
     def capture(self) -> AudioFrame:
@@ -104,19 +118,36 @@ class BinauralMic:
         if not self._is_recording:
             raise RuntimeError("Audio stream not opened")
         
-        # 从缓冲区获取最新帧
-        # TODO: 实现实际音频采集
-        t = np.linspace(0, self.chunk_size / self.sample_rate, self.chunk_size)
-        left = 0.1 * np.sin(2 * np.pi * 440 * t)  # 模拟440Hz正弦波
-        right = 0.1 * np.sin(2 * np.pi * 440 * t)
-        
-        return AudioFrame(
-            left_channel=left,
-            right_channel=right,
-            sample_rate=self.sample_rate,
-            timestamp=0.0,
-            frame_id=0
-        )
+        if getattr(self, '_use_sounddevice', False):
+            # 从 sounddevice 缓冲区获取最新帧
+            if self._buffer:
+                return self._buffer.pop(0)
+            else:
+                # 无数据时返回静音
+                t = np.linspace(0, self.chunk_size / self.sample_rate, self.chunk_size)
+                left = np.zeros(self.chunk_size, dtype=np.float32)
+                right = np.zeros(self.chunk_size, dtype=np.float32)
+                return AudioFrame(left, right, self.sample_rate, self._sim_t, 0)
+        else:
+            # 模拟模式: 生成多频率复合音频
+            dt = self.chunk_size / self.sample_rate
+            t = np.linspace(self._sim_t, self._sim_t + dt, self.chunk_size, endpoint=False)
+            
+            # 复合正弦波: 440Hz 基频 + 880Hz 谐波 + 噪声
+            left = (0.1 * np.sin(2 * np.pi * 440 * t) +
+                    0.05 * np.sin(2 * np.pi * 880 * t) +
+                    0.02 * np.random.randn(self.chunk_size))
+            right = (0.1 * np.sin(2 * np.pi * 440 * t + 0.05) +  # 轻微相位差模拟空间感
+                     0.05 * np.sin(2 * np.pi * 880 * t) +
+                     0.02 * np.random.randn(self.chunk_size))
+            
+            # 限制幅度
+            left = np.clip(left, -1.0, 1.0).astype(np.float32)
+            right = np.clip(right, -1.0, 1.0).astype(np.float32)
+            
+            frame = AudioFrame(left, right, self.sample_rate, self._sim_t, 0)
+            self._sim_t += dt
+            return frame
     
     def __enter__(self):
         self.open()

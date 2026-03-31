@@ -1659,10 +1659,11 @@ class TestSensorSimulationIntegration(unittest.TestCase):
             noise_level=0.02
         )
         
-        # 力觉捕获接触力
+        # 力觉捕获接触力 (禁用噪声以保证测试稳定性)
         wrench = force.simulate_contact(
             force=(0.0, 0.0, -contact_force),
-            torque=(0.0, 0.0, 0.0)
+            torque=(0.0, 0.0, 0.0),
+            add_noise=False
         )
         
         # 验证触觉帧

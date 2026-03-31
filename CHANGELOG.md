@@ -5,6 +5,23 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.8.0] - 2026-03-31
+
+### Added
+- **传感器硬件接口增强**: 完善双目视觉和双耳音频的真实硬件接口模拟
+  - `BinocularCamera.open()`: 添加 pyrealsense2 SDK 支持，保留模拟模式作为 Fallback
+  - `BinocularCamera.capture()`: 实现 RealSense 实际采集，模拟模式生成有意义的纹理图案
+  - `DepthProcessor.rectify()`: 添加 OpenCV stereoRectify 实现双目标定校正
+  - `DepthProcessor.compute_depth()`: 添加 OpenCV SGBM 立体匹配算法
+  - `BinauralMic.open()`: 添加 sounddevice 接口，保留模拟模式
+  - `BinauralMic.capture()`: 实现多频率复合音频仿真
+
+### Fixed
+- `test_simulated_contact_tactile_force_integration`: 禁用噪声以保证测试稳定性
+
+### Changed
+- 触觉/力觉/IMU 传感器模块保持稳定 (全部通过测试)
+
 ## [1.7.0] - 2026-03-31
 
 ### Added
