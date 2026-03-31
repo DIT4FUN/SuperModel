@@ -2,6 +2,20 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.20.0] - 2026-03-31
+
+### Added
+- **AGV五级规格附录B** (`docs/design/AGV_FIVE_LEVEL_CONSOLIDATED_SPEC.md`): 新增附录B-传感器-控制集成性能基准
+  - 各等级传感器采集性能对照表 (触觉/力觉/IMU帧率、同步延迟、控制周期)
+  - 触觉-力觉-IMU协同采集流水线代码示例
+  - 控制响应时间规格表 (位置环带宽、力控带宽、碰撞响应时间)
+  - 端到端感知-控制延迟预算分解图
+  - 融合网络推理性能对照表 (延迟/内存/吞吐量/功耗)
+- **全量测试验证**: 全部 **1019项测试** 通过 ✅
+
+### Changed
+- 文档版本更新: v1.3.0 → v1.4.0
+
 ## [1.19.0] - 2026-03-31
 
 ### Added

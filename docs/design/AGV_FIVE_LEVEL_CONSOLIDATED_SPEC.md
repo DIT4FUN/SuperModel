@@ -713,5 +713,95 @@ class PoseEstimator:
 
 ---
 
-*文档版本: v1.3.0*
-*最后更新: 2026-03-31*
+---
+
+## 附录B：传感器-控制集成性能基准
+
+### B.1 各等级传感器采集性能
+
+| 等级 | 触觉帧率 | 力觉帧率 | IMU帧率 | 同步延迟 | 控制周期 |
+|------|---------|---------|---------|---------|---------|
+| S | 50 Hz | 100 Hz | 100 Hz | <20ms | 50 ms |
+| M | 100 Hz | 500 Hz | 200 Hz | <10ms | 20 ms |
+| L | 200 Hz | 1000 Hz | 500 Hz | <5ms | 10 ms |
+| XL | 500 Hz | 2000 Hz | 1000 Hz | <2ms | 5 ms |
+| XXL | 1000 Hz | 5000 Hz | 2000 Hz | <1ms | 2 ms |
+
+### B.2 触觉-力觉-IMU协同采集流水线
+
+```python
+# 典型采集流水线 (AGV-M级)
+import time
+from sensors.tactile import TactileArray
+from sensors.force import ForceTorqueSensor
+from sensors.imu import IMUSensor, VirtualIMUSensor
+
+# 初始化虚拟传感器进行协同测试
+tactile = TactileArray(array_size=(16, 16))
+force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+
+tactile.open()
+force.open()
+imu.open()
+
+for i in range(20):
+    t_start = time.perf_counter()
+    
+    tac_frame = tactile.capture()
+    wrench = force.capture()
+    imu_frame = imu.capture()
+    
+    # 处理数据
+    contacts = tactile.detect_contacts(tac_frame)
+    contact_state = force.detect_contact(wrench)
+    pose_est.update(imu_frame.accel, imu_frame.gyro)
+    
+    t_end = time.perf_counter()
+    latency_ms = (t_end - t_start) * 1000
+    # M级目标: <10ms
+
+tactile.close()
+force.close()
+imu.close()
+```
+
+### B.3 控制响应时间规格
+
+| 等级 | 位置环带宽 | 力控带宽 | 姿态稳定时间 | 碰撞响应时间 |
+|------|----------|---------|------------|------------|
+| S | 2 Hz | — | <500ms | >100ms |
+| M | 5 Hz | 3 Hz | <200ms | <50ms |
+| L | 10 Hz | 8 Hz | <100ms | <20ms |
+| XL | 20 Hz | 15 Hz | <50ms | <10ms |
+| XXL | 50 Hz | 30 Hz | <20ms | <5ms |
+
+### B.4 端到端感知-控制延迟预算
+
+```
+传感器采集 ──→ 预处理 ──→ 编码 ──→ 融合 ──→ 决策 ──→ 控制
+     │            │          │        │         │        │
+    <5ms         <2ms      <10ms    <5ms     <10ms    <2ms
+     
+总计预算:
+  S级: <100ms (非实时)
+  M级: <50ms (软实时)
+  L级: <25ms (准实时)
+  XL级: <10ms (硬实时)
+  XXL级: <5ms (超硬实时)
+```
+
+### B.5 融合网络推理性能
+
+| 等级 | 融合延迟 | 内存占用 | 吞吐量 | 功耗 |
+|------|---------|---------|--------|------|
+| S | <20ms | <200MB | 50 fps | <2W |
+| M | <10ms | <500MB | 100 fps | <5W |
+| L | <5ms | <1GB | 200 fps | <10W |
+| XL | <2ms | <2GB | 500 fps | <20W |
+| XXL | <1ms | <4GB | 1000 fps | <40W |
+
+---
+
+*文档版本: v1.4.0*
+*最后更新: 2026-03-31 23:38*

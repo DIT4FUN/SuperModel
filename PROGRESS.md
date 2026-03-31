@@ -1,7 +1,31 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-03-31 21:17 (v1.19.0)
+> Last Updated: 2026-03-31 23:38 (v1.20.0)
+
+---
+
+## v1.20.0 (2026-03-31 23:38) - AGV五级规格附录B + 性能基准完善
+
+### 本次任务完成工作
+
+1. **AGV五级规格附录B - 传感器-控制集成性能基准** ✅
+   - `docs/design/AGV_FIVE_LEVEL_CONSOLIDATED_SPEC.md` 新增附录B
+   - 传感器采集性能对照表 (S/M/L/XL/XXL各等级的触觉/力觉/IMU帧率)
+   - 同步延迟与控制周期规格
+   - 触觉-力觉-IMU协同采集流水线代码示例
+   - 控制响应时间规格 (位置环带宽、力控带宽、碰撞响应时间)
+   - 端到端感知-控制延迟预算分解图
+   - 融合网络推理性能对照表
+
+2. **全量测试验证** ✅
+   - 全部 1019 项测试通过
+   - sensor_tests.py: 197 项通过
+   - fusion_tests.py: 104 项通过
+   - control_tests.py: 220 项通过
+
+3. **GitHub提交** ✅
+   - 修改文件: AGV_FIVE_LEVEL_CONSOLIDATED_SPEC.md, PROGRESS.md, CHANGELOG.md
 
 ---
 
