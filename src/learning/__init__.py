@@ -31,6 +31,18 @@ from .world_model import (
     WORLD_MODEL_GRADES
 )
 
+from .autonomous_learning import (
+    AutonomousLearningConfig,
+    Experience,
+    PrioritizedReplayBuffer,
+    SumTree,
+    EWC,
+    MetaLearner,
+    CuriosityModule,
+    SkillLibrary,
+    AutonomousLearningAgent
+)
+
 __all__ = [
     # 自监督学习
     'LearningConfig',
@@ -54,5 +66,16 @@ __all__ = [
     'ReplayBuffer',
     'create_world_model_agent',
     'get_world_model_spec',
-    'WORLD_MODEL_GRADES'
+    'WORLD_MODEL_GRADES',
+    
+    # 自主学习框架 (RDK/持续学习)
+    'AutonomousLearningConfig',
+    'Experience',
+    'PrioritizedReplayBuffer',
+    'SumTree',
+    'EWC',
+    'MetaLearner',
+    'CuriosityModule',
+    'SkillLibrary',
+    'AutonomousLearningAgent'
 ]

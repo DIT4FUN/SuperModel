@@ -5,6 +5,29 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.16.0] - 2026-03-31
+
+### Added
+- **RK3588 硬件抽象层** (`src/hardware/`): 新增完整的硬件支持模块
+  - `base.py`: 基础主板抽象接口 (BoardBase, BoardType, PeripheralType)
+  - `rk3588.py`: RK3588/RK3588S 平台支持，NPU/GPU 频率监控
+  - `digu_robot.py`: 地瓜机器人 RDK 系列支持
+    - **RDK X3**: RK3588V2, 6 TOPS NPU, 8GB LPDDR5
+    - **RDK X5 Ultra**: RK3588, 12 TOPS NPU, 16GB LPDDR5
+    - **RDK S100**: RK3562, 3 TOPS NPU, 4GB LPDDR4
+  - `gpio.py`: 统一 GPIO 控制器，支持 sysfs 和字符设备接口
+  - `nnpu.py`: RKNN NPU 加速抽象，支持 rknn_api 和模拟模式
+- **自主学习框架 v2** (`src/learning/autonomous_learning.py`): 增强持续学习能力
+  - `PrioritizedReplayBuffer`: SumTree 实现优先经验回放
+  - `EWC`: 弹性权重固定，防止灾难性遗忘
+  - `MetaLearner`: MAML 元学习，支持快速任务适应
+  - `CuriosityModule`: 好奇心驱动内在奖励探索
+  - `SkillLibrary`: 自适应技能库，支持技能获取与检索
+  - `AutonomousLearningAgent`: 整合所有学习组件的统一智能体
+
+### Changed
+- `src/learning/__init__.py`: 新增自主学习框架导出
+
 ## [1.15.0] - 2026-03-31
 
 ### Added

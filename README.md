@@ -29,7 +29,9 @@
 | `learning/` | 自主学习框架 (对比学习/世界模型/好奇心) | ✅ 完成 |
 | `learning/world_model.py` | **Dreamer-style World Model** (RSSM) | ✅ 完成 |
 | `learning/dreamer_agent.py` | **Dreamer Actor-Critic** (想象训练) | ✅ 完成 |
+| `learning/autonomous_learning.py` | **持续学习 v2** (PER/EWC/MAML/技能库) | ✅ 完成 |
 | `control/` | 运动控制 + 多AGV协调 (PID/阻抗/技能库/规划/编队) | ✅ 完成 |
+| `hardware/` | **RDK 主板支持** (RK3588/RDK X3/X5 Ultra/S100) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
 | `tests/` | 全套单元测试 (**895项全部通过**) | ✅ 完成 |
