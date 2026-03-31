@@ -2,6 +2,27 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.30.1] - 2026-04-01
+
+### Changed
+- **AGV_GRADE_SPEC.md** 新增附录E: AGV五级物料清单与成本估算 (BOM)
+  - 感知子系统物料表 (相机/麦克风/触觉/力传感/IMU/处理器)
+  - 执行子系统物料表 (关节模组/减速器/驱动器/末端执行器)
+  - 通信与电源物料表
+  - 系统五级总成本估算 (S级¥10,880 → XXL级¥1,028,000)
+  - 供应链快速参考 (供应商/型号/交期)
+
+## [1.30.0] - 2026-04-01
+
+### Changed
+- **触觉/力觉/IMU控制模块测试完成** ✅
+  - TestTactileServoController: 5测试用例
+  - TestForceController: 5测试用例
+  - TestHybridForcePositionController: 2测试用例
+  - TestAttitudeStabilizer: 6测试用例
+  - TestMotionEstimator: 5测试用例
+  - 全量1112项测试通过
+
 ## [1.29.0] - 2026-04-01
 
 ### Changed
