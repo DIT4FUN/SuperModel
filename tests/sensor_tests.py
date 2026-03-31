@@ -2049,3 +2049,256 @@ class TestPlannerHTNBacktracking(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSensorCalibrationWorkflow(unittest.TestCase):
+    """测试传感器标定完整工作流"""
+    
+    def test_force_sensor_complete_calibration_workflow(self):
+        """力觉传感器完整标定流程"""
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        
+        # 1. 偏置校准 (无负载状态)
+        sensor.calibrate_bias(num_samples=50)
+        
+        # 2. 设置工具中心 (添加重力补偿)
+        sensor.set_tool_center(tool_mass=1.0, tool_com=np.array([0.0, 0.05, 0.1]))
+        
+        # 3. 采集数据
+        wrenches = []
+        for _ in range(20):
+            w = sensor.capture()
+            wrenches.append(w)
+        
+        # 验证校准效果: 力传感器应该输出接近0 (已偏置校准+重力补偿)
+        forces = np.array([w.force for w in wrenches])
+        torques = np.array([w.torque for w in wrenches])
+        
+        # 校准后XY方向力应接近0
+        self.assertLess(abs(np.mean(forces[:, 0])), 2.0)
+        self.assertLess(abs(np.mean(forces[:, 1])), 2.0)
+        
+        # 采集后传感器仍能正常工作
+        final_wrench = sensor.capture()
+        self.assertIsInstance(final_wrench, Wrench)
+        
+        sensor.close()
+    
+    def test_imu_complete_calibration_workflow(self):
+        """IMU完整标定流程"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        
+        # 1. 自检
+        self_test = imu.self_test()
+        self.assertTrue(self_test)
+        
+        # 2. 陀螺仪偏置校准
+        imu.calibrate_gyro_bias(num_samples=100)
+        
+        # 3. 加速度计标定
+        imu.calibrate_accel(known_orientation="level")
+        
+        # 4. 验证校准效果
+        frames = []
+        for _ in range(50):
+            f = imu.capture()
+            frames.append(f)
+        
+        # 静止时角速度应该接近0
+        gyro_norms = [np.linalg.norm(f.gyro) for f in frames]
+        self.assertLess(np.mean(gyro_norms), 0.5)
+        
+        # 验证四元数归一化
+        estimator = PoseEstimator()
+        for frame in frames[:10]:
+            pose = estimator.update(frame.accel, frame.gyro)
+            norm = np.linalg.norm(pose.orientation)
+            self.assertAlmostEqual(norm, 1.0, places=5)
+        
+        imu.close()
+    
+    def test_tactile_complete_calibration_workflow(self):
+        """触觉传感器完整标定流程"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        
+        # 1. 零压力标定
+        zero_pressure = np.zeros((16, 16))
+        tactile.calibrate(zero_pressure=zero_pressure)
+        
+        # 2. 力标定
+        tactile.calibrate(known_weights=[0.5, 1.0, 2.0])
+        
+        # 3. 采集数据验证
+        for _ in range(10):
+            frame = tactile.capture()
+            self.assertEqual(frame.pressure_map.shape, (16, 16))
+        
+        # 4. 接触检测
+        contacts = tactile.detect_contacts()
+        self.assertIsInstance(contacts, list)
+        
+        # 5. 抓取质量评估
+        frame = tactile.capture()
+        quality = tactile.estimate_grip_quality(frame)
+        self.assertIn('overall', quality)
+        
+        tactile.close()
+
+
+class TestSensorErrorHandling(unittest.TestCase):
+    """传感器错误处理测试"""
+    
+    def test_tactile_capture_before_open(self):
+        """触觉传感器未打开时捕获应报错"""
+        tactile = TactileArray()
+        with self.assertRaises(RuntimeError):
+            tactile.capture()
+    
+    def test_force_capture_before_open(self):
+        """力觉传感器未打开时捕获应报错"""
+        sensor = ForceTorqueSensor()
+        with self.assertRaises(RuntimeError):
+            sensor.capture()
+    
+    def test_imu_capture_before_open(self):
+        """IMU传感器未打开时捕获应报错"""
+        imu = IMUSensor()
+        with self.assertRaises(RuntimeError):
+            imu.capture()
+    
+    def test_multiple_context_manager_usage(self):
+        """多次使用上下文管理器"""
+        for i in range(3):
+            tactile = TactileArray(array_size=(8, 8), sensor_id=f"test_{i}")
+            with tactile:
+                frame = tactile.capture()
+                self.assertIsInstance(frame, TactileFrame)
+            # 退出后应该关闭
+            self.assertFalse(tactile._is_opened)
+
+
+class TestAGVSensorSpecComplete(unittest.TestCase):
+    """AGV五级规格完整性验证"""
+    
+    def test_stereo_spec_all_grades(self):
+        """验证所有视觉等级规格"""
+        from sensors.vision import get_stereo_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_stereo_spec(grade)
+            self.assertIn('baseline_mm', spec)
+            self.assertIn('fov', spec)
+            self.assertIn('range_m', spec)
+    
+    def test_audio_spec_all_grades(self):
+        """验证所有听觉等级规格"""
+        from sensors.audio import get_audio_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_audio_spec(grade)
+            self.assertIn('channels', spec)
+            self.assertIn('sr', spec)
+    
+    def test_tactile_spec_all_grades(self):
+        """验证所有触觉等级规格"""
+        from sensors.tactile import get_tactile_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_tactile_spec(grade)
+            self.assertIn('array', spec)
+            self.assertIn('freq_hz', spec)
+            self.assertIn('res', spec)
+    
+    def test_force_spec_all_grades(self):
+        """验证所有力觉等级规格"""
+        from sensors.force import get_force_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_force_spec(grade)
+            self.assertIn('axes', spec)
+            self.assertIn('force_range', spec)
+            self.assertIn('sampling_hz', spec)
+    
+    def test_imu_spec_all_grades(self):
+        """验证所有IMU等级规格"""
+        from sensors.imu import get_imu_spec
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_imu_spec(grade)
+            self.assertIn('type', spec)
+            self.assertIn('accel_range', spec)
+            self.assertIn('gyro_range', spec)
+            self.assertIn('sample_hz', spec)
+            self.assertIn('noise_density', spec)
+
+
+class TestSensorTimingConsistency(unittest.TestCase):
+    """传感器时序一致性测试"""
+    
+    def test_imu_frame_id_incrementing(self):
+        """IMU帧ID应该递增"""
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        
+        prev_id = -1
+        for _ in range(20):
+            frame = imu.capture()
+            self.assertGreater(frame.frame_id, prev_id)
+            prev_id = frame.frame_id
+        
+        imu.close()
+    
+    def test_tactile_frame_id_incrementing(self):
+        """触觉帧ID应该递增"""
+        tactile = TactileArray(array_size=(8, 8))
+        tactile.open()
+        
+        prev_id = -1
+        for _ in range(20):
+            frame = tactile.capture()
+            self.assertGreater(frame.frame_id, prev_id)
+            prev_id = frame.frame_id
+        
+        tactile.close()
+    
+    def test_force_wrench_id_incrementing(self):
+        """力矩ID应该递增"""
+        sensor = ForceTorqueSensor()
+        sensor.open()
+        
+        prev_id = -1
+        for _ in range(20):
+            wrench = sensor.capture()
+            self.assertGreater(wrench.frame_id, prev_id)
+            prev_id = wrench.frame_id
+        
+        sensor.close()
+    
+    def test_timestamp_monotonically_increasing(self):
+        """时间戳应该单调递增"""
+        cam = BinocularCamera()
+        mic = BinauralMic()
+        tactile = TactileArray()
+        
+        cam.open()
+        mic.open()
+        tactile.open()
+        
+        prev_cam_ts = -1
+        prev_mic_ts = -1
+        prev_tac_ts = -1
+        
+        for _ in range(10):
+            cam_frame = cam.capture()
+            mic_frame = mic.capture()
+            tac_frame = tactile.capture()
+            
+            self.assertGreaterEqual(cam_frame.timestamp, prev_cam_ts)
+            self.assertGreaterEqual(mic_frame.timestamp, prev_mic_ts)
+            self.assertGreaterEqual(tac_frame.timestamp, prev_tac_ts)
+            
+            prev_cam_ts = cam_frame.timestamp
+            prev_mic_ts = mic_frame.timestamp
+            prev_tac_ts = tac_frame.timestamp
+        
+        cam.close()
+        mic.close()
+        tactile.close()

@@ -283,7 +283,13 @@ class ForceTorqueSensor:
         raw = np.concatenate([force, torque])
         calibrated = raw * self.calibration.scale + self.calibration.bias
         
-        wrench = Wrench.from_vector(calibrated, sensor_id=self.sensor_id)
+        wrench = Wrench.from_vector(
+            calibrated,
+            timestamp=t,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+        self._frame_id += 1
         self._last_wrench = wrench
         self._wrench_history.append(wrench)
         

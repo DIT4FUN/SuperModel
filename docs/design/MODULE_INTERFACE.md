@@ -3538,3 +3538,417 @@ coord.assign_tasks([
 *最后更新: 2026-03-30*
 
 **2026-03-30 v1.6.0**: 新增第28节多智能体协调控制模块 (multi_agent.py)，包含 MultiAgentCoordinator 编队控制、CollisionRisk 碰撞检测、FormationType 编队类型、分布式任务分配，支持 L/XL/XXL 三级协调能力。
+
+---
+
+## 第29节: 完整传感器-控制集成流水线
+
+### 29.1 端到端传感器融合流水线
+
+```python
+"""
+SuperModel 完整传感器-控制集成流水线
+=====================================
+
+本节描述从多模态传感数据采集到运动控制的完整闭环流程。
+适用于 S/M/L/XL/XXL 所有AGV等级。
+"""
+
+from sensors.vision import BinocularCamera, DepthProcessor
+from sensors.audio import BinauralMic, SoundLocalizer
+from sensors.tactile import TactileArray, PressureProcessor
+from sensors.force import ForceTorqueSensor, WrenchProcessor
+from sensors.imu import IMUSensor, PoseEstimator
+from sensors.manager import SensorManager, SensorManagerConfig
+from perception.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+from control.motion import MotionController, ControlMode
+from control.impedance import ImpedanceController, ImpedanceParams
+from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel
+from simulation.environment import RobotSimulator, SimConfig
+
+
+class SuperModelPipeline:
+    """
+    SuperModel 完整流水线
+    
+    整合所有传感器模块、融合网络和控制模块，
+    实现从感知到控制的完整闭环。
+    
+    使用示例:
+        pipeline = SuperModelPipeline(grade='M')
+        pipeline.open_all()
+        
+        for step in range(1000):
+            # 1. 采集多模态传感器数据
+            sensor_data = pipeline.capture_all()
+            
+            # 2. 跨模态融合
+            fused = pipeline.fuse(sensor_data)
+            
+            # 3. 认知决策
+            action = pipeline.decide(fused)
+            
+            # 4. 安全检查
+            safe_action = pipeline.safety_check(action, sensor_data)
+            
+            # 5. 执行控制
+            result = pipeline.execute(safe_action)
+            
+            # 6. 仿真推进
+            pipeline.step(dt=0.01)
+        
+        pipeline.close_all()
+    """
+    
+    def __init__(
+        self,
+        grade: str = 'M',
+        enable_vision: bool = True,
+        enable_audio: bool = True,
+        enable_tactile: bool = True,
+        enable_force: bool = True,
+        enable_imu: bool = True,
+        fusion_strategy: str = 'hybrid',
+        safety_level: str = 'standard'
+    ):
+        self.grade = grade
+        self.enable_vision = enable_vision
+        self.enable_audio = enable_audio
+        self.enable_tactile = enable_tactile
+        self.enable_force = enable_force
+        self.enable_imu = enable_imu
+        
+        # 传感器管理器
+        self.sensor_manager = SensorManager(
+            config=SensorManagerConfig(grade=grade)
+        )
+        
+        # 融合网络
+        self.fusion_config = FusionConfig(
+            strategy=FusionStrategy[fusion_strategy.upper()]
+        )
+        self.fusion = CrossModalFusion(self.fusion_config)
+        
+        # 控制模块
+        self.motion_ctrl = MotionController(num_joints=6)
+        self.impedance_ctrl = ImpedanceController(ImpedanceParams.default_6d())
+        
+        # 安全控制器
+        self.safety = SafetyController(
+            config=SafetyConfig(safety_level=SafetyLevel[safety_level.upper()])
+        )
+        
+        # 仿真环境
+        self.sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
+        
+        self._is_opened = False
+    
+    def open_all(self):
+        """打开所有模块"""
+        self.sensor_manager.open_all()
+        self.fusion.eval()  # 推理模式
+        self._is_opened = True
+    
+    def close_all(self):
+        """关闭所有模块"""
+        self.sensor_manager.close_all()
+        self._is_opened = False
+    
+    def capture_all(self) -> dict:
+        """采集所有启用传感器的数据"""
+        return self.sensor_manager.capture_all()
+    
+    def fuse(self, sensor_data: dict):
+        """跨模态融合"""
+        import torch
+        
+        # 构建 MultimodalInput
+        multimodal = MultimodalInput()
+        
+        if self.enable_vision and 'stereo_frame' in sensor_data:
+            frame = sensor_data['stereo_frame']
+            # 简化: 使用深度图统计特征
+            depth = self.sensor_manager.depth_proc.filter_depth(
+                frame.disparity_map, min_dist=0.1, max_dist=10.0
+            )
+            feat = torch.from_numpy(depth.flatten()[:512]).float().unsqueeze(0)
+            multimodal.vision = feat
+        
+        if self.enable_audio and 'audio_frame' in sensor_data:
+            frame = sensor_data['audio_frame']
+            feat = torch.from_numpy(frame.left_channel[:128]).float().unsqueeze(0)
+            multimodal.audio = feat
+        
+        if self.enable_tactile and 'tactile_frame' in sensor_data:
+            frame = sensor_data['tactile_frame']
+            feat = torch.from_numpy(frame.pressure_map.flatten()[:64]).float().unsqueeze(0)
+            multimodal.tactile = feat
+        
+        if self.enable_force and 'wrench' in sensor_data:
+            wrench = sensor_data['wrench']
+            feat = torch.from_numpy(wrench.to_vector()[:32]).float().unsqueeze(0)
+            multimodal.force = feat
+        
+        if self.enable_imu and 'imu_frame' in sensor_data:
+            frame = sensor_data['imu_frame']
+            feat = torch.cat([
+                torch.from_numpy(frame.accel),
+                torch.from_numpy(frame.gyro)
+            ]).float().unsqueeze(0)
+            multimodal.imu = feat
+        
+        # 融合前向传播
+        with torch.no_grad():
+            fused = self.fusion(multimodal)
+        
+        return fused
+    
+    def decide(self, fused_features):
+        """基于融合特征进行认知决策"""
+        # 简化: 返回零动作
+        return np.zeros(6)
+    
+    def safety_check(self, action, sensor_data):
+        """安全检查"""
+        from control.safety_controller import JointStateSnapshot
+        
+        # 构建关节状态快照
+        if 'joint_pos' in sensor_data:
+            snapshot = JointStateSnapshot(
+                joint_positions=sensor_data['joint_pos'],
+                joint_velocities=sensor_data.get('joint_vel', np.zeros(6)),
+                joint_torques=sensor_data.get('joint_tor', np.zeros(6)),
+                external_wrenches=sensor_data.get('wrench', None),
+                timestamp=sensor_data.get('timestamp', 0.0)
+            )
+            result = self.safety.check(snapshot)
+            if not result.is_safe:
+                return np.zeros(6)  # 紧急停止
+        
+        return action
+    
+    def execute(self, action):
+        """执行控制"""
+        return self.motion_ctrl.compute_joint_torque(target_position=action)
+    
+    def step(self, dt: float = 0.01):
+        """仿真步进"""
+        return self.sim.step(np.zeros(6))
+    
+    def __enter__(self):
+        self.open_all()
+        return self
+    
+    def __exit__(self, *args):
+        self.close_all()
+
+
+class MultimodalDataLogger:
+    """
+    多模态数据记录器
+    
+    用于记录和回放传感器数据，
+    支持离线分析和仿真。
+    """
+    
+    def __init__(self, save_dir: str = "./logs"):
+        self.save_dir = save_dir
+        self.episodes = []
+        self.current_episode = []
+    
+    def start_episode(self, episode_id: str):
+        """开始记录一个episode"""
+        self.current_episode = []
+        self.episode_id = episode_id
+    
+    def log_frame(self, sensor_data: dict):
+        """记录一帧传感器数据"""
+        import time
+        self.current_episode.append({
+            'timestamp': time.time(),
+            'data': sensor_data
+        })
+    
+    def end_episode(self):
+        """结束并保存episode"""
+        self.episodes.append({
+            'id': self.episode_id,
+            'frames': self.current_episode,
+            'num_frames': len(self.current_episode)
+        })
+        self.current_episode = []
+
+
+class SensorImuFusionFilter:
+    """
+    传感器-IMU紧耦合滤波
+    
+    将视觉里程计、IMU、编码器数据进行紧耦合融合，
+    提供高精度位姿估计。
+    
+    方法:
+    - 扩展卡尔曼滤波 (EKF)
+    - 滑窗优化 (Sliding Window Optimization)
+    - 因子图优化 (Factor Graph)
+    """
+    
+    def __init__(
+        self,
+        method: str = 'ekf',
+        state_dim: int = 15,  # 位置(3) + 速度(3) + 姿态(4) + 偏置(6)
+        process_noise: np.ndarray = None,
+        measurement_noise: np.ndarray = None
+    ):
+        self.method = method
+        self.state_dim = state_dim
+        
+        # 默认噪声参数 (AGV-M级)
+        if process_noise is None:
+            self.process_noise = np.diag([0.01]*3 + [0.01]*3 + [0.001]*4 + [0.0001]*6)
+        if measurement_noise is None:
+            self.measurement_noise = np.diag([0.05]*3 + [0.01]*4)
+        
+        self.state = np.zeros(state_dim)
+        self.covariance = np.eye(state_dim)
+        self._initialized = False
+    
+    def initialize(self, initial_pose: np.ndarray):
+        """初始化滤波器"""
+        self.state[:3] = initial_pose[:3]
+        self.state[6:10] = initial_pose[3:7]  # 四元数
+        self._initialized = True
+    
+    def predict(self, imu_data: np.ndarray, dt: float):
+        """IMU预测步骤"""
+        if not self._initialized:
+            return
+        
+        # 状态预测 (简化的运动模型)
+        self.state[0:3] += self.state[3:6] * dt  # 位置更新
+        # ... 完整实现需要IMU运动学积分
+    
+    def update(self, measurement: np.ndarray, measurement_type: str):
+        """测量更新步骤"""
+        if not self._initialized:
+            return
+        
+        if measurement_type == 'vision':
+            # 视觉里程计测量
+            pass
+        elif measurement_type == 'encoder':
+            # 编码器测量
+            pass
+        # ... 卡尔曼更新公式
+    
+    def get_pose(self) -> np.ndarray:
+        """获取当前位姿"""
+        return self.state.copy()
+
+
+# AGV五级流水线配置模板
+
+AGV_PIPELINE_CONFIGS = {
+    'S': {
+        'enable_vision': True,
+        'enable_audio': True,
+        'enable_tactile': False,
+        'enable_force': False,
+        'enable_imu': True,
+        'fusion_strategy': 'late',
+        'safety_level': 'standard',
+        'control_rate': 50,  # Hz
+    },
+    'M': {
+        'enable_vision': True,
+        'enable_audio': True,
+        'enable_tactile': True,
+        'enable_force': True,
+        'enable_imu': True,
+        'fusion_strategy': 'hybrid',
+        'safety_level': 'standard',
+        'control_rate': 100,
+    },
+    'L': {
+        'enable_vision': True,
+        'enable_audio': True,
+        'enable_tactile': True,
+        'enable_force': True,
+        'enable_imu': True,
+        'fusion_strategy': 'hybrid',
+        'safety_level': 'enhanced',
+        'control_rate': 200,
+    },
+    'XL': {
+        'enable_vision': True,
+        'enable_audio': True,
+        'enable_tactile': True,
+        'enable_force': True,
+        'enable_imu': True,
+        'fusion_strategy': 'early',
+        'safety_level': 'enhanced',
+        'control_rate': 500,
+    },
+    'XXL': {
+        'enable_vision': True,
+        'enable_audio': True,
+        'enable_tactile': True,
+        'enable_force': True,
+        'enable_imu': True,
+        'fusion_strategy': 'early',
+        'safety_level': 'maximum',
+        'control_rate': 1000,
+    },
+}
+
+
+def get_pipeline_config(grade: str) -> dict:
+    """获取AGV指定等级的流水线配置"""
+    return AGV_PIPELINE_CONFIGS.get(grade, AGV_PIPELINE_CONFIGS['M'])
+
+
+# 使用示例
+
+"""
+# 1. 创建流水线
+config = get_pipeline_config('M')
+pipeline = SuperModelPipeline(**config)
+
+# 2. 打开所有模块
+pipeline.open_all()
+
+# 3. 主循环
+for episode in range(10):
+    pipeline.start_episode(f"episode_{episode}")
+    
+    for step in range(1000):
+        # 采集
+        sensor_data = pipeline.capture_all()
+        
+        # 融合
+        fused = pipeline.fuse(sensor_data)
+        
+        # 决策
+        action = pipeline.decide(fused)
+        
+        # 安全检查
+        safe_action = pipeline.safety_check(action, sensor_data)
+        
+        # 执行
+        torques = pipeline.execute(safe_action)
+        
+        # 仿真步进
+        state = pipeline.step(dt=0.01)
+        
+        # 记录
+        pipeline.log_frame(sensor_data)
+    
+    pipeline.end_episode()
+
+# 4. 关闭
+pipeline.close_all()
+"""
+
+*文档版本: v1.9.0*
+*最后更新: 2026-03-31*
+
+**2026-03-31 v1.9.0**: 新增第29节完整传感器-控制集成流水线，包含 SuperModelPipeline 端到端闭环、MultimodalDataLogger 数据记录器、SensorImuFusionFilter 紧耦合滤波、AGV五级流水线配置模板 (S/M/L/XL/XXL)。
