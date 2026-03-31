@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-791%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-830%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -32,7 +32,7 @@
 | `control/` | 运动控制 + 多AGV协调 (PID/阻抗/技能库/规划/编队) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**791项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**830项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -353,8 +353,8 @@ SuperModel/
 │   │   └── multi_agent.py      # 多AGV协调控制 (L/XL/XXL)
 │   └── simulation/         # 仿真环境
 │       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
-├── tests/                   # 791 项测试全部通过
-│   ├── sensor_tests.py      # 传感器 (140 tests)
+├── tests/                   # 830 项测试全部通过
+│   ├── sensor_tests.py      # 传感器 (181 tests)
 │   ├── fusion_tests.py      # 融合网络 (86 tests)
 │   ├── sensorimotor_tests.py # 传感器-执行器融合 (19 tests)
 │   ├── control_tests.py     # 控制模块 (110 tests)
@@ -401,13 +401,15 @@ SuperModel/
 
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
-| sensor_tests.py | 140 | ✅ 全部通过 |
+| sensor_tests.py | 181 | ✅ 全部通过 |
 | fusion_tests.py | 86 | ✅ 全部通过 |
-| control_tests.py | 174 | ✅ 全部通过 |
+| control_tests.py | 209 | ✅ 全部通过 |
 | ros2_interface_tests.py | 44 | ✅ 全部通过 |
 | integration_tests.py | 20 | ✅ 全部通过 |
+| integration_pipeline_tests.py | 21 | ✅ 全部通过 |
 | encoder_tests.py | 43 | ✅ 全部通过 |
-| sensorimotor_tests.py | 19 | ✅ 全部通过 |
+| sensorimotor_tests.py | 13 | ✅ 全部通过 |
+| scene_tests.py | 26 | ✅ 全部通过 |
 | test_encoders.py | 10 | ✅ 全部通过 |
 | test_dreamer.py | 7 | ✅ 全部通过 |
 | test_world_model.py | 8 | ✅ 全部通过 |
@@ -416,7 +418,7 @@ SuperModel/
 | mpc_tests.py | 25 | ✅ 全部通过 |
 | test_sensor_manager.py | 27 | ✅ 全部通过 |
 | multi_agent_tests.py | 34 | ✅ 全部通过 |
-| **总计** | **791** | ✅ **全部通过** |
+| **总计** | **830** | ✅ **全部通过** |
 
 ## 技术栈
 
