@@ -57,6 +57,18 @@ from .teleop import (
     SafetyMonitor, LatencyCompensator, SharedControlBlender,
     AGV_TELEOP_GRADES, get_teleop_spec
 )
+from .tactile_control import (
+    TactileServoController, TactileServoParams, GraspQualityController,
+    AGV_TACTILE_CONTROL_GRADES, get_tactile_control_spec
+)
+from .force_control import (
+    ForceController, ForceControlParams, HybridForcePositionController,
+    AGV_FORCE_CONTROL_GRADES, get_force_control_spec
+)
+from .imu_control import (
+    AttitudeStabilizer, IMUControlParams, MotionEstimator,
+    AGV_IMU_CONTROL_GRADES, get_imu_control_spec
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -85,5 +97,11 @@ __all__ = [
     'TeleoperationController', 'TeleopMode', 'TeleopState', 'AuthorityLevel',
     'MasterState', 'SlaveState', 'TeleopCommand', 'TeleopConfig', 'TeleopMetrics',
     'SafetyMonitor', 'LatencyCompensator', 'SharedControlBlender',
-    'AGV_TELEOP_GRADES', 'get_teleop_spec'
+    'AGV_TELEOP_GRADES', 'get_teleop_spec',
+    'TactileServoController', 'TactileServoParams', 'GraspQualityController',
+    'AGV_TACTILE_CONTROL_GRADES', 'get_tactile_control_spec',
+    'ForceController', 'ForceControlParams', 'HybridForcePositionController',
+    'AGV_FORCE_CONTROL_GRADES', 'get_force_control_spec',
+    'AttitudeStabilizer', 'IMUControlParams', 'MotionEstimator',
+    'AGV_IMU_CONTROL_GRADES', 'get_imu_control_spec',
 ]
