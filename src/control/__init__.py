@@ -14,6 +14,7 @@ SuperModel 控制模块
 - agv: AGV运动学/动力学控制
 - multi_agent: 多智能体协调控制 (L/XL/XXL)
 - teleop: 遥操作控制 (主从同步/共享控制/力反馈)
+- supervisor: 控制子系统监管 (生命周期/模式切换/故障恢复)
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand, AdaptivePIDController
@@ -69,6 +70,11 @@ from .imu_control import (
     AttitudeStabilizer, IMUControlParams, MotionEstimator,
     AGV_IMU_CONTROL_GRADES, get_imu_control_spec
 )
+from .supervisor import (
+    ControlSupervisor, ControllerInterface, SupervisorConfig,
+    ControlState, ControllerMetrics, ControlMode, HealthStatus,
+    MockJointController, MockCartesianController, MockImpedanceController
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -104,4 +110,7 @@ __all__ = [
     'AGV_FORCE_CONTROL_GRADES', 'get_force_control_spec',
     'AttitudeStabilizer', 'IMUControlParams', 'MotionEstimator',
     'AGV_IMU_CONTROL_GRADES', 'get_imu_control_spec',
+    'ControlSupervisor', 'ControllerInterface', 'SupervisorConfig',
+    'ControlState', 'ControllerMetrics', 'ControlMode', 'HealthStatus',
+    'MockJointController', 'MockCartesianController', 'MockImpedanceController',
 ]
