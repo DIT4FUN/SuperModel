@@ -2,6 +2,22 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.21.0] - 2026-04-01
+
+### Added
+- **全模块完整性确认** ✅
+  - 触觉传感器: 电容/电阻/压电/光学全类型, AGV五级规格 (S:8x8@50Hz → XXL:48x48@1000Hz)
+  - 力觉传感器: 六维力矩传感, 偏置校准/重力补偿/负载估计, AGV五级 (S:3轴@100Hz → XXL:6轴@5000Hz)
+  - IMU传感器: Madgwick/互补滤波姿态估计, AGV五级 (S:100Hz@400μg → XXL:2000Hz@10μg)
+  - 控制模块: tactile_control, force_control, imu_control, mpc, planner等18个子模块
+  - 传感器管理器: 统一同步/异步采集, 健康监控
+  - 神经网络编码器: CNN/RNN/注意力/Language编码器
+- **测试用例验证**: sensor_tests.py(197项), fusion_tests.py(104项), **全1019项通过**
+- **设计文档**: MODULE_INTERFACE.md完整接口, AGV五级规格表完整覆盖
+
+### Changed
+- PROGRESS.md更新: v1.21.0阶段完成确认
+
 ## [1.20.0] - 2026-03-31
 
 ### Added
