@@ -357,3 +357,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - 自主学习框架
 - 运动控制基础模块
 - 仿真环境基础
+
+## [1.5.0] - 2026-03-31 13:00
+
+### Added
+- 触觉传感器模块 (tactile.py): 电子皮肤触觉阵列，支持压力/温度/接近觉/滑移检测
+- 力觉传感器模块 (force.py): 六维力矩传感器，支持ATI/关节/指尖力传感器
+- IMU传感器模块 (imu.py): 惯性测量单元，支持Madgwick/Mahony姿态解算
+- AGV五级规格表: 完整覆盖感知/融合/认知/执行/学习五大子系统
+- sensor_tests.py: 覆盖全部传感器模块的2575行测试用例
+- fusion_tests.py: 覆盖跨模态融合网络的1221行测试用例
+
+### Changed
+- 传感器模块接口统一化
+- 控制模块完善: motion/impedance/mpc/agv/safety
+
+### Testing
+- 279 tests passed (sensor_tests.py + fusion_tests.py)
