@@ -833,3 +833,152 @@ class HierarchicalPlanner(TaskPlanner):
             metadata["validation_reason"] = reason
         
         return leaf_tasks, metadata
+
+
+# =============================================================================
+# AGV五级任务规划规格
+# =============================================================================
+
+class PlannerGrade(Enum):
+    """规划器等级"""
+    S = "S"   # 教育/实验
+    M = "M"   # 标准助手
+    L = "L"   # 专业工业
+    XL = "XL"  # 高性能
+    XXL = "XXL"  # 旗舰全功能
+
+
+@dataclass
+class PlannerSpec:
+    """任务规划器规格参数"""
+    grade: PlannerGrade
+    max_tasks: int                   # 最大任务队列长度
+    max_depth: int                   # HTN最大分解深度
+    planning_timeout: float          # 规划超时时间 (秒)
+    replan_max_attempts: int        # 最大重规划次数
+    action_library_size: int        # 动作库大小
+    supports_htn: bool               # 支持HTN规划
+    supports_replan: bool           # 支持重规划
+    supports_multi_agent: bool      # 支持多智能体协调
+    supports_temporal: bool         # 支持时序约束
+    supports_conditional: bool      # 支持条件分支
+    control_frequency: float         # 控制频率 Hz
+    
+    @classmethod
+    def from_grade(cls, grade: PlannerGrade) -> "PlannerSpec":
+        """从AGV等级获取标准规格"""
+        specs = {
+            PlannerGrade.S: cls(
+                grade=PlannerGrade.S,
+                max_tasks=10, max_depth=3, planning_timeout=1.0,
+                replan_max_attempts=1, action_library_size=8,
+                supports_htn=False, supports_replan=False,
+                supports_multi_agent=False, supports_temporal=False,
+                supports_conditional=False, control_frequency=10.0
+            ),
+            PlannerGrade.M: cls(
+                grade=PlannerGrade.M,
+                max_tasks=50, max_depth=5, planning_timeout=5.0,
+                replan_max_attempts=3, action_library_size=20,
+                supports_htn=True, supports_replan=True,
+                supports_multi_agent=False, supports_temporal=False,
+                supports_conditional=False, control_frequency=20.0
+            ),
+            PlannerGrade.L: cls(
+                grade=PlannerGrade.L,
+                max_tasks=200, max_depth=7, planning_timeout=10.0,
+                replan_max_attempts=5, action_library_size=50,
+                supports_htn=True, supports_replan=True,
+                supports_multi_agent=True, supports_temporal=True,
+                supports_conditional=True, control_frequency=50.0
+            ),
+            PlannerGrade.XL: cls(
+                grade=PlannerGrade.XL,
+                max_tasks=500, max_depth=10, planning_timeout=20.0,
+                replan_max_attempts=10, action_library_size=100,
+                supports_htn=True, supports_replan=True,
+                supports_multi_agent=True, supports_temporal=True,
+                supports_conditional=True, control_frequency=100.0
+            ),
+            PlannerGrade.XXL: cls(
+                grade=PlannerGrade.XXL,
+                max_tasks=1000, max_depth=15, planning_timeout=60.0,
+                replan_max_attempts=20, action_library_size=200,
+                supports_htn=True, supports_replan=True,
+                supports_multi_agent=True, supports_temporal=True,
+                supports_conditional=True, control_frequency=200.0
+            ),
+        }
+        return specs[grade]
+
+
+def get_planner_spec(grade: str) -> PlannerSpec:
+    """获取AGV指定等级的任务规划规格"""
+    try:
+        g = PlannerGrade(grade)
+    except ValueError:
+        g = PlannerGrade.M
+    return PlannerSpec.from_grade(g)
+
+
+# =============================================================================
+# 多智能体协调规划规格
+# =============================================================================
+
+@dataclass
+class MultiAgentPlannerSpec:
+    """多智能体协调规划规格"""
+    grade: PlannerGrade
+    max_agents: int                # 最大智能体数量
+    max_formations: int            # 最大编队数量
+    coordination_frequency: float    # 协调频率 Hz
+    conflict_resolution: str        # 冲突解决策略: 'priority' / 'negotiation' / 'auction'
+    supports_formation: bool       # 支持编队控制
+    supports_task_allocation: bool  # 支持任务分配
+    supports_collision_avoid: bool # 支持碰撞规避
+    supports_flocking: bool         # 支持蜂群控制
+    
+    @classmethod
+    def from_grade(cls, grade: PlannerGrade) -> "MultiAgentPlannerSpec":
+        specs = {
+            PlannerGrade.S: cls(
+                grade=PlannerGrade.S, max_agents=2, max_formations=1,
+                coordination_frequency=5.0, conflict_resolution='priority',
+                supports_formation=False, supports_task_allocation=False,
+                supports_collision_avoid=True, supports_flocking=False
+            ),
+            PlannerGrade.M: cls(
+                grade=PlannerGrade.M, max_agents=5, max_formations=2,
+                coordination_frequency=10.0, conflict_resolution='priority',
+                supports_formation=True, supports_task_allocation=True,
+                supports_collision_avoid=True, supports_flocking=False
+            ),
+            PlannerGrade.L: cls(
+                grade=PlannerGrade.L, max_agents=20, max_formations=5,
+                coordination_frequency=20.0, conflict_resolution='negotiation',
+                supports_formation=True, supports_task_allocation=True,
+                supports_collision_avoid=True, supports_flocking=True
+            ),
+            PlannerGrade.XL: cls(
+                grade=PlannerGrade.XL, max_agents=50, max_formations=10,
+                coordination_frequency=50.0, conflict_resolution='negotiation',
+                supports_formation=True, supports_task_allocation=True,
+                supports_collision_avoid=True, supports_flocking=True
+            ),
+            PlannerGrade.XXL: cls(
+                grade=PlannerGrade.XXL, max_agents=200, max_formations=20,
+                coordination_frequency=100.0, conflict_resolution='auction',
+                supports_formation=True, supports_task_allocation=True,
+                supports_collision_avoid=True, supports_flocking=True
+            ),
+        }
+        return specs.get(grade, specs[PlannerGrade.M])
+
+
+def get_multi_agent_planner_spec(grade: str) -> MultiAgentPlannerSpec:
+    """获取AGV指定等级的多智能体规划规格"""
+    try:
+        g = PlannerGrade(grade)
+    except ValueError:
+        g = PlannerGrade.M
+    return MultiAgentPlannerSpec.from_grade(g)

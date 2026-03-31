@@ -371,3 +371,101 @@ PRESET_GRASP_CONFIGS = {
         "force_threshold": 3.0
     }
 }
+
+
+# =============================================================================
+# AGV五级技能库规格
+# =============================================================================
+
+class SkillGrade(Enum):
+    """技能库等级"""
+    S = "S"   # 教育/实验
+    M = "M"   # 标准助手
+    L = "L"   # 专业工业
+    XL = "XL"  # 高性能
+    XXL = "XXL"  # 旗舰全功能
+
+
+@dataclass
+class SkillLibrarySpec:
+    """技能库规格参数"""
+    grade: SkillGrade
+    max_primitive_skills: int       # 最大基础技能数量
+    max_composite_skills: int       # 最大组合技能数量
+    max_learning_rate: float        # 最大学习率
+    supports_adaptation: bool        # 支持技能自适应
+    supports_learning: bool         # 支持技能学习
+    supports_composition: bool      # 支持技能组合
+    supports_imitation: bool        # 支持模仿学习
+    skill_library_size: int         # 技能库总容量
+    control_frequency: float        # 技能执行频率 Hz
+    
+    @classmethod
+    def from_grade(cls, grade: SkillGrade) -> "SkillLibrarySpec":
+        specs = {
+            SkillGrade.S: cls(
+                grade=SkillGrade.S,
+                max_primitive_skills=5, max_composite_skills=2,
+                max_learning_rate=0.001, supports_adaptation=False,
+                supports_learning=False, supports_composition=False,
+                supports_imitation=False, skill_library_size=5,
+                control_frequency=10.0
+            ),
+            SkillGrade.M: cls(
+                grade=SkillGrade.M,
+                max_primitive_skills=20, max_composite_skills=10,
+                max_learning_rate=0.01, supports_adaptation=True,
+                supports_learning=False, supports_composition=True,
+                supports_imitation=False, skill_library_size=30,
+                control_frequency=20.0
+            ),
+            SkillGrade.L: cls(
+                grade=SkillGrade.L,
+                max_primitive_skills=50, max_composite_skills=30,
+                max_learning_rate=0.05, supports_adaptation=True,
+                supports_learning=True, supports_composition=True,
+                supports_imitation=True, skill_library_size=80,
+                control_frequency=50.0
+            ),
+            SkillGrade.XL: cls(
+                grade=SkillGrade.XL,
+                max_primitive_skills=100, max_composite_skills=50,
+                max_learning_rate=0.1, supports_adaptation=True,
+                supports_learning=True, supports_composition=True,
+                supports_imitation=True, skill_library_size=150,
+                control_frequency=100.0
+            ),
+            SkillGrade.XXL: cls(
+                grade=SkillGrade.XXL,
+                max_primitive_skills=200, max_composite_skills=100,
+                max_learning_rate=0.2, supports_adaptation=True,
+                supports_learning=True, supports_composition=True,
+                supports_imitation=True, skill_library_size=300,
+                control_frequency=200.0
+            ),
+        }
+        return specs[grade]
+
+
+def get_skill_library_spec(grade: str) -> SkillLibrarySpec:
+    """获取AGV指定等级的技能库规格"""
+    try:
+        g = SkillGrade(grade)
+    except ValueError:
+        g = SkillGrade.M
+    return SkillLibrarySpec.from_grade(g)
+
+
+# AGV五级技能库等级规格快速表
+AGV_SKILL_GRADES = {
+    'S':  {'primitive': 5,   'composite': 2,   'learning': False, 'adaptation': False, 'composition': False},
+    'M':  {'primitive': 20,  'composite': 10,  'learning': False, 'adaptation': True,  'composition': True},
+    'L':  {'primitive': 50,  'composite': 30,  'learning': True,  'adaptation': True,  'composition': True},
+    'XL': {'primitive': 100, 'composite': 50,  'learning': True,  'adaptation': True,  'composition': True},
+    'XXL': {'primitive': 200, 'composite': 100, 'learning': True,  'adaptation': True,  'composition': True},
+}
+
+
+def get_skill_spec(grade: str) -> dict:
+    """获取AGV指定等级的技能规格"""
+    return AGV_SKILL_GRADES.get(grade, AGV_SKILL_GRADES['M'])

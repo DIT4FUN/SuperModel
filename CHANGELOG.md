@@ -2,6 +2,16 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.24.0] - 2026-04-01
+
+### Added
+- **控制模块AGV五级规格补全** (`src/control/planner.py`, `src/control/skill.py`)
+  - `PlannerSpec` + `PlannerGrade` (S/M/L/XL/XXL): HTN深度/重规划/动作库/时序约束
+  - `MultiAgentPlannerSpec`: 多智能体协调规划规格 (最大智能体数/编队/冲突解决)
+  - `SkillLibrarySpec` + `SkillGrade` (S/M/L/XL/XXL): 基础技能/组合技能/自适应/学习
+  - `get_planner_spec()`, `get_multi_agent_planner_spec()`, `get_skill_spec()`, `get_skill_library_spec()` 快速获取函数
+  - `AGV_SKILL_GRADES` 快速规格对照表
+
 ## [1.23.0] - 2026-04-01
 
 ### Added
