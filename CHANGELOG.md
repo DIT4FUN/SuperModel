@@ -427,7 +427,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 完整AGV五级配置对照表 (S/M/L/XL/XXL)
 
 ### 测试状态
-- 892 项测试全部通过 ✅
+- 895 项测试全部通过 ✅
   - sensor_tests.py: 181 tests ✅
   - fusion_tests.py: 98 tests ✅
   - control_tests.py: 210+ tests ✅
