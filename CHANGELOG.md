@@ -2,6 +2,22 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.22.0] - 2026-04-01
+
+### Added
+- **MODULE_INDEX.md**: 新增项目模块索引文档 (`docs/MODULE_INDEX.md`)
+  - 完整源代码目录树 (`src/sensors/`, `src/control/`, `src/fusion/` 等)
+  - 所有模块功能说明和核心类导航
+  - 测试套件速查 (1019项)
+  - 设计文档导航 (36个Sections)
+  - AGV五级规格速查对照表
+
+### Changed
+- CHANGELOG.md更新: v1.22.0
+
+### Fixed
+- 全1019项测试持续通过 ✅
+
 ## [1.21.0] - 2026-04-01
 
 ### Added
