@@ -445,3 +445,183 @@
 
 *文档版本: v1.0.0*
 *最后更新: 2026-03-30*
+
+---
+
+## 十八、触觉/力觉/IMU传感器详细规格
+
+### 18.1 TactileArray 触觉传感器
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **阵列尺寸** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **传感器类型** | 电阻式 | 电容式 | 压电式 | 光学式 | 多模态融合 |
+| **分辨率 (bit)** | 12 | 12 | 14 | 14 | 16 |
+| **压力范围 (kPa)** | 0-500 | 0-1000 | 0-2000 | 0-5000 | 0-10000 |
+| **采样频率 (Hz)** | 50 | 100 | 200 | 500 | 1000 |
+| **温度感知** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **接近觉** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **滑移检测** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **接口类型** | I2C | SPI | USB HID | USB/Ethernet | EtherCAT |
+| **力分辨率** | 0.1N | 0.05N | 0.02N | 0.01N | 0.005N |
+| **通信接口** | I2C@100kHz | SPI@20MHz | USB HID | Ethernet | EtherCAT |
+
+**触觉关键类:**
+
+```python
+class TactileArray:
+    def open(self) -> bool
+    def close()
+    def capture(self) -> TactileFrame
+    def detect_contacts(self, frame) -> List[TactileContact]
+    def get_slip_signal(self, frame) -> np.ndarray
+    def estimate_grip_quality(self, frame) -> Dict[str, float]
+    def calibrate(self, zero_pressure, known_weights)
+    def __enter__ / __exit__
+
+class PressureProcessor:
+    def filter(self, pressure_map) -> np.ndarray
+    def compensate_baseline(self, pressure_map) -> np.ndarray
+    def compute_force(self, pressure_map, contact_area) -> float
+    def compute_centroid(self, pressure_map) -> Tuple[float, float]
+```
+
+---
+
+### 18.2 ForceTorqueSensor 六维力矩传感器
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **轴数** | 3 | 6 | 6 | 6 | 6 |
+| **力范围 (N)** | ±100 | ±200 | ±500 | ±1000 | ±5000 |
+| **力矩范围 (N·m)** | ±10 | ±20 | ±50 | ±100 | ±500 |
+| **分辨率** | 0.1N | 0.05N | 0.02N | 0.01N | 0.005N |
+| **采样频率 (Hz)** | 100 | 500 | 1000 | 2000 | 5000 |
+| **通信接口** | USB HID | USB/Ethernet | Ethernet | EtherCAT | EtherCAT |
+| **IP配置** | — | 可选 | 可配置 | ✓ | ✓ |
+| **温度补偿** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **工具中心标定** | 基础 | ✓ | ✓ | ✓ | ✓ |
+
+**力觉关键类:**
+
+```python
+class ForceTorqueSensor:
+    def open(self) -> bool
+    def close()
+    def capture(self) -> Wrench  # (Fx, Fy, Fz, Tx, Ty, Tz)
+    def get_wrench(self) -> Optional[Wrench]
+    def detect_contact(self, wrench, threshold) -> ContactState
+    def estimate_payload(self, wrench) -> float
+    def set_tool_center(self, tool_mass, tool_com)
+    def calibrate_bias(self, num_samples)
+    def __enter__ / __exit__
+
+class WrenchProcessor:
+    def filter(self, wrench) -> np.ndarray
+    def remove_outliers(self, wrench, history) -> np.ndarray
+    def estimate_covariance(self, history) -> np.ndarray
+    def compute_force_direction(self, wrench) -> np.ndarray
+```
+
+---
+
+### 18.3 IMUSensor 惯性测量单元
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **传感器型号** | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| **加速度量程 (g)** | ±8 | ±16 | ±24 | ±40 | ±80 |
+| **陀螺量程 (°/s)** | ±1000 | ±2000 | ±4000 | ±4000 | ±8000 |
+| **采样频率 (Hz)** | 100 | 200 | 500 | 1000 | 2000 |
+| **噪声密度 (accel)** | 400 μg/√Hz | 120 μg/√Hz | 60 μg/√Hz | 20 μg/√Hz | 10 μg/√Hz |
+| **噪声密度 (gyro)** | 5e-5 rad/s/√Hz | 3e-6 rad/s/√Hz | 3e-6 rad/s/√Hz | 0.1e-6 rad/s/√Hz | 0.1e-6 rad/s/√Hz |
+| **零偏稳定性** | ±1°/s | ±0.5°/s | ±0.2°/s | ±0.05°/s | ±0.02°/s |
+| **磁力计** | ✗ | MPU9250: ✓ | ✗ | ✓ | ✓ |
+| **接口类型** | I2C@100kHz | SPI@20MHz | SPI@20MHz | SPI@40MHz | SPI@40MHz |
+| **姿态解算** | 互补滤波 | Madgwick | Madgwick | 卡尔曼滤波 | 自适应滤波 |
+
+**IMU关键类:**
+
+```python
+class IMUSensor:
+    def open(self) -> bool
+    def close()
+    def capture(self) -> IMUFrame
+    def self_test(self) -> bool
+    def calibrate_gyro_bias(self, num_samples)
+    def calibrate_accel(self, known_orientation)
+    def __enter__ / __exit__
+
+class PoseEstimator:
+    def update(self, accel, gyro, mag, dt) -> Pose
+    def get_pose(self) -> Pose
+    def get_euler(self) -> np.ndarray  # [roll, pitch, yaw]
+    def get_rotation_matrix(self) -> np.ndarray  # 3x3
+    def integrate_velocity(self, accel, dt) -> Tuple[velocity, position]
+    def reset()
+```
+
+---
+
+## 十九、控制模块五级规格
+
+### 19.1 MotionController 关节运动控制
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **控制频率 (Hz)** | 50 | 100 | 200 | 500 | 1000 |
+| **控制模式** | 位置 | 位置+速度 | 位置+速度+力矩 | +笛卡尔 | +阻抗 |
+| **PID 增益** | 固定 | 可调 | 自适应 | 自适应+学习 | 最优自适应 |
+| **关节数量** | ≤6 | ≤7 | ≤12 | ≤20 | 任意 |
+| **位置精度 (mm)** | 1.0 | 0.5 | 0.1 | 0.05 | 0.01 |
+| **轨迹插值** | 线性 | 五次多项式 | 五次+时间最优 | B样条 | B样条+动力学约束 |
+
+### 19.2 AGVMotionController AGV运动控制
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **驱动类型** | 差速 | 差速 | Mecanum | Mecanum | 全向 |
+| **最大线速度 (m/s)** | 0.5 | 1.0 | 2.0 | 3.0 | 5.0 |
+| **最大角速度 (rad/s)** | 1.5 | 2.0 | 2.5 | 3.0 | 3.5 |
+| **最大线加速度 (m/s²)** | 0.5 | 1.0 | 2.0 | 3.0 | 5.0 |
+| **轨迹跟踪** | PID | Pure Pursuit | Pure Pursuit+前瞻 | 模型预测 | 最优控制 |
+| **原地旋转** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **横向移动** | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+### 19.3 SafetyController 安全监控
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **安全等级** | S | M | L | XL | XXL |
+| **关节限位** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **速度监控** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **碰撞检测** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **看门狗** | ✗ | ✗ | ✗ | ✓ | ✓ |
+| **故障容忍** | ✗ | ✗ | ✗ | ✗ | ✓ |
+| **响应时间 (ms)** | 100 | 50 | 20 | 5 | 1 |
+
+### 19.4 ImpedanceController 阻抗控制
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **阻抗维度** | 1D | 3D | 6D | 6D | 6D+自适应 |
+| **刚度范围 (N/m)** | 0-500 | 0-2000 | 0-5000 | 0-10000 | 0-20000 |
+| **阻尼范围 (N·s/m)** | 0-100 | 0-500 | 0-1000 | 0-2000 | 0-5000 |
+| **力控精度 (N)** | 1.0 | 0.5 | 0.2 | 0.1 | 0.05 |
+| **自适应阻抗** | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+### 19.5 Teleoperation 遥操作
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **控制频率 (Hz)** | 50 | 100 | 200 | 500 | 1000 |
+| **同步模式** | 速度 | 位置 | 位置+力反馈 | 阻抗+预测 | 自适应阻抗 |
+| **延迟补偿** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **碰撞预测** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **安全权限等级** | 2级 | 3级 | 4级 | 4级 | 4级 |
+| **最大反馈力 (N)** | — | 10 | 20 | 30 | 50 |
+
+---
+
+*文档版本: v1.1.0*
+*最后更新: 2026-03-31*

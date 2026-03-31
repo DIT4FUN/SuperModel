@@ -5,6 +5,23 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.9.0] - 2026-03-31
+
+### Added
+- **AGV五级规格表扩充**: 新增触觉/力觉/IMU传感器详细规格 (Section 18)
+  - TactileArray: S/M/L/XL/XXL 五级完整规格，含阵列尺寸/采样率/接口类型
+  - ForceTorqueSensor: 六维力矩五级规格，含力范围/采样频率/通信接口
+  - IMUSensor: 五级IMU规格，含噪声密度/零偏稳定性/姿态解算算法
+- **控制模块五级规格表** (Section 19)
+  - MotionController: 关节控制频率/精度/轨迹插值五级对照
+  - AGVMotionController: 驱动类型/最大速度/轨迹跟踪算法
+  - SafetyController: 安全等级/响应时间/故障容忍能力
+  - ImpedanceController: 阻抗维度/刚度范围/自适应能力
+  - Teleoperation: 遥操作五级完整规格对照
+
+### Changed
+- 全部 791 项测试持续通过
+
 ## [1.8.0] - 2026-03-31
 
 ### Added
