@@ -1363,6 +1363,22 @@ mmi = create_multimodal_input(
 | 跨模态注意力 | num_heads | 4 |
 | 融合投影 | hidden_dim * num_modalities → hidden_dim | 可变 |
 
+### 14.8 跨模态注意力对 (Cross-Modal Attention Pairs)
+
+融合网络实现了所有模态两两之间的跨模态注意力交互:
+
+| 注意力对 | 说明 | 应用场景 |
+|----------|------|----------|
+| `vision_audio` | 视觉-听觉 | 视听联合感知 |
+| `vision_tactile` | 视觉-触觉 | 触觉引导的视觉定位 |
+| `vision_force` | 视觉-力觉 | 力反馈视觉伺服 |
+| `vision_imu` | 视觉-IMU | 姿态辅助视觉里程计 |
+| `audio_tactile` | 听觉-触觉 | 声触联合感知 |
+| `audio_force` | 听觉-力觉 | 碰撞声音检测 |
+| `audio_imu` | 听觉-IMU | 运动声音同步 |
+| `force_imu` | 力觉-IMU | 运动力学融合 |
+| `vision_language` | 视觉-语言 | 视觉语言对齐 |
+
 ---
 
 ## 16. AGV五级规格对照 (增强)

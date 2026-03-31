@@ -5,6 +5,22 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.11.0] - 2026-03-31
+
+### Added
+- **力觉/IMU跨模态注意力融合**: 新增 12 项测试用例
+  - `vision_force_attn`: 视觉-力觉注意力层
+  - `vision_imu_attn`: 视觉-IMU注意力层
+  - `audio_force_attn`: 听觉-力觉注意力层
+  - `audio_imu_attn`: 听觉-IMU注意力层
+  - `force_imu_attn`: 力觉-IMU注意力层
+  - `TestForceIMUCrossModalAttention`: 完整12项力觉/IMU跨模态融合测试
+- **MODULE_INTERFACE.md**: 新增14.8节跨模态注意力对完整列表
+
+### Changed
+- 全部 842 项测试持续通过 (含新增 12 项)
+- 融合网络 CrossModalFusion 新增5组跨模态注意力层
+
 ## [1.10.0] - 2026-03-31
 
 ### Added

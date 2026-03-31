@@ -1087,5 +1087,135 @@ class TestModalityEncoderAdvanced(unittest.TestCase):
             self.assertEqual(out.shape, (4, 256), f"{name} encoder failed")
 
 
+class TestForceIMUCrossModalAttention(unittest.TestCase):
+    """测试力觉/IMU跨模态注意力 (新增)"""
+
+    def test_vision_force_attention_exists(self):
+        """视觉-力觉注意力层应存在"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        self.assertTrue(hasattr(fusion, 'vision_force_attn'))
+        self.assertIsInstance(fusion.vision_force_attn, CrossModalAttention)
+
+    def test_vision_imu_attention_exists(self):
+        """视觉-IMU注意力层应存在"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        self.assertTrue(hasattr(fusion, 'vision_imu_attn'))
+        self.assertIsInstance(fusion.vision_imu_attn, CrossModalAttention)
+
+    def test_audio_force_attention_exists(self):
+        """听觉-力觉注意力层应存在"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        self.assertTrue(hasattr(fusion, 'audio_force_attn'))
+        self.assertIsInstance(fusion.audio_force_attn, CrossModalAttention)
+
+    def test_audio_imu_attention_exists(self):
+        """听觉-IMU注意力层应存在"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        self.assertTrue(hasattr(fusion, 'audio_imu_attn'))
+        self.assertIsInstance(fusion.audio_imu_attn, CrossModalAttention)
+
+    def test_force_imu_attention_exists(self):
+        """力觉-IMU注意力层应存在"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        self.assertTrue(hasattr(fusion, 'force_imu_attn'))
+        self.assertIsInstance(fusion.force_imu_attn, CrossModalAttention)
+
+    def test_vision_force_fusion(self):
+        """视觉-力觉融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        mmi = MultimodalInput(
+            vision=torch.randn(2, 512),
+            force=torch.randn(2, 32)
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (2, 256))
+
+    def test_vision_imu_fusion(self):
+        """视觉-IMU融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        mmi = MultimodalInput(
+            vision=torch.randn(2, 512),
+            imu=torch.randn(2, 64)
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (2, 256))
+
+    def test_audio_force_fusion(self):
+        """听觉-力觉融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        # 使用2D音频 (时间池化后的特征)
+        mmi = MultimodalInput(
+            audio=torch.randn(2, 128),
+            force=torch.randn(2, 32)
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (2, 256))
+
+    def test_audio_imu_fusion(self):
+        """听觉-IMU融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        # 使用2D音频 (时间池化后的特征)
+        mmi = MultimodalInput(
+            audio=torch.randn(2, 128),
+            imu=torch.randn(2, 64)
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (2, 256))
+
+    def test_force_imu_fusion(self):
+        """力觉-IMU融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        mmi = MultimodalInput(
+            force=torch.randn(2, 32),
+            imu=torch.randn(2, 64)
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (2, 256))
+
+    def test_all_six_modalities_fusion(self):
+        """六模态全融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        # 使用与FusionConfig匹配的维度: force_dim=32, imu_dim=64
+        # 音频使用2D (时间池化后的特征)
+        mmi = MultimodalInput(
+            vision=torch.randn(2, 512),
+            audio=torch.randn(2, 128),
+            tactile=torch.randn(2, 64),
+            force=torch.randn(2, 32),
+            imu=torch.randn(2, 64),
+            language=torch.randint(0, 1000, (2, 32))
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (2, 256))
+        self.assertFalse(torch.isnan(out).any())
+        self.assertFalse(torch.isinf(out).any())
+
+    def test_tactile_force_imu_triple_fusion(self):
+        """触觉-力觉-IMU三模态融合应正常工作"""
+        config = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config)
+        # 使用与FusionConfig匹配的维度
+        mmi = MultimodalInput(
+            tactile=torch.randn(4, 64),
+            force=torch.randn(4, 32),
+            imu=torch.randn(4, 64)
+        )
+        out = fusion(mmi)
+        self.assertEqual(out.shape, (4, 256))
+        self.assertFalse(torch.isnan(out).any())
+        self.assertFalse(torch.isinf(out).any())
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -280,6 +280,22 @@ class CrossModalFusion(nn.Module):
         self.audio_tactile_attn = CrossModalAttention(
             config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
         )
+        # 新增: 力觉/IMU跨模态注意力
+        self.vision_force_attn = CrossModalAttention(
+            config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
+        )
+        self.vision_imu_attn = CrossModalAttention(
+            config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
+        )
+        self.audio_force_attn = CrossModalAttention(
+            config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
+        )
+        self.audio_imu_attn = CrossModalAttention(
+            config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
+        )
+        self.force_imu_attn = CrossModalAttention(
+            config.hidden_dim, config.hidden_dim, config.hidden_dim, num_heads=config.num_heads
+        )
         
         # 融合层 (预建不同模态数量的投影，运行时选取)
         self.fusion_proj_1 = nn.Linear(config.hidden_dim, config.hidden_dim)
@@ -360,6 +376,44 @@ class CrossModalFusion(nn.Module):
             v = ensure_3d(features['tactile'])
             out = self.audio_tactile_attn(q, k, v)
             features['audio'] = features['audio'] + squeeze_2d(out)
+        
+        # 新增: 力觉跨模态注意力
+        if 'vision' in features and 'force' in features:
+            q = ensure_3d(features['vision'])
+            k = ensure_3d(features['force'])
+            v = ensure_3d(features['force'])
+            out = self.vision_force_attn(q, k, v)
+            features['vision'] = features['vision'] + squeeze_2d(out)
+            
+        if 'audio' in features and 'force' in features:
+            q = ensure_3d(features['audio'])
+            k = ensure_3d(features['force'])
+            v = ensure_3d(features['force'])
+            out = self.audio_force_attn(q, k, v)
+            features['audio'] = features['audio'] + squeeze_2d(out)
+        
+        # 新增: IMU跨模态注意力
+        if 'vision' in features and 'imu' in features:
+            q = ensure_3d(features['vision'])
+            k = ensure_3d(features['imu'])
+            v = ensure_3d(features['imu'])
+            out = self.vision_imu_attn(q, k, v)
+            features['vision'] = features['vision'] + squeeze_2d(out)
+            
+        if 'audio' in features and 'imu' in features:
+            q = ensure_3d(features['audio'])
+            k = ensure_3d(features['imu'])
+            v = ensure_3d(features['imu'])
+            out = self.audio_imu_attn(q, k, v)
+            features['audio'] = features['audio'] + squeeze_2d(out)
+        
+        # 力觉-IMU跨模态注意力
+        if 'force' in features and 'imu' in features:
+            q = ensure_3d(features['force'])
+            k = ensure_3d(features['imu'])
+            v = ensure_3d(features['imu'])
+            out = self.force_imu_attn(q, k, v)
+            features['force'] = features['force'] + squeeze_2d(out)
         
         # 视觉-语言跨模态注意力 (关键对齐)
         if 'vision' in features and 'language' in features:
