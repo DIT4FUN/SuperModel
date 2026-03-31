@@ -42,6 +42,11 @@ from simulation.environment import (
     PRESET_SCENES, create_scene
 )
 
+# 传感器模块导入 (用于触觉/力觉/IMU控制测试)
+from sensors.tactile import TactileArray, TactileSensorType
+from sensors.force import ForceTorqueSensor, ForceSensorType
+from sensors.imu import IMUSensor, IMUSensorType
+
 
 class TestMotionController(unittest.TestCase):
     """测试运动控制器"""
@@ -3073,3 +3078,399 @@ class TestAdaptivePIDController(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestTactileServoController(unittest.TestCase):
+    """测试触觉伺服控制器"""
+    
+    def test_tactile_servo_init(self):
+        """测试触觉伺服初始化"""
+        from sensors.tactile import TactileArray, TactileSensorType
+        from control.tactile_control import TactileServoController, TactileServoParams
+        
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.CAPACITIVE)
+        controller = TactileServoController(tactile)
+        
+        self.assertIsNotNone(controller.tactile)
+        self.assertIsNotNone(controller.params)
+        self.assertEqual(controller.params.grade, 'M')
+    
+    def test_tactile_servo_grade_params(self):
+        """测试AGV五级参数"""
+        from control.tactile_control import TactileServoParams, get_tactile_control_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            params = TactileServoParams.from_grade(grade)
+            self.assertEqual(params.grade, grade)
+            self.assertGreater(params.Kp_position, 0)
+            self.assertGreater(params.control_rate, 0)
+        
+        # 测试默认获取
+        params = get_tactile_control_spec('M')
+        self.assertEqual(params.grade, 'M')
+    
+    def test_tactile_servo_no_contact(self):
+        """测试无接触时控制信号"""
+        from sensors.tactile import TactileArray
+        from control.tactile_control import TactileServoController
+        
+        tactile = TactileArray(array_size=(8, 8))
+        tactile.open()
+        controller = TactileServoController(tactile)
+        
+        signal = controller.compute_control_signal(target_force=5.0)
+        np.testing.assert_array_almost_equal(signal, np.zeros(3))
+        tactile.close()
+    
+    def test_tactile_servo_contact_detection(self):
+        """测试接触检测"""
+        from sensors.tactile import TactileArray
+        from control.tactile_control import TactileServoController
+        
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        controller = TactileServoController(tactile)
+        
+        # 模拟接触
+        frame = tactile.capture()
+        self.assertIsNotNone(frame)
+        
+        contacts = tactile.detect_contacts(frame)
+        self.assertIsInstance(contacts, list)
+        tactile.close()
+    
+    def test_tactile_slip_reaction(self):
+        """测试滑移反应控制"""
+        from sensors.tactile import TactileArray
+        from control.tactile_control import TactileServoController
+        
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        controller = TactileServoController(tactile)
+        
+        # 多次捕获以积累历史
+        for _ in range(10):
+            tactile.capture()
+        
+        slip_reaction = controller.detect_and_react_slip()
+        self.assertEqual(slip_reaction.shape, (3,))
+        tactile.close()
+    
+    def test_grasp_quality_monitor(self):
+        """测试抓取质量监控"""
+        from sensors.tactile import TactileArray
+        from control.tactile_control import TactileServoController
+        
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        controller = TactileServoController(tactile)
+        
+        # 无历史时
+        quality = controller.monitor_grasp_quality()
+        self.assertIn('current', quality)
+        self.assertIn('average', quality)
+        self.assertIn('trend', quality)
+        self.assertIn('current', quality)  # 验证格式正确
+        
+        # 模拟一些触觉帧采集
+        for _ in range(10):
+            frame = tactile.capture()
+            # 手动触发质量更新（即使无接触也记录）
+            controller._grasp_quality_history.append(0.3)
+        
+        quality_with_history = controller.monitor_grasp_quality()
+        self.assertIn('current', quality_with_history)
+        self.assertIn('average', quality_with_history)
+        self.assertIn('trend', quality_with_history)
+        self.assertIn('stable', quality_with_history)
+        self.assertIsInstance(quality_with_history['stable'], bool)
+        tactile.close()
+
+
+class TestForceController(unittest.TestCase):
+    """测试力觉控制器"""
+    
+    def test_force_controller_init(self):
+        """测试力控初始化"""
+        from sensors.force import ForceTorqueSensor, ForceSensorType
+        from control.force_control import ForceController, ForceControlParams
+        
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        controller = ForceController(sensor)
+        
+        self.assertIsNotNone(controller.force_sensor)
+        self.assertIsNotNone(controller.params)
+        self.assertEqual(controller.params.grade, 'M')
+    
+    def test_force_controller_grade_params(self):
+        """测试AGV五级力控参数"""
+        from control.force_control import ForceControlParams, get_force_control_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            params = ForceControlParams.from_grade(grade)
+            self.assertEqual(params.grade, grade)
+            self.assertGreater(params.Kp_force, 0)
+            self.assertGreater(params.control_rate, 0)
+        
+        params = get_force_control_spec('L')
+        self.assertEqual(params.grade, 'L')
+    
+    def test_admittance_control(self):
+        """测试导纳控制"""
+        from sensors.force import ForceTorqueSensor
+        from control.force_control import ForceController
+        
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        controller = ForceController(sensor)
+        
+        desired_force = np.array([0.0, 0.0, 5.0])
+        wrench = sensor.capture()
+        
+        adjustment = controller.compute_admittance(desired_force, wrench, dt=0.01)
+        self.assertEqual(adjustment.shape, (3,))
+        sensor.close()
+    
+    def test_collision_detection(self):
+        """测试碰撞检测"""
+        from sensors.force import ForceTorqueSensor
+        from control.force_control import ForceController
+        
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        controller = ForceController(sensor)
+        
+        # 采集几帧
+        for _ in range(10):
+            sensor.capture()
+        
+        is_collision, magnitude = controller.detect_collision()
+        # Handle both Python bool and numpy bool_
+        self.assertTrue(is_collision is True or is_collision is False or 
+                        isinstance(is_collision, (bool, np.bool_)))
+        self.assertIsInstance(magnitude, (float, np.floating))
+        sensor.close()
+    
+    def test_collision_response(self):
+        """测试碰撞响应"""
+        from sensors.force import ForceTorqueSensor
+        from control.force_control import ForceController
+        
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        controller = ForceController(sensor)
+        
+        direction = np.array([1.0, 0.0, 0.0])
+        response = controller.compute_collision_response(direction)
+        self.assertEqual(response.shape, (3,))
+        sensor.close()
+
+
+class TestHybridForcePositionController(unittest.TestCase):
+    """测试力位混合控制器"""
+    
+    def test_hybrid_init(self):
+        """测试混合控制器初始化"""
+        from sensors.force import ForceTorqueSensor
+        from control.force_control import HybridForcePositionController
+        
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        controller = HybridForcePositionController(sensor)
+        
+        self.assertIsNotNone(controller.force_controller)
+        np.testing.assert_array_equal(controller.force_control_axes, np.array([True, True, False]))
+    
+    def test_hybrid_control_compute(self):
+        """测试混合控制计算"""
+        from sensors.force import ForceTorqueSensor
+        from control.force_control import HybridForcePositionController
+        
+        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        sensor.open()
+        controller = HybridForcePositionController(sensor)
+        
+        target_force = np.array([0.0, 0.0, 5.0])
+        target_pos = np.array([0.1, 0.2, 0.3])
+        
+        wrench = sensor.capture()
+        pos_out, force_out = controller.compute_control(target_force, target_pos, wrench, dt=0.01)
+        
+        self.assertEqual(pos_out.shape, (3,))
+        self.assertEqual(force_out.shape, (3,))
+        sensor.close()
+
+
+class TestAttitudeStabilizer(unittest.TestCase):
+    """测试姿态稳定控制器"""
+    
+    def test_attitude_stabilizer_init(self):
+        """测试姿态稳定器初始化"""
+        from sensors.imu import IMUSensor, IMUSensorType
+        from control.imu_control import AttitudeStabilizer, IMUControlParams
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        stabilizer = AttitudeStabilizer(imu)
+        
+        self.assertIsNotNone(stabilizer.imu)
+        self.assertIsNotNone(stabilizer.pose_estimator)
+        self.assertEqual(stabilizer.params.grade, 'M')
+    
+    def test_attitude_grade_params(self):
+        """测试AGV五级姿态控制参数"""
+        from control.imu_control import IMUControlParams, get_imu_control_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            params = IMUControlParams.from_grade(grade)
+            self.assertEqual(params.grade, grade)
+            self.assertGreater(params.Kp_attitude, 0)
+            self.assertGreater(params.control_rate, 0)
+        
+        params = get_imu_control_spec('XL')
+        self.assertEqual(params.grade, 'XL')
+    
+    def test_set_target_attitude(self):
+        """测试设置目标姿态"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import AttitudeStabilizer
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        stabilizer = AttitudeStabilizer(imu)
+        
+        stabilizer.set_target_attitude(roll=0.1, pitch=0.2, yaw=0.3)
+        np.testing.assert_array_almost_equal(stabilizer._target_euler, np.array([0.1, 0.2, 0.3]))
+    
+    def test_attitude_update(self):
+        """测试姿态更新"""
+        from sensors.imu import IMUSensor, IMUSensorType
+        from control.imu_control import AttitudeStabilizer
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        stabilizer = AttitudeStabilizer(imu)
+        
+        frame = imu.capture()
+        torque = stabilizer.update(frame, dt=0.01)
+        
+        self.assertEqual(torque.shape, (3,))
+        imu.close()
+    
+    def test_tilt_status(self):
+        """测试倾角状态检测"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import AttitudeStabilizer
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        stabilizer = AttitudeStabilizer(imu)
+        
+        status = stabilizer.get_tilt_status()
+        self.assertIn('roll', status)
+        self.assertIn('pitch', status)
+        self.assertIn('yaw', status)
+        self.assertIn('tilt_warning', status)
+        self.assertIn('tilt_critical', status)
+        self.assertIn('is_stable', status)
+        imu.close()
+    
+    def test_motion_detection(self):
+        """测试运动检测"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import AttitudeStabilizer
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        stabilizer = AttitudeStabilizer(imu)
+        
+        frame = imu.capture()
+        is_moving = stabilizer.is_moving(frame)
+        self.assertIsInstance(is_moving, bool)
+        imu.close()
+
+
+class TestMotionEstimator(unittest.TestCase):
+    """测试运动估计器"""
+    
+    def test_motion_estimator_init(self):
+        """测试运动估计器初始化"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import MotionEstimator
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        estimator = MotionEstimator(imu)
+        
+        self.assertIsNotNone(estimator.imu)
+        np.testing.assert_array_almost_equal(estimator._velocity, np.zeros(3))
+        np.testing.assert_array_almost_equal(estimator._position, np.zeros(3))
+    
+    def test_motion_update(self):
+        """测试运动更新"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import MotionEstimator
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        estimator = MotionEstimator(imu)
+        
+        frame = imu.capture()
+        vel, pos = estimator.update(frame, dt=0.01)
+        
+        self.assertEqual(vel.shape, (3,))
+        self.assertEqual(pos.shape, (3,))
+        imu.close()
+    
+    def test_motion_reset(self):
+        """测试重置"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import MotionEstimator
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        estimator = MotionEstimator(imu)
+        
+        # 更新一些状态
+        frame = imu.capture()
+        estimator.update(frame, dt=0.01)
+        
+        # 重置
+        estimator.reset()
+        np.testing.assert_array_almost_equal(estimator._velocity, np.zeros(3))
+        np.testing.assert_array_almost_equal(estimator._position, np.zeros(3))
+        self.assertFalse(estimator._initialized)
+        imu.close()
+    
+    def test_trajectory(self):
+        """测试轨迹记录"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import MotionEstimator
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        estimator = MotionEstimator(imu)
+        
+        # 更新几帧
+        for _ in range(50):
+            frame = imu.capture()
+            estimator.update(frame, dt=0.01)
+        
+        times, positions = estimator.get_trajectory()
+        self.assertGreater(len(times), 0)
+        self.assertEqual(positions.shape[1], 3)
+        imu.close()
+    
+    def test_displacement_estimation(self):
+        """测试位移估计"""
+        from sensors.imu import IMUSensor
+        from control.imu_control import MotionEstimator
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        estimator = MotionEstimator(imu)
+        
+        # 模拟一些运动
+        for _ in range(100):
+            frame = imu.capture()
+            estimator.update(frame, dt=0.01)
+        
+        displacement = estimator.estimate_displacement(duration=1.0)
+        self.assertGreaterEqual(displacement, 0.0)
+        imu.close()
