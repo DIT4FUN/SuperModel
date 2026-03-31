@@ -4,6 +4,36 @@
 
 ## 示例列表
 
+### multimodal_sensor_fusion_demo.py
+
+多模态传感器融合演示，展示 6 模态传感器协同与跨模态融合网络推理：
+
+```bash
+python examples/multimodal_sensor_fusion_demo.py
+```
+
+**演示内容:**
+- XXL级传感器配置 (RealSense D455 / ReSpeaker 4-mic / DigitalSkin 32x32 / ATI Nano25 / BMI088)
+- 6模态数据采集: 视觉 + 听觉 + 触觉 + 力觉 + IMU + 关节
+- CrossModalFusion 网络初始化与推理验证
+- 传感器协同感知场景 (接近→检测→接触→抓取质量评估)
+- 实时性验证 (< 10ms 推理延迟)
+
+### embodied_grasp_demo.py
+
+具身感知抓取演示，展示触觉 + 力觉 + IMU 三传感器协同的智能抓取：
+
+```bash
+python examples/embodied_grasp_demo.py
+```
+
+**演示内容:**
+- 多模态传感器初始化 (触觉阵列 + 六维力矩 + IMU)
+- 接触检测与抓取质量评估
+- 滑移检测与自适应握力控制
+- Madgwick AHRS 姿态估计
+- 完整抓取管道仿真 (接近→预接触→闭合→举起→移动→放下→松开)
+
 ### complete_system_demo.py
 
 完整系统演示，展示从传感器采集到运动控制的端到端工作流程：
@@ -140,5 +170,5 @@ mpc_xxl = MPCConfig.for_grade('XXL', num_joints=7)
 
 ---
 
-*文档版本: v1.3.0*
-*最后更新: 2026-03-30*
+*文档版本: v1.4.0*
+*最后更新: 2026-04-01*

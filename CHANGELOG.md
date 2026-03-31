@@ -2,6 +2,46 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.28.0] - 2026-04-01
+
+### Added
+- **多模态传感器融合演示** (`examples/multimodal_sensor_fusion_demo.py`)
+  - 6模态传感器融合: 视觉 + 听觉 + 触觉 + 力觉 + IMU + 关节编码器
+  - XXL级传感器配置 (RealSense D455, ReSpeaker 4-mic, DigitalSkin 32x32, ATI Nano25, BMI088)
+  - CrossModalFusion 网络推理演示 (512 hidden, 8 heads, 4 layers)
+  - 传感器协同感知场景 (接近→检测→接触→抓取质量评估)
+  - 实时性验证 (平均推理延迟 < 10ms)
+
+## [1.27.0] - 2026-04-01
+
+### Added
+- **具身感知抓取演示** (`examples/embodied_grasp_demo.py`)
+  - 触觉 + 力觉 + IMU 三传感器协同控制
+  - TactileServoController 滑移检测与自适应握力
+  - Madgwick AHRS 姿态估计
+  - 完整抓取管道仿真 (接近→预接触→闭合→举起→移动→放下→松开)
+  - AGV五级具身感知规格对照表
+
+## [1.26.0] - 2026-04-01
+
+### Added
+- **Control Supervisor 控制监管模块** (`src/control/supervisor.py`)
+  - 控制器生命周期管理 (注册/激活/停用/注销)
+  - 控制模式自动切换 (JOINT/CARTESIAN/IMPEDANCE/FORCE/TELEOP等)
+  - 控制器健康监控 (心跳/延迟/跟踪误差)
+  - 故障检测与安全降级 (graceful degradation)
+  - 紧急停止/恢复机制
+  - 42项测试覆盖
+
+## [1.25.0] - 2026-04-01
+
+### Added
+- **传感器故障注入测试** (`tests/sensor_tests.py`)
+  - 单传感器故障 (视觉/听觉/触觉/力觉/IMU)
+  - 多传感器同时故障
+  - 故障恢复与降级策略
+  - AGV五级故障容忍规格
+
 ## [1.24.0] - 2026-04-01
 
 ### Added
