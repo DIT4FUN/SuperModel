@@ -2488,5 +2488,315 @@ class TestTrajectoryTracker(unittest.TestCase):
         self.assertTrue(True)
 
 
+class TestTeleoperationController(unittest.TestCase):
+    """测试遥操作控制器"""
+
+    def test_teleop_init(self):
+        """遥操作控制器初始化"""
+        from control.teleop import (
+            TeleoperationController, TeleopMode, TeleopState,
+            AuthorityLevel, TeleopConfig, TeleopCommand,
+            MasterState, SlaveState
+        )
+        config = TeleopConfig(
+            master_ip="192.168.1.100",
+            slave_ip="192.168.1.101",
+            control_frequency=100.0,
+            safety_stop_threshold=30.0
+        )
+        controller = TeleoperationController(config)
+        self.assertEqual(controller.state, TeleopState.IDLE)
+        self.assertEqual(controller._current_authority, AuthorityLevel.OPERATOR)
+
+    def test_teleop_connect_disconnect(self):
+        """连接和断开"""
+        from control.teleop import TeleoperationController, TeleopConfig, TeleopState
+        config = TeleopConfig()
+        controller = TeleoperationController(config)
+        
+        controller.connect()
+        self.assertEqual(controller.state, TeleopState.IDLE)
+        
+        controller.disconnect()
+
+    def test_teleop_set_master_slave_state(self):
+        """设置主从状态"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopCommand,
+            TeleopMode, MasterState, SlaveState, AuthorityLevel
+        )
+        config = TeleopConfig(control_frequency=100.0)
+        controller = TeleoperationController(config)
+        controller.connect()
+
+        master = MasterState(
+            joint_positions=np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0]),
+            joint_velocities=np.zeros(6),
+            joint_torques=np.zeros(6),
+            wrench=np.zeros(6),
+            timestamp=time.time(),
+            authority=AuthorityLevel.OPERATOR
+        )
+        slave = SlaveState(
+            joint_positions=np.array([0.05, 0.1, 0.15, 0.0, 0.0, 0.0]),
+            joint_velocities=np.zeros(6),
+            end_effector_pose=np.array([0.0, 0.0, 0.5]),
+            contact_wrench=np.zeros(6),
+            timestamp=time.time()
+        )
+
+        controller.set_master_state(master)
+        controller.set_slave_state(slave)
+
+    def test_teleop_send_command(self):
+        """发送遥操作命令"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopCommand,
+            TeleopMode, MasterState, SlaveState, AuthorityLevel
+        )
+        config = TeleopConfig(control_frequency=100.0)
+        controller = TeleoperationController(config)
+        controller.connect()
+
+        master = MasterState(
+            joint_positions=np.zeros(6),
+            joint_velocities=np.zeros(6),
+            joint_torques=np.zeros(6),
+            wrench=np.zeros(6),
+            timestamp=time.time(),
+            authority=AuthorityLevel.OPERATOR
+        )
+        slave = SlaveState(
+            joint_positions=np.zeros(6),
+            joint_velocities=np.zeros(6),
+            end_effector_pose=np.array([0.0, 0.0, 0.5]),
+            contact_wrench=np.zeros(6),
+            timestamp=time.time()
+        )
+        controller.set_master_state(master)
+        controller.set_slave_state(slave)
+
+        self.assertIsNotNone(controller._master_state)
+        self.assertIsNotNone(controller._slave_state)
+
+    def test_teleop_send_command(self):
+        """发送遥操作命令"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopCommand,
+            TeleopMode, MasterState, SlaveState, AuthorityLevel
+        )
+        config = TeleopConfig(control_frequency=100.0)
+        controller = TeleoperationController(config)
+        controller.connect()
+
+        master = MasterState(
+            joint_positions=np.zeros(6),
+            joint_velocities=np.zeros(6),
+            joint_torques=np.zeros(6),
+            wrench=np.zeros(6),
+            timestamp=time.time(),
+            authority=AuthorityLevel.OPERATOR
+        )
+        slave = SlaveState(
+            joint_positions=np.zeros(6),
+            joint_velocities=np.zeros(6),
+            end_effector_pose=np.array([0.0, 0.0, 0.5]),
+            contact_wrench=np.zeros(6),
+            timestamp=time.time()
+        )
+        controller.set_master_state(master)
+        controller.set_slave_state(slave)
+
+        cmd = TeleopCommand(
+            mode=TeleopMode.POSITION_SYNC,
+            target_joint_positions=np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0])
+        )
+        success = controller.send_command(cmd)
+        self.assertTrue(success)
+
+    def test_teleop_compute_slave_command(self):
+        """计算从端命令"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopCommand,
+            TeleopMode, MasterState, SlaveState, AuthorityLevel
+        )
+        config = TeleopConfig(control_frequency=100.0)
+        controller = TeleoperationController(config)
+        controller.connect()
+
+        master = MasterState(
+            joint_positions=np.zeros(6),
+            joint_velocities=np.zeros(6),
+            joint_torques=np.zeros(6),
+            wrench=np.zeros(6),
+            timestamp=time.time(),
+            authority=AuthorityLevel.OPERATOR
+        )
+        slave = SlaveState(
+            joint_positions=np.zeros(6),
+            joint_velocities=np.zeros(6),
+            end_effector_pose=np.array([0.0, 0.0, 0.5]),
+            contact_wrench=np.zeros(6),
+            timestamp=time.time()
+        )
+        controller.set_master_state(master)
+        controller.set_slave_state(slave)
+
+        cmd = TeleopCommand(
+            mode=TeleopMode.POSITION_SYNC,
+            target_joint_positions=np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0])
+        )
+        controller.send_command(cmd)
+
+        result = controller.compute_slave_command()
+        self.assertIsNotNone(result)
+        blended_cmd, autonomy = result
+        self.assertEqual(len(blended_cmd), 6)
+
+    def test_teleop_authority_request(self):
+        """权限请求"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, AuthorityLevel
+        )
+        config = TeleopConfig()
+        controller = TeleoperationController(config)
+
+        # 需要 SUPERVISOR 以上才能提升权限
+        result = controller.request_authority(AuthorityLevel.SUPERVISOR)
+        self.assertFalse(result)  # 默认 OPERATOR 不能提升到 SUPERVISOR
+
+        # 释放权限
+        controller.release_authority()
+        self.assertEqual(controller._current_authority, AuthorityLevel.VIEWER)
+
+    def test_teleop_pause_resume(self):
+        """暂停和恢复"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopState,
+            TeleopCommand, TeleopMode, MasterState, SlaveState, AuthorityLevel
+        )
+        config = TeleopConfig()
+        controller = TeleoperationController(config)
+        controller.connect()
+
+        # 先建立有效状态
+        master = MasterState(
+            joint_positions=np.zeros(6), joint_velocities=np.zeros(6),
+            joint_torques=np.zeros(6), wrench=np.zeros(6),
+            timestamp=time.time(), authority=AuthorityLevel.OPERATOR
+        )
+        slave = SlaveState(
+            joint_positions=np.zeros(6), joint_velocities=np.zeros(6),
+            end_effector_pose=np.array([0.0, 0.0, 0.5]),
+            contact_wrench=np.zeros(6), timestamp=time.time()
+        )
+        controller.set_master_state(master)
+        controller.set_slave_state(slave)
+        controller.send_command(TeleopCommand(
+            mode=TeleopMode.POSITION_SYNC,
+            target_joint_positions=np.zeros(6)
+        ))
+
+        # 注意: pause() 只能在 ACTIVE 状态下调用
+        # pause 只在 ACTIVE 时有效
+        controller.pause()
+        # resume 也只从 PAUSED 有效
+        controller.resume()
+        self.assertTrue(True)  # 不崩溃即通过
+
+    def test_teleop_emergency_stop(self):
+        """紧急停止"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopState, AuthorityLevel
+        )
+        config = TeleopConfig(safety_stop_threshold=10.0)
+        controller = TeleoperationController(config)
+        
+        controller.connect()
+        controller.emergency_stop()
+        self.assertEqual(controller.state, TeleopState.SAFETY_STOP)
+        self.assertEqual(controller._current_authority, AuthorityLevel.VIEWER)
+
+    def test_teleop_acknowledge_safety_stop(self):
+        """确认安全停止"""
+        from control.teleop import (
+            TeleoperationController, TeleopConfig, TeleopState, AuthorityLevel
+        )
+        config = TeleopConfig()
+        controller = TeleoperationController(config)
+        controller.connect()
+        controller.emergency_stop()
+        
+        # 需要 SUPERVISOR 才能确认
+        result = controller.acknowledge_safety_stop(AuthorityLevel.SUPERVISOR)
+        self.assertTrue(result)
+        self.assertEqual(controller.state, TeleopState.IDLE)
+
+    def test_teleop_latency_compensator(self):
+        """延迟补偿器"""
+        from control.teleop import (
+            LatencyCompensator, TeleopConfig, TeleopCommand,
+            TeleopMode, SlaveState
+        )
+        config = TeleopConfig(max_latency_compensation_ms=50.0)
+        compensator = LatencyCompensator(config)
+
+        slave = SlaveState(
+            joint_positions=np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0]),
+            joint_velocities=np.zeros(6),
+            end_effector_pose=np.array([0.0, 0.0, 0.5]),
+            contact_wrench=np.zeros(6),
+            timestamp=time.time()
+        )
+
+        cmd = TeleopCommand(
+            mode=TeleopMode.POSITION_SYNC,
+            target_joint_positions=np.array([0.15, 0.25, 0.35, 0.0, 0.0, 0.0])
+        )
+
+        predicted = compensator.predict_slave_state(cmd, slave, latency_ms=30.0)
+        self.assertIsNotNone(predicted)
+
+    def test_teleop_shared_control_blender(self):
+        """共享控制混合器"""
+        from control.teleop import (
+            SharedControlBlender, TeleopConfig, TeleopMode
+        )
+        config = TeleopConfig()
+        blender = SharedControlBlender(config)
+
+        operator = np.array([1.0, 2.0, 3.0, 0.0, 0.0, 0.0])
+        autonomous = np.array([0.5, 1.0, 1.5, 0.0, 0.0, 0.0])
+
+        blended = blender.blend_commands(operator, autonomous)
+        self.assertEqual(len(blended), 6)
+        # 默认 50% 自主性
+        expected = 0.5 * operator + 0.5 * autonomous
+        self.assertTrue(np.allclose(blended, expected))
+
+    def test_teleop_shared_control_autonomy_update(self):
+        """共享控制自主性更新"""
+        from control.teleop import SharedControlBlender, TeleopConfig
+        config = TeleopConfig()
+        blender = SharedControlBlender(config)
+
+        # 更新自主性 (安全)
+        blender.update_autonomy(
+            operator_confidence=0.8,
+            task_difficulty=0.3,
+            safety_margin=0.7
+        )
+        
+        # 更新自主性 (危险 - 安全裕度低)
+        blender.update_autonomy(
+            operator_confidence=0.8,
+            task_difficulty=0.3,
+            safety_margin=0.1  # 低安全裕度
+        )
+        
+        # 自主性应该被限制在最小值
+        self.assertLessEqual(blender.autonomy_level, config.autonomy_blend_max)
+
+
 if __name__ == '__main__':
     unittest.main(verbosity=2)

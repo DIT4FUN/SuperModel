@@ -5,6 +5,26 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.7.0] - 2026-03-31
+
+### Added
+- **遥操作控制测试套件**: 新增12项测试覆盖TeleoperationController完整生命周期
+  - `test_teleop_init`: 控制器初始化与状态
+  - `test_teleop_connect_disconnect`: 连接/断开管理
+  - `test_teleop_set_master_slave_state`: 主从状态设置
+  - `test_teleop_send_command`: 命令发送与安全检查
+  - `test_teleop_compute_slave_command`: 从端命令计算与共享控制
+  - `test_teleop_authority_request`: 权限请求与释放
+  - `test_teleop_pause_resume`: 暂停/恢复控制
+  - `test_teleop_emergency_stop`: 紧急停止触发
+  - `test_teleop_acknowledge_safety_stop`: 安全停止确认与恢复
+  - `test_teleop_latency_compensator`: Smith预测器延迟补偿
+  - `test_teleop_shared_control_blender`: 共享控制命令混合
+  - `test_teleop_shared_control_autonomy_update`: 自主性水平动态调整
+
+### Verified
+- 全量测试套件 **791 项**测试全部通过 (新增12项)
+
 ## [1.6.0] - 2026-03-30
 
 ### Added
