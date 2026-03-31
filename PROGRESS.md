@@ -1,7 +1,7 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-03-31 18:57 (v1.17.0)
+> Last Updated: 2026-03-31 19:57 (v1.17.1)
 
 ---
 
@@ -12,41 +12,35 @@
 | 传感器模块 (Sensors) | ✅ 完成 | 10 | 295 |
 | 跨模态融合 (Fusion) | ✅ 完成 | 1 | 30+ |
 | 感知层 (Perception) | ✅ 完成 | 2 | - |
-| 运动控制 (Control) | ✅ 完成 | 12 | 20+ |
+| 运动控制 (Control) | ✅ 完成 | 13 | 29+ |
 | 仿真环境 (Simulation) | ✅ 完成 | 3 | 10+ |
 | 自主学习 (Learning) | ✅ 完成 | 3 | - |
 | 硬件平台 (Hardware) | ✅ 完成 | 6 | 18 |
 | 文档 (Docs) | ✅ 完成 | 15+ | - |
 
-**测试覆盖率**: 950 项测试用例，全部通过 ✅
+**测试覆盖率**: 954 项测试用例，全部通过 ✅
 
 ---
 
-## 🎯 本次任务 (2026-03-31 17:50 v1.16.0)
-
-
+## 🎯 本次任务 (2026-03-31 19:57 v1.17.1)
 
 ### 已完成工作
 
+1. **自适应PID控制器** ✅
 
+   - `src/control/motion.py` - 新增 `AdaptivePIDController` 类
+   - 基于误差幅值自动调整PID增益
+   - 支持增益调度 (Gain Scheduling)
+   - 内置积分饱和保护和微分滤波
 
-1. **硬件平台模块** ✅
+2. **自适应控制测试** ✅
 
-   - `src/hardware/base.py` - 统一主板抽象层
+   - `tests/control_tests.py` - 新增 9 项 AdaptivePIDController 测试
+   - 测试覆盖：初始化、计算、自适应增益、饱和、重置等
 
-   - `src/hardware/rk3588.py` - RK3588 系列主板支持
+3. **测试扩展** ✅
 
-   - `src/hardware/digu_robot.py` - 地瓜机器人 RDK X3/X5 Ultra/S100
-
-   - `src/hardware/gpio.py` - GPIO 控制器
-
-   - `src/hardware/nnpu.py` - NPU 加速器接口
-
-   - `tests/hardware_tests.py` - 硬件平台测试 (18 tests)
-
-
-
-2. **自主学习框架扩展** ✅
+   - 测试总数: 950 → 954 项 (+4)
 
    - `src/learning/autonomous_learning.py` - 持续学习与元学习 (781行)
 

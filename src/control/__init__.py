@@ -16,7 +16,7 @@ SuperModel 控制模块
 - teleop: 遥操作控制 (主从同步/共享控制/力反馈)
 """
 
-from .motion import MotionController, JointTrajectory, TwistCommand
+from .motion import MotionController, JointTrajectory, TwistCommand, AdaptivePIDController
 from .trajectory import (
     TrajectoryGenerator, RRTPlanner, ScurveGenerator,
     JointWaypoint, CartesianWaypoint, TrajectoryConfig,
@@ -59,7 +59,7 @@ from .teleop import (
 )
 
 __all__ = [
-    'MotionController', 'JointTrajectory', 'TwistCommand',
+    'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
     'TrajectoryGenerator', 'RRTPlanner', 'ScurveGenerator',
     'JointWaypoint', 'CartesianWaypoint', 'TrajectoryConfig',
     'PlanningAlgorithm', 'get_trajectory_spec',

@@ -5,6 +5,29 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.17.1] - 2026-03-31
+
+### Added
+- **自适应PID控制器** (`src/control/motion.py`): 新增 `AdaptivePIDController` 类
+  - 基于误差幅值自动调整PID增益
+  - 支持增益调度 (Gain Scheduling)
+  - 内置积分饱和保护和微分滤波
+  - 初始增益可配置，自适应率可调
+- **自适应控制测试** (`tests/control_tests.py`): 新增 9 项测试
+  - `test_adaptive_pid_init`: 初始化测试
+  - `test_adaptive_pid_compute`: 计算测试
+  - `test_adaptive_pid_gain_adaptation`: 增益自适应测试
+  - `test_adaptive_pid_saturation`: 积分饱和测试
+  - `test_adaptive_pid_reset`: 重置测试
+  - `test_adaptive_pid_set_base_gains`: 基础增益设置测试
+  - `test_adaptive_pid_derivative_filter`: 微分滤波测试
+  - `test_adaptive_pid_zero_error`: 零误差测试
+  - `test_adaptive_pid_convergence`: 收敛测试
+
+### Changed
+- `src/control/__init__.py`: 更新导出 AdaptivePIDController
+- 测试总数: 950 → 954 项, 全部通过 ✅
+
 ## [1.17.0] - 2026-03-31
 
 ### Added

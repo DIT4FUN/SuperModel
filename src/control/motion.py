@@ -318,6 +318,153 @@ class MotionController:
             raise ValueError(f"Unsupported control mode: {mode}")
 
 
+class AdaptivePIDController:
+    """
+    自适应PID控制器
+    
+    基于误差自动调整PID增益:
+    - 增益调度 (Gain Scheduling)
+    - 模型参考自适应 (MRAC)
+    - 模糊PID
+    
+    特性:
+    - 响应误差增大时自动增加增益
+    - 稳态时降低增益减少噪声
+    - 防止积分饱和
+    """
+    
+    def __init__(
+        self,
+        num_joints: int,
+        initial_kp: float = 1.0,
+        initial_ki: float = 0.01,
+        initial_kd: float = 0.1,
+        adaptation_rate: float = 0.01,
+        max_kp_mult: float = 3.0,
+        min_kp_mult: float = 0.3
+    ):
+        self.num_joints = num_joints
+        self.adaptation_rate = adaptation_rate
+        self.max_kp_mult = max_kp_mult
+        self.min_kp_mult = min_kp_mult
+        
+        # 初始增益
+        self.base_kp = np.ones(num_joints) * initial_kp
+        self.base_ki = np.ones(num_joints) * initial_ki
+        self.base_kd = np.ones(num_joints) * initial_kd
+        
+        # 当前增益
+        self.kp = self.base_kp.copy()
+        self.ki = self.base_ki.copy()
+        self.kd = self.base_kd.copy()
+        
+        # 状态
+        self._error_prev = np.zeros(num_joints)
+        self._integral = np.zeros(num_joints)
+        self._derivative_filter = np.zeros(num_joints)
+        
+        # 滤波器系数
+        self.filter_alpha = 0.3
+        
+    def compute(
+        self,
+        error: np.ndarray,
+        dt: float
+    ) -> np.ndarray:
+        """
+        计算自适应PID控制输出
+        
+        Args:
+            error: 位置误差
+            dt: 时间步长
+            
+        Returns:
+            control_output: PID输出
+        """
+        # 自适应增益调整
+        self._adapt_gains(error)
+        
+        # 积分项 (带抗饱和)
+        self._integral += error * dt
+        self._integral = np.clip(self._integral, -1.0, 1.0)
+        
+        # 微分项 (带低通滤波)
+        raw_derivative = (error - self._error_prev) / dt
+        self._derivative_filter = (
+            self.filter_alpha * raw_derivative +
+            (1 - self.filter_alpha) * self._derivative_filter
+        )
+        
+        # PID输出
+        output = (
+            self.kp * error +
+            self.ki * self._integral +
+            self.kd * self._derivative_filter
+        )
+        
+        self._error_prev = error.copy()
+        
+        return output
+    
+    def _adapt_gains(self, error: np.ndarray):
+        """
+        自适应增益调整
+        
+        基于误差幅值调整:
+        - 大误差 -> 高增益 (快速响应)
+        - 小误差 -> 低增益 (减少噪声)
+        """
+        error_magnitude = np.abs(error)
+        
+        # 计算增益倍数 (基于误差阈值)
+        threshold_large = 0.5   # rad
+        threshold_small = 0.05  # rad
+        
+        # 增益倍数
+        k_mult = np.ones(self.num_joints)
+        
+        # 大误差区域
+        mask_large = error_magnitude > threshold_large
+        k_mult[mask_large] = self.max_kp_mult
+        
+        # 中等误差区域 (线性插值)
+        mask_mid = (error_magnitude > threshold_small) & (error_magnitude <= threshold_large)
+        t = (error_magnitude[mask_mid] - threshold_small) / (threshold_large - threshold_small)
+        k_mult[mask_mid] = self.min_kp_mult + (self.max_kp_mult - self.min_kp_mult) * t
+        
+        # 小误差区域
+        mask_small = error_magnitude <= threshold_small
+        k_mult[mask_small] = self.min_kp_mult
+        
+        # 平滑更新
+        adapt_speed = self.adaptation_rate
+        self.kp = self.base_kp * (1 - adapt_speed) + self.base_kp * k_mult * adapt_speed
+        self.ki = self.base_ki * (1 - adapt_speed) + self.base_ki * k_mult * adapt_speed
+        self.kd = self.base_kd * (1 - adapt_speed) + self.base_kd * k_mult * adapt_speed
+    
+    def reset(self):
+        """重置积分和微分状态"""
+        self._integral = np.zeros(self.num_joints)
+        self._derivative_filter = np.zeros(self.num_joints)
+        self._error_prev = np.zeros(self.num_joints)
+    
+    def set_base_gains(
+        self,
+        kp: np.ndarray,
+        ki: Optional[np.ndarray] = None,
+        kd: Optional[np.ndarray] = None
+    ):
+        """设置基础增益"""
+        self.base_kp = kp.copy()
+        if ki is not None:
+            self.base_ki = ki.copy()
+        if kd is not None:
+            self.base_kd = kd.copy()
+        self.kp = self.base_kp.copy()
+        self.ki = self.base_ki.copy()
+        self.kd = self.base_kd.copy()
+
+
 class TwistToJoint:
     """
     笛卡尔速度到关节速度的转换

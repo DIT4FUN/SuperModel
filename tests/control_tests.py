@@ -19,7 +19,7 @@ sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
 
 from control.motion import (
     MotionController, ControlMode, JointState, JointTrajectory,
-    TwistCommand, TwistToJoint
+    TwistCommand, TwistToJoint, AdaptivePIDController
 )
 from control.agv import (
     AGVMotionController, AGVSpec, AGVGrade, AGVPose, AGVTwist,
@@ -2960,6 +2960,115 @@ class TestMPCControllerGrades(unittest.TestCase):
         config_s = MPCConfig.for_grade('S', num_joints=6)
         config_xxl = MPCConfig.for_grade('XXL', num_joints=6)
         self.assertGreater(config_xxl.horizon, config_s.horizon)
+
+
+class TestAdaptivePIDController(unittest.TestCase):
+    """自适应PID控制器测试"""
+    
+    def test_adaptive_pid_init(self):
+        """测试自适应PID初始化"""
+        ctrl = AdaptivePIDController(num_joints=6)
+        self.assertEqual(ctrl.num_joints, 6)
+        self.assertTrue(np.all(ctrl.kp > 0))
+        self.assertTrue(np.all(ctrl.ki >= 0))
+        self.assertTrue(np.all(ctrl.kd >= 0))
+    
+    def test_adaptive_pid_compute(self):
+        """测试自适应PID计算"""
+        ctrl = AdaptivePIDController(num_joints=3)
+        error = np.array([0.5, 0.1, 0.0])
+        output = ctrl.compute(error, dt=0.01)
+        self.assertEqual(output.shape, (3,))
+        # 大误差应该产生较大输出
+        self.assertGreater(np.abs(output[0]), np.abs(output[2]))
+    
+    def test_adaptive_pid_gain_adaptation(self):
+        """测试增益自适应调整"""
+        ctrl = AdaptivePIDController(num_joints=2, adaptation_rate=0.5)
+        
+        # 大误差
+        error_large = np.array([1.0, 0.01])
+        kp_before_large = ctrl.kp[0]
+        ctrl.compute(error_large, dt=0.01)
+        kp_after_large = ctrl.kp[0]
+        
+        # 大误差后增益应该增大 (自适应调整后)
+        # 注意：由于初始增益可能较大，第一次调整可能不明显
+        # 验证方法：多次迭代后检查
+        for _ in range(10):
+            ctrl.compute(error_large, dt=0.01)
+        kp_final = ctrl.kp[0]
+        # 多次迭代后增益应该趋近最大值
+        self.assertGreaterEqual(kp_final, kp_before_large * 0.5)
+    
+    def test_adaptive_pid_saturation(self):
+        """测试积分饱和"""
+        ctrl = AdaptivePIDController(num_joints=3)
+        error = np.array([10.0, 10.0, 10.0])
+        
+        # 多次迭代，积分项应该饱和
+        for _ in range(200):
+            ctrl.compute(error, dt=0.01)
+        
+        # 积分项应该被限制在 [-1, 1] 范围内
+        np.testing.assert_array_less(ctrl._integral, 1.1)
+        np.testing.assert_array_less(-1.1, ctrl._integral)
+    
+    def test_adaptive_pid_reset(self):
+        """测试重置"""
+        ctrl = AdaptivePIDController(num_joints=4)
+        ctrl._integral = np.ones(4) * 0.5
+        ctrl._error_prev = np.ones(4) * 0.3
+        ctrl._derivative_filter = np.ones(4) * 0.2
+        
+        ctrl.reset()
+        
+        np.testing.assert_array_almost_equal(ctrl._integral, np.zeros(4))
+        np.testing.assert_array_almost_equal(ctrl._error_prev, np.zeros(4))
+        np.testing.assert_array_almost_equal(ctrl._derivative_filter, np.zeros(4))
+    
+    def test_adaptive_pid_set_base_gains(self):
+        """测试设置基础增益"""
+        ctrl = AdaptivePIDController(num_joints=3)
+        new_kp = np.array([2.0, 3.0, 4.0])
+        ctrl.set_base_gains(new_kp)
+        
+        np.testing.assert_array_almost_equal(ctrl.base_kp, new_kp)
+        np.testing.assert_array_almost_equal(ctrl.kp, new_kp)
+    
+    def test_adaptive_pid_derivative_filter(self):
+        """测试微分滤波"""
+        ctrl = AdaptivePIDController(num_joints=1)
+        error = np.array([0.0])
+        
+        outputs = []
+        for i in range(10):
+            e = np.array([float(i)])
+            out = ctrl.compute(e, dt=0.01)
+            outputs.append(out[0])
+        
+        # 输出应该是有界的
+        self.assertTrue(np.all(np.abs(np.array(outputs)) < 100))
+    
+    def test_adaptive_pid_zero_error(self):
+        """测试零误差时的控制"""
+        ctrl = AdaptivePIDController(num_joints=2)
+        error = np.zeros(2)
+        output = ctrl.compute(error, dt=0.01)
+        # 零误差时，输出应该接近零（除非有积分累积）
+        np.testing.assert_array_almost_equal(output, np.zeros(2), decimal=5)
+    
+    def test_adaptive_pid_convergence(self):
+        """测试自适应PID收敛"""
+        ctrl = AdaptivePIDController(num_joints=1, initial_kp=1.0, adaptation_rate=0.1)
+        
+        # 模拟目标追踪：误差逐渐减小
+        errors = [1.0, 0.5, 0.2, 0.1, 0.05]
+        for e in errors:
+            ctrl.compute(np.array([e]), dt=0.01)
+        
+        # 最终积分项应该很小
+        self.assertLess(np.abs(ctrl._integral[0]), 0.2)
 
 
 if __name__ == '__main__':

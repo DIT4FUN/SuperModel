@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-952%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-954%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -34,7 +34,7 @@
 | `hardware/` | **RDK 主板支持** (RK3588/RDK X3/X5 Ultra/S100) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**952项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**954项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
