@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-770%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-791%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -353,7 +353,7 @@ SuperModel/
 │   │   └── multi_agent.py      # 多AGV协调控制 (L/XL/XXL)
 │   └── simulation/         # 仿真环境
 │       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
-├── tests/                   # 770 项测试全部通过
+├── tests/                   # 791 项测试全部通过
 │   ├── sensor_tests.py      # 传感器 (140 tests)
 │   ├── fusion_tests.py      # 融合网络 (86 tests)
 │   ├── sensorimotor_tests.py # 传感器-执行器融合 (19 tests)
@@ -416,7 +416,7 @@ SuperModel/
 | mpc_tests.py | 25 | ✅ 全部通过 |
 | test_sensor_manager.py | 27 | ✅ 全部通过 |
 | multi_agent_tests.py | 34 | ✅ 全部通过 |
-| **总计** | **770** | ✅ **全部通过** |
+| **总计** | **791** | ✅ **全部通过** |
 
 ## 技术栈
 
