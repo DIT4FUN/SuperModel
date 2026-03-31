@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-842%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-892%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -32,7 +32,7 @@
 | `control/` | 运动控制 + 多AGV协调 (PID/阻抗/技能库/规划/编队) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**842项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**892项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -353,11 +353,12 @@ SuperModel/
 │   │   └── multi_agent.py      # 多AGV协调控制 (L/XL/XXL)
 │   └── simulation/         # 仿真环境
 │       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
-├── tests/                   # 842 项测试全部通过
+├── tests/                   # 892 项测试全部通过
 │   ├── sensor_tests.py      # 传感器 (181 tests)
 │   ├── fusion_tests.py      # 融合网络 (86 tests)
 │   ├── sensorimotor_tests.py # 传感器-执行器融合 (19 tests)
-│   ├── control_tests.py     # 控制模块 (110 tests)
+│   ├── control_tests.py     # 控制模块 (210 tests)
+│   ├── obstacle_avoidance_tests.py # 避障模块 (50 tests)
 │   ├── multi_agent_tests.py # 多智能体协调 (34 tests)
 │   ├── ros2_interface_tests.py # ROS2接口 (44 tests)
 │   ├── integration_tests.py # 集成测试 (20 tests)
@@ -365,9 +366,9 @@ SuperModel/
 │   ├── test_encoders.py     # 编码器 (13 tests)
 │   ├── test_dreamer.py     # Dreamer Agent (7 tests)
 │   ├── test_world_model.py  # 世界模型 (8 tests)
-│   ├── simulation_tests.py  # 仿真环境 (44 tests)
+│   ├── simulation_tests.py  # 仿真环境 (60 tests)
 │   ├── benchmark_tests.py   # 性能基准 (16 tests)
-│   └── mpc_tests.py         # MPC控制器 (47 tests)
+│   └── mpc_tests.py         # MPC控制器 (25 tests)
 ├── configs/
 │   ├── project_config.yaml  # 项目默认配置
 │   ├── agv_S.yaml          # AGV-S 教育级配置
@@ -418,7 +419,7 @@ SuperModel/
 | mpc_tests.py | 25 | ✅ 全部通过 |
 | test_sensor_manager.py | 27 | ✅ 全部通过 |
 | multi_agent_tests.py | 34 | ✅ 全部通过 |
-| **总计** | **842** | ✅ **全部通过** |
+| **总计** | **892** | ✅ **全部通过** |
 
 ## 技术栈
 

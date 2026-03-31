@@ -5,6 +5,29 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.13.0] - 2026-03-31
+
+### Added
+- **AGV障碍物回避模块** (`src/control/obstacle_avoidance.py`): 新增完整的避障系统
+  - `DynamicWindowApproach`: 动态窗口法 DWA
+  - `ArtificialPotentialField`: 人工势场法 APF
+  - `VectorFieldHistogram`: 向量场直方图 VFH
+  - `ObstacleAvoider`: 综合避障控制器，支持策略切换
+  - `get_obstacle_avoidance_spec()`: AGV等级避障规格查询
+- **障碍物回避测试** (`tests/obstacle_avoidance_tests.py`): 50项测试
+- **MODULE_INTERFACE.md**: 新增第30-32节 (避障模块接口、仿真集成、等级对照)
+
+### Changed
+- 全部 892 项测试持续通过 (含新增 50 项障碍物回避测试)
+
+## [1.12.0] - 2026-03-31
+
+### Added
+- **学习进度报告** (`PROGRESS.md`): 新增项目进度文档
+
+### Changed
+- 全部 279 项测试持续通过
+
 ## [1.11.0] - 2026-03-31
 
 ### Added

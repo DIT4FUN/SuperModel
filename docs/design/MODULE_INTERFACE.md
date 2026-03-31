@@ -3964,7 +3964,208 @@ for episode in range(10):
 pipeline.close_all()
 """
 
-*文档版本: v1.9.0*
+*文档版本: v1.10.0*
+*最后更新: 2026-03-31*
+
+---
+
+## 30. 避障模块接口 (Obstacle Avoidance)
+
+### 30.1 障碍物表示 — Obstacle
+
+```python
+@dataclass
+class Obstacle:
+    position: np.ndarray      # 2, 世界坐标系 (x, y) m
+    radius: float             # 障碍物半径 m
+    velocity: np.ndarray = None  # 2, 速度 m/s
+    type: str = "static"     # "static" | "dynamic"
+    
+    def predict_position(self, dt: float) -> np.ndarray  # 预测位置
+```
+
+### 30.2 速度指令 — VelocityCommand
+
+```python
+@dataclass
+class VelocityCommand:
+    vx: float         # x方向线速度 m/s
+    vy: float         # y方向线速度 m/s
+    omega: float      # 角速度 rad/s
+    score: float = 0.0  # 轨迹评分
+    
+    def to_array(self) -> np.ndarray  # [vx, vy, omega]
+```
+
+### 30.3 动态窗口法 — DynamicWindowApproach
+
+```python
+class DynamicWindowApproach:
+    def __init__(self, config: Optional[DWAConfig] = None)
+    
+    def compute_velocities(
+        self,
+        robot_pose: np.ndarray,      # (x, y, theta) m, rad
+        robot_velocity: np.ndarray,  # (vx, vy, omega) m/s, rad/s
+        goal: np.ndarray,           # (gx, gy) m
+        obstacles: List[Obstacle],
+        dt: float = 0.1
+    ) -> VelocityCommand
+```
+
+**DWAConfig 参数:**
+```python
+@dataclass
+class DWAConfig:
+    max_linear_speed: float = 1.0      # 最大线速度 m/s
+    max_angular_speed: float = 2.0     # 最大角速度 rad/s
+    max_linear_accel: float = 2.0      # 最大线加速度 m/s^2
+    max_angular_accel: float = 3.0    # 最大角加速度 rad/s^2
+    vx_resolution: float = 0.05        # 线速度分辨率 m/s
+    omega_resolution: float = 0.1     # 角速度分辨率 rad/s
+    prediction_horizon: float = 2.0   # 预测时间窗口 s
+    robot_radius: float = 0.3          # 机器人半径 m
+    obstacle_margin: float = 0.1       # 障碍物裕度 m
+```
+
+### 30.4 人工势场法 — ArtificialPotentialField
+
+```python
+class ArtificialPotentialField:
+    def __init__(self, config: Optional[APFConfig] = None)
+    
+    def compute_force(
+        self,
+        robot_pose: np.ndarray,      # (x, y) m
+        robot_velocity: np.ndarray,  # (vx, vy) m/s
+        goal: np.ndarray,           # (gx, gy) m
+        obstacles: List[Obstacle]
+    ) -> np.ndarray  # 力向量 (fx, fy)
+    
+    def compute_velocity(
+        self, robot_pose, robot_velocity, goal, obstacles, max_speed=1.0
+    ) -> np.ndarray  # 速度向量
+```
+
+**APFConfig 参数:**
+```python
+@dataclass
+class APFConfig:
+    attract_gain: float = 5.0       # 吸引增益
+    goal_tolerance: float = 0.1    # 目标容差 m
+    repel_gain: float = 100.0       # 排斥增益
+    repel_range: float = 2.0        # 排斥场作用范围 m
+    robot_radius: float = 0.3       # 机器人半径 m
+    escape_gain: float = 2.0        # 局部最小逃脱增益
+```
+
+### 30.5 向量场直方图 — VectorFieldHistogram
+
+```python
+class VectorFieldHistogram:
+    def __init__(self, config: Optional[VFHConfig] = None)
+    
+    def compute_direction(
+        self,
+        robot_pose: np.ndarray,      # (x, y, theta)
+        robot_velocity: np.ndarray,  # (vx, vy, omega)
+        goal: np.ndarray,           # (gx, gy)
+        obstacles: List[Obstacle],
+        dt: float = 0.1
+    ) -> Tuple[float, VelocityCommand]  # (steering_angle, cmd)
+```
+
+### 30.6 综合避障控制器 — ObstacleAvoider
+
+```python
+class ObstacleAvoider:
+    def __init__(self, config: Optional[AvoidanceConfig] = None)
+    
+    def compute_command(
+        self,
+        robot_pose: np.ndarray,
+        robot_velocity: np.ndarray,
+        goal: np.ndarray,
+        obstacles: List[Obstacle],
+        dt: float = 0.1
+    ) -> VelocityCommand
+    
+    def set_strategy(self, strategy: AvoidanceStrategy)
+    
+    @staticmethod
+    def create_from_grade(grade: str) -> 'ObstacleAvoider'
+```
+
+**使用示例:**
+```python
+# 创建避障器
+avoider = ObstacleAvoider.create_from_grade("L")
+
+# 定义障碍物
+obstacles = [
+    Obstacle(position=np.array([2.0, 1.0]), radius=0.5),
+    Obstacle(position=np.array([3.5, 0.0]), radius=0.3, type="dynamic",
+             velocity=np.array([0.2, 0.0])),
+]
+
+# 主循环
+while not reached_goal:
+    cmd = avoider.compute_command(robot_pose, velocity, goal, obstacles)
+    robot_pose = integrate(robot_pose, cmd, dt)
+```
+
+---
+
+## 31. 仿真-避障集成
+
+### 31.1 仿真环境集成
+
+```python
+from simulation.environment import RobotSimulator
+from control.obstacle_avoidance import ObstacleAvoider
+
+# 创建仿真和避障
+sim = RobotSimulator()
+avoider = ObstacleAvoider.create_from_grade("L")
+
+# 主循环
+for step in range(1000):
+    # 获取感知
+    obstacles = sim.get_obstacles()  # 障碍物列表
+    pose = sim.get_pose()
+    velocity = sim.get_velocity()
+    
+    # 避障规划
+    cmd = avoider.compute_command(pose, velocity, goal, obstacles)
+    
+    # 执行
+    sim.send_velocity(cmd.vx, cmd.vy, cmd.omega)
+    sim.step(dt=0.01)
+```
+
+### 31.2 ROS2集成
+
+```python
+# 避障器发布速度指令到 /cmd_vel
+# 激光雷达扫描发布到 /scan
+# 避障器订阅 /scan 并发布 /cmd_vel
+```
+
+---
+
+## 32. AGV等级与避障能力对照
+
+| 等级 | 避障策略 | 最大障碍物数 | 反应时间 | 安全距离 |
+|------|---------|------------|---------|---------|
+| S | 无 | 0 | - | - |
+| M | DWA | 3 | 0.2s | 0.6m |
+| L | HYBRID | 10 | 0.1s | 0.5m |
+| XL | HYBRID | 25 | 0.05s | 0.4m |
+| XXL | HYBRID | 50 | 0.02s | 0.3m |
+
+---
+
+*文档版本: v1.10.0*
 *最后更新: 2026-03-31*
 
 **2026-03-31 v1.9.0**: 新增第29节完整传感器-控制集成流水线，包含 SuperModelPipeline 端到端闭环、MultimodalDataLogger 数据记录器、SensorImuFusionFilter 紧耦合滤波、AGV五级流水线配置模板 (S/M/L/XL/XXL)。
