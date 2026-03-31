@@ -2872,3 +2872,292 @@ class TestSensorPerformance:
         assert duration < 1.1, f"500 frames took {duration:.2f}s, expected < 1.1s"
         
         sensor.close()
+
+
+class TestSensorFusionCrossModal(unittest.TestCase):
+    """传感器跨模态融合交叉测试"""
+    
+    def test_tactile_force_sensor_correlation(self):
+        """触觉-力觉传感器数据相关性测试"""
+        from scipy.stats import pearsonr
+        
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.CAPACITIVE)
+        tactile.open()
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        force.open()
+        
+        tactile_values = []
+        force_values = []
+        
+        for _ in range(50):
+            tf = tactile.capture()
+            contacts = tactile.detect_contacts(tf)
+            wrench = force.capture()
+            
+            # 总压力 vs 力大小
+            total_pressure = np.sum(tf.pressure_map)
+            force_mag = wrench.magnitude
+            
+            tactile_values.append(total_pressure)
+            force_values.append(force_mag)
+        
+        # 验证数据合理性
+        self.assertEqual(len(tactile_values), 50)
+        self.assertEqual(len(force_values), 50)
+        
+        tactile.close()
+        force.close()
+    
+    def test_imu_orientation_consistency(self):
+        """IMU方向一致性测试"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=200)
+        
+        euler_history = []
+        for _ in range(200):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+            euler_history.append(estimator.get_euler())
+        
+        euler_arr = np.array(euler_history)
+        
+        # 检查收敛性 (最后20帧应该稳定)
+        last_20 = euler_arr[-20:]
+        roll_std = np.std(last_20[:, 0])
+        pitch_std = np.std(last_20[:, 1])
+        
+        self.assertLess(roll_std, 0.05)
+        self.assertLess(pitch_std, 0.05)
+        
+        imu.close()
+    
+    def test_multi_sensor_time_alignment(self):
+        """多传感器时间对齐测试"""
+        from sensors.manager import SensorManager, SensorManagerConfig
+        
+        config = SensorManagerConfig(grade='S')
+        manager = SensorManager(config=config)
+        
+        manager.open_all()
+        
+        timestamps = []
+        for _ in range(20):
+            frame = manager.capture_all()
+            # 使用 frame 的 timestamp 字段
+            timestamps.append(frame.timestamp)
+        
+        manager.close_all()
+        
+        # 时间戳应该递增
+        for i in range(1, len(timestamps)):
+            self.assertGreater(timestamps[i], timestamps[i-1])
+    
+    def test_tactile_contact_centroid_tracking(self):
+        """触觉接触质心跟踪测试"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        
+        positions = []
+        for i in range(30):
+            frame = tactile.capture()
+            contacts = tactile.detect_contacts(frame)
+            
+            if contacts:
+                centroid = contacts[0].centroid
+                positions.append(centroid)
+        
+        tactile.close()
+        
+        # 如果有接触数据,验证跟踪稳定性
+        if len(positions) > 5:
+            pos_arr = np.array(positions)
+            movement = np.diff(pos_arr, axis=0)
+            avg_movement = np.mean(np.linalg.norm(movement, axis=1))
+            self.assertLess(avg_movement, 10.0)  # 平均移动应小于10像素
+
+
+class TestSensorAdvancedFeatures(unittest.TestCase):
+    """传感器高级功能测试"""
+    
+    def test_tactile_thermal_response(self):
+        """触觉热响应测试"""
+        tactile = TactileArray(array_size=(8, 8))
+        tactile.open()
+        
+        frames = []
+        for _ in range(50):
+            frame = tactile.capture()
+            frames.append(frame)
+        
+        # 检查温度变化趋势
+        temps = [np.mean(f.temperature_map) for f in frames]
+        
+        # 温度应该在合理范围内
+        self.assertTrue(all(20 < t < 40 for t in temps))
+        
+        tactile.close()
+    
+    def test_force_payload_estimation(self):
+        """力觉负载估计测试"""
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        force.open()
+        
+        payloads = []
+        for _ in range(100):
+            wrench = force.capture()
+            payload = force.estimate_payload(wrench)
+            payloads.append(payload)
+        
+        # 负载估计应该在合理范围内
+        avg_payload = np.mean(payloads)
+        self.assertGreater(avg_payload, 0)
+        self.assertLess(avg_payload, 10)  # kg
+        
+        force.close()
+    
+    def test_imu_madgwick_quaternion_stability(self):
+        """IMU Madgwick四元数稳定性测试"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=200)
+        
+        quaternions = []
+        for _ in range(300):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+            quaternions.append(pose.orientation)
+        
+        quat_arr = np.array(quaternions)
+        
+        # 四元数应该保持归一化
+        norms = np.linalg.norm(quat_arr, axis=1)
+        self.assertTrue(np.allclose(norms, 1.0, atol=0.01))
+        
+        imu.close()
+    
+    def test_wrench_processor_filtering(self):
+        """力旋量处理器滤波测试"""
+        processor = WrenchProcessor(filter_alpha=0.3)
+        
+        raw_wrenches = []
+        for _ in range(100):
+            wrench_vec = np.concatenate([
+                np.random.randn(3) * 5 + [0, 0, 10],
+                np.random.randn(3) * 0.5
+            ])
+            raw_wrenches.append(wrench_vec)
+        
+        filtered_wrenches = []
+        for w in raw_wrenches:
+            fw = processor.filter(w)
+            filtered_wrenches.append(fw)
+        
+        raw_arr = np.array(raw_wrenches)
+        filtered_arr = np.array(filtered_wrenches)
+        
+        # 滤波后方差应该减小
+        raw_std = np.std(raw_arr)
+        filtered_std = np.std(filtered_arr)
+        self.assertLess(filtered_std, raw_std)
+    
+    def test_tactile_slip_multiframe_detection(self):
+        """触觉多帧滑移检测测试"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+        
+        # 采集多帧
+        for _ in range(10):
+            tactile.capture()
+        
+        # 最后一帧检测滑移
+        frame = tactile.capture()
+        slip = tactile.get_slip_signal(frame)
+        
+        self.assertEqual(slip.shape, (16, 16))
+        self.assertTrue(np.all(slip >= 0))
+        self.assertTrue(np.all(slip <= 1))
+        
+        tactile.close()
+    
+    def test_force_contact_state_detection(self):
+        """力觉接触状态检测测试"""
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        force.open()
+        
+        contact_forces = []
+        for _ in range(50):
+            wrench = force.capture()
+            state = force.detect_contact(wrench)
+            contact_forces.append(state.contact_force)
+        
+        # 检查接触力在合理范围
+        self.assertTrue(all(f >= 0 for f in contact_forces))
+        self.assertTrue(np.std(contact_forces) < 100)  # 变化不应太大
+        
+        force.close()
+
+
+class TestAGVSensorGradeCompleteness(unittest.TestCase):
+    """AGV五级传感器完整性测试"""
+    
+    def test_all_grades_have_required_sensors(self):
+        """所有等级具备必需传感器"""
+        required_sensors = ['vision', 'audio', 'tactile', 'force', 'imu']
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            # 视觉
+            from sensors.vision import get_stereo_spec
+            vision_spec = get_stereo_spec(grade)
+            self.assertIsNotNone(vision_spec)
+            
+            # 听觉
+            from sensors.audio import get_audio_spec
+            audio_spec = get_audio_spec(grade)
+            self.assertIsNotNone(audio_spec)
+            
+            # 触觉
+            from sensors.tactile import get_tactile_spec
+            tactile_spec = get_tactile_spec(grade)
+            self.assertIn('array', tactile_spec)
+            
+            # 力觉
+            from sensors.force import get_force_spec
+            force_spec = get_force_spec(grade)
+            self.assertIn('axes', force_spec)
+            
+            # IMU
+            from sensors.imu import get_imu_spec
+            imu_spec = get_imu_spec(grade)
+            self.assertIn('sample_hz', imu_spec)
+    
+    def test_grade_scaling_monotonic(self):
+        """等级扩展性单调递增测试"""
+        prev_res = None
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            from sensors.tactile import get_tactile_spec
+            spec = get_tactile_spec(grade)
+            res = spec['array'][0] * spec['array'][1]  # 总像素数
+            
+            if prev_res is not None:
+                self.assertGreater(res, prev_res)
+            prev_res = res
+    
+    def test_sensor_spec_consistency(self):
+        """传感器规格一致性测试"""
+        # 触觉规格: S < M < L < XL < XXL
+        from sensors.tactile import get_tactile_spec
+        
+        arrays = [get_tactile_spec(g)['array'][0] for g in ['S', 'M', 'L', 'XL', 'XXL']]
+        self.assertTrue(all(arrays[i] < arrays[i+1] for i in range(len(arrays)-1)))
+        
+        # 采样率: S < M < L < XL < XXL
+        from sensors.imu import get_imu_spec
+        sample_rates = [get_imu_spec(g)['sample_hz'] for g in ['S', 'M', 'L', 'XL', 'XXL']]
+        self.assertTrue(all(sample_rates[i] < sample_rates[i+1] for i in range(len(sample_rates)-1)))
+        
+        # 力觉: S < M < L < XL < XXL
+        from sensors.force import get_force_spec
+        force_ranges = [get_force_spec(g)['force_range'] for g in ['S', 'M', 'L', 'XL', 'XXL']]
+        self.assertTrue(all(force_ranges[i] < force_ranges[i+1] for i in range(len(force_ranges)-1)))

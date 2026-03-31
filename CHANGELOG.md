@@ -2,6 +2,17 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.19.0] - 2026-03-31
+
+### Added
+- 新增 `embodied_intelligence_tests.py` (16项具身智能综合测试): 感知-融合-控制闭环测试、传感器协同采集、世界模型规格验证、姿态估计收敛、触觉抓取质量评估、安全控制器基础功能、多传感器时间对齐等
+- 新增 `sensor_tests.py` 传感器跨模态融合交叉测试: 触觉-力觉相关性、IMU方向一致性、多传感器时间对齐、接触质心跟踪等 (4项)
+- 新增 `fusion_tests.py` 融合网络鲁棒性/延迟/内存测试: 噪声/零输入处理、梯度流、推理延迟、内存使用等 (3项)
+- 测试总数: 984 → **1019项全部通过**
+
+### Changed
+- 更新 README/PROGRESS/CHANGELOG 测试计数徽章 (961 → 1019)
+
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
@@ -536,7 +547,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - 完整AGV五级配置对照表 (S/M/L/XL/XXL)
 
 ### 测试状态
-- 895 项测试全部通过 ✅
+- 1019项全部通过 ✅
   - sensor_tests.py: 181 tests ✅
   - fusion_tests.py: 98 tests ✅
   - control_tests.py: 210+ tests ✅

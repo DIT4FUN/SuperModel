@@ -1219,3 +1219,175 @@ class TestForceIMUCrossModalAttention(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+
+
+class TestFusionRobustness(unittest.TestCase):
+    """融合网络鲁棒性测试"""
+    
+    def test_noisy_input_handling(self):
+        """噪声输入处理测试"""
+        fusion = CrossModalFusion(FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        ))
+        
+        # 添加高斯噪声
+        mmi = MultimodalInput(
+            vision=torch.randn(4, 512) * 10.0,  # 高方差噪声
+            audio=torch.randn(4, 128) * 5.0,
+            tactile=torch.randn(4, 64) * 3.0,
+            force=torch.randn(4, 32) * 2.0,
+            imu=torch.randn(4, 64) * 2.0
+        )
+        
+        output = fusion(mmi)
+        
+        # 不应该有 NaN 或 Inf
+        self.assertFalse(torch.isnan(output).any())
+        self.assertFalse(torch.isinf(output).any())
+        self.assertEqual(output.shape, (4, 256))
+    
+    def test_zero_input_handling(self):
+        """零输入处理测试"""
+        fusion = CrossModalFusion(FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        ))
+        
+        mmi = MultimodalInput(
+            vision=torch.zeros(2, 512),
+            audio=torch.zeros(2, 128),
+            tactile=torch.zeros(2, 64),
+            force=torch.zeros(2, 32),
+            imu=torch.zeros(2, 64)
+        )
+        
+        output = fusion(mmi)
+        
+        # 输出应该有效
+        self.assertFalse(torch.isnan(output).any())
+        self.assertFalse(torch.isinf(output).any())
+        self.assertEqual(output.shape, (2, 256))
+    
+    def test_batch_size_variation(self):
+        """批量大小变化测试"""
+        fusion = CrossModalFusion(FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        ))
+        
+        for batch_size in [1, 2, 8, 16]:
+            mmi = MultimodalInput(
+                vision=torch.randn(batch_size, 512),
+                audio=torch.randn(batch_size, 128),
+                tactile=torch.randn(batch_size, 64),
+                force=torch.randn(batch_size, 32),
+                imu=torch.randn(batch_size, 64)
+            )
+            
+            output = fusion(mmi)
+            self.assertEqual(output.shape[0], batch_size)
+            self.assertEqual(output.shape[1], 256)
+    
+    def test_gradient_flow(self):
+        """梯度流测试"""
+        fusion = CrossModalFusion(FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        ))
+        fusion.train()
+        
+        mmi = MultimodalInput(
+            vision=torch.randn(4, 512, requires_grad=True),
+            audio=torch.randn(4, 128, requires_grad=True),
+            tactile=torch.randn(4, 64, requires_grad=True),
+            force=torch.randn(4, 32, requires_grad=True),
+            imu=torch.randn(4, 64, requires_grad=True)
+        )
+        
+        output = fusion(mmi)
+        loss = output.mean()
+        loss.backward()
+        
+        # 检查梯度存在
+        self.assertIsNotNone(mmi.vision.grad)
+        self.assertIsNotNone(mmi.audio.grad)
+        
+        # 检查梯度不为零
+        self.assertFalse(torch.all(mmi.vision.grad == 0))
+
+
+class TestFusionLatency(unittest.TestCase):
+    """融合网络延迟测试"""
+    
+    def test_inference_latency(self):
+        """推理延迟测试"""
+        import time
+        
+        fusion = CrossModalFusion(FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        ))
+        fusion.eval()
+        
+        mmi = MultimodalInput(
+            vision=torch.randn(1, 512),
+            audio=torch.randn(1, 128),
+            tactile=torch.randn(1, 64),
+            force=torch.randn(1, 32),
+            imu=torch.randn(1, 64)
+        )
+        
+        # 预热
+        with torch.no_grad():
+            for _ in range(10):
+                _ = fusion(mmi)
+        
+        # 测量
+        latencies = []
+        with torch.no_grad():
+            for _ in range(100):
+                start = time.perf_counter()
+                _ = fusion(mmi)
+                latencies.append((time.perf_counter() - start) * 1000)
+        
+        avg_latency = np.mean(latencies)
+        p99_latency = np.percentile(latencies, 99)
+        
+        # 平均延迟应该小于 10ms
+        self.assertLess(avg_latency, 10)
+        # P99 应该小于 20ms
+        self.assertLess(p99_latency, 20)
+
+
+class TestFusionMemory(unittest.TestCase):
+    """融合网络内存测试"""
+    
+    def test_memory_usage(self):
+        """内存使用测试"""
+        import torch
+        
+        fusion = CrossModalFusion(FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
+        ))
+        
+        # 记录初始内存
+        torch.cuda.empty_cache() if torch.cuda.is_available() else None
+        
+        mmi = MultimodalInput(
+            vision=torch.randn(8, 512),
+            audio=torch.randn(8, 128),
+            tactile=torch.randn(8, 64),
+            force=torch.randn(8, 32),
+            imu=torch.randn(8, 64)
+        )
+        
+        output = fusion(mmi)
+        
+        # 输出大小合理
+        self.assertEqual(output.shape, (8, 256))
+        self.assertFalse(torch.isnan(output).any())
