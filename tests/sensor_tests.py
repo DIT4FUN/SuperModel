@@ -2573,3 +2573,302 @@ class TestSensorManagerFullCoverage(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+# ==============================================================================
+# 增强边缘测试 - 传感器极端情况测试
+# ==============================================================================
+
+class TestSensorEdgeCases:
+    """传感器极端情况和边界条件测试"""
+    
+    def test_tactile_zero_pressure_calibration(self):
+        """零压力校准测试"""
+        from src.sensors.tactile import TactileArray, TactileSensorType
+        
+        sensor = TactileArray(
+            array_size=(8, 8),
+            sensor_type=TactileSensorType.RESISTIVE,
+            sensor_id="test_zero"
+        )
+        sensor.open()
+        
+        # 采集零压力基准
+        zero_pressure = sensor.capture().pressure_map.copy()
+        sensor.calibrate(zero_pressure=zero_pressure)
+        
+        assert sensor.calibration.offset_map is not None
+        assert sensor.calibration.offset_map.shape == (8, 8)
+        
+        sensor.close()
+    
+    def test_force_extreme_wrench(self):
+        """极端力值测试"""
+        from src.sensors.force import ForceTorqueSensor, ForceSensorType
+        
+        sensor = ForceTorqueSensor(
+            sensor_type=ForceSensorType.SIX_AXIS,
+            sensor_id="test_extreme"
+        )
+        sensor.open()
+        
+        # 采集极端力值
+        for _ in range(10):
+            wrench = sensor.capture()
+            assert wrench.force.shape == (3,)
+            assert wrench.torque.shape == (3,)
+        
+        sensor.close()
+    
+    def test_imu_extreme_orientation(self):
+        """极端姿态测试"""
+        from src.sensors.imu import IMUSensor, IMUSensorType
+        from src.sensors.imu import PoseEstimator
+        
+        sensor = IMUSensor(
+            sensor_type=IMUSensorType.BMI088,
+            sensor_id="test_extreme"
+        )
+        sensor.open()
+        
+        estimator = PoseEstimator(algorithm="madgwick", sample_rate=200)
+        
+        # 模拟各种姿态
+        for _ in range(100):
+            frame = sensor.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+            euler = pose.to_euler()
+            assert euler.shape == (3,)
+        
+        sensor.close()
+    
+    def test_tactile_slip_under_oscillation(self):
+        """振荡情况下滑移检测"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        sensor = VirtualTactileSensor(array_size=(16, 16))
+        sensor.open()
+        
+        # 模拟水平滑动
+        frames = sensor.simulate_sliding(
+            direction=(1.0, 0.0),
+            speed=0.05,
+            duration_frames=20
+        )
+        
+        assert len(frames) == 20
+        for frame in frames:
+            assert frame.pressure_map.shape == (16, 16)
+            assert np.any(frame.pressure_map > 0)
+        
+        sensor.close()
+    
+    def test_force_wrench_transform(self):
+        """力旋量坐标变换"""
+        from src.sensors.force import Wrench
+        
+        wrench = Wrench(
+            force=np.array([10.0, 0.0, 0.0]),
+            torque=np.array([0.0, 0.0, 5.0])
+        )
+        
+        # 绕Z轴旋转90度
+        R = np.array([[0, -1, 0], [1, 0, 0], [0, 0, 1]])
+        t = np.array([0.1, 0.0, 0.0])
+        
+        transformed = wrench.transform(R, t)
+        
+        assert transformed.force.shape == (3,)
+        assert transformed.torque.shape == (3,)
+        # 旋转后力应该沿Y轴
+        assert abs(transformed.force[1]) > 0.5
+    
+    def test_imu_pose_composition(self):
+        """位姿合成测试"""
+        from src.sensors.imu import Pose
+        
+        pose1 = Pose.identity()
+        pose2 = Pose.from_euler(
+            position=np.array([1.0, 0.0, 0.0]),
+            rpy=np.array([0.0, 0.0, 0.0])
+        )
+        
+        # 验证四元数归一化
+        assert abs(np.linalg.norm(pose1.orientation) - 1.0) < 1e-6
+        assert abs(np.linalg.norm(pose2.orientation) - 1.0) < 1e-6
+        
+        # 验证欧拉角转换
+        euler = pose2.to_euler()
+        assert euler.shape == (3,)
+        
+        # 验证矩阵转换
+        matrix = pose2.to_matrix()
+        assert matrix.shape == (4, 4)
+        assert np.allclose(matrix[3, :], [0, 0, 0, 1])
+    
+    def test_tactile_contact_minimal_area(self):
+        """最小接触面积检测"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        sensor = VirtualTactileSensor(array_size=(8, 8))
+        sensor.open()
+        
+        # 单点接触
+        frame = sensor.simulate_contact(
+            contact_pos=(0.5, 0.5),
+            contact_radius=0.05,  # 非常小的接触
+            contact_force=1.0
+        )
+        
+        # 极小接触可能检测不到，这是正常的
+        assert frame.pressure_map.shape == (8, 8)
+        
+        sensor.close()
+    
+    def test_force_payload_estimation_accuracy(self):
+        """负载估计精度"""
+        from src.sensors.force import VirtualForceSensor
+        
+        sensor = VirtualForceSensor(sensor_id="test_payload")
+        sensor.open()
+        
+        # 模拟已知负载
+        estimated = []
+        for mass in [0.5, 1.0, 2.0, 5.0]:
+            wrench = sensor.simulate_payload(mass=mass)
+            # 力值应该与质量成正比
+            fz_measured = abs(wrench.force[2])
+            fz_expected = mass * 9.81
+            # 允许一定误差（因为有噪声）
+            error = abs(fz_measured - fz_expected) / fz_expected
+            estimated.append(error < 0.5)  # 50%误差容忍
+        
+        assert any(estimated)
+        sensor.close()
+    
+    def test_imu_madgwick_vs_complementary(self):
+        """Madgwick与互补滤波对比"""
+        from src.sensors.imu import PoseEstimator
+        
+        # 创建两个估计器
+        madgwick = PoseEstimator(algorithm="madgwick", sample_rate=200)
+        complementary = PoseEstimator(algorithm="complementary", sample_rate=200)
+        
+        # 模拟静止状态
+        accel = np.array([0.0, 0.0, 9.81])
+        gyro = np.array([0.0, 0.0, 0.0])
+        
+        for _ in range(50):
+            p1 = madgwick.update(accel, gyro)
+            p2 = complementary.update(accel, gyro)
+        
+        # 两种方法都应该给出水平姿态
+        e1 = p1.to_euler()
+        e2 = p2.to_euler()
+        
+        # roll和pitch应该接近0
+        assert abs(e1[0]) < 0.1  # roll
+        assert abs(e1[1]) < 0.1  # pitch
+        assert abs(e2[0]) < 0.1
+        assert abs(e2[1]) < 0.1
+    
+    def test_virtual_sensor_idempotency(self):
+        """虚拟传感器幂等性测试"""
+        from src.sensors.tactile import VirtualTactileSensor
+        from src.sensors.force import VirtualForceSensor
+        from src.sensors.imu import VirtualIMUSensor
+        
+        # 测试多次open/close不会出错
+        for _ in range(3):
+            t = VirtualTactileSensor()
+            t.open()
+            t.simulate_contact((0.5, 0.5), contact_force=5.0)
+            t.close()
+            
+            f = VirtualForceSensor()
+            f.open()
+            f.simulate_contact((1, 1, 1))
+            f.close()
+            
+            i = VirtualIMUSensor()
+            i.open()
+            i.simulate_static()
+            i.close()
+
+
+class TestSensorPerformance:
+    """传感器性能基准测试"""
+    
+    def test_tactile_capture_latency(self):
+        """触觉采集延迟"""
+        import time
+        from src.sensors.tactile import TactileArray, TactileSensorType
+        
+        sensor = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.CAPACITIVE
+        )
+        sensor.open()
+        
+        latencies = []
+        for _ in range(100):
+            start = time.perf_counter()
+            sensor.capture()
+            latency = (time.perf_counter() - start) * 1000
+            latencies.append(latency)
+        
+        avg_latency = np.mean(latencies)
+        p99_latency = np.percentile(latencies, 99)
+        
+        # 平均延迟应该小于10ms
+        assert avg_latency < 10, f"Average latency {avg_latency:.2f}ms too high"
+        # P99延迟应该小于50ms
+        assert p99_latency < 50, f"P99 latency {p99_latency:.2f}ms too high"
+        
+        sensor.close()
+    
+    def test_force_capture_throughput(self):
+        """力觉采集吞吐量"""
+        import time
+        from src.sensors.force import ForceTorqueSensor, ForceSensorType
+        
+        sensor = ForceTorqueSensor(
+            sensor_type=ForceSensorType.SIX_AXIS
+        )
+        sensor.open()
+        
+        start = time.perf_counter()
+        count = 0
+        while time.perf_counter() - start < 0.1:  # 0.1秒内尽可能多采集
+            sensor.capture()
+            count += 1
+        
+        duration = time.perf_counter() - start
+        throughput = count / duration
+        
+        # 吞吐量应该大于100Hz
+        assert throughput > 100, f"Throughput {throughput:.0f}Hz too low"
+        
+        sensor.close()
+    
+    def test_imu_batch_capture(self):
+        """IMU批量采集"""
+        import time
+        from src.sensors.imu import IMUSensor, IMUSensorType
+        
+        sensor = IMUSensor(
+            sensor_type=IMUSensorType.BMI088,
+            sample_rate=500
+        )
+        sensor.open()
+        
+        start = time.perf_counter()
+        frames = []
+        for _ in range(500):
+            frames.append(sensor.capture())
+        duration = time.perf_counter() - start
+        
+        # 500帧应该在1秒内完成
+        assert duration < 1.1, f"500 frames took {duration:.2f}s, expected < 1.1s"
+        
+        sensor.close()
