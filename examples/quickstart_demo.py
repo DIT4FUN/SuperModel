@@ -10,6 +10,7 @@ SuperModel 快速入门演示
 import numpy as np
 import sys
 import time
+import torch
 
 sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
 
@@ -24,8 +25,8 @@ from fusion.cross_modal_fusion import (
     CrossModalFusion, FusionConfig, FusionStrategy, MultimodalInput
 )
 
-from control.agv import AGVMotionController, AGVGrade, AGVSpec, AGVPose
-from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel
+from control.agv import AGVMotionController, AGVGrade, AGVSpec, AGVPose, AGVTwist, DriveType
+from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
 from control.motion import MotionController
 
 from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
@@ -69,7 +70,7 @@ def demo_sensor_collection():
     imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
     imu.open()
     imu_frame = imu.capture()
-    print(f"  🧭 IMU姿态: rpy=[{imu_frame.roll:.2f}, {imu_frame.pitch:.2f}, {imu_frame.yaw:.2f}]°")
+    print(f"  🧭 IMU数据: accel={imu_frame.accel}, gyro_norm={imu_frame.gyro_magnitude:.3f} rad/s")
     imu.close()
     
     return stereo_frame, audio_frame, tactile_frame, wrench, imu_frame
@@ -84,54 +85,47 @@ def demo_sensor_manager():
     config = SensorManagerConfig(grade="M")
     manager = SensorManager(config)
     
-    manager.start_all()
-    time.sleep(0.1)  # 等待传感器初始化
+    manager.open_all()
     
     # 同步采集所有传感器
-    data = manager.capture_all()
-    print(f"  已采集模态: {list(data.keys())}")
+    frame = manager.capture_all()
+    print(f"  时间戳: {frame.timestamp:.3f}")
+    print(f"  视觉: {'✓' if frame.vision else '✗'}")
+    print(f"  听觉: {'✓' if frame.audio else '✗'}")
+    print(f"  触觉: {'✓' if frame.tactile else '✗'}")
+    print(f"  力觉: {'✓' if frame.force else '✗'}")
+    print(f"  IMU: {'✓' if frame.imu else '✗'}")
     
-    for key, value in data.items():
-        if isinstance(value, np.ndarray):
-            print(f"    {key}: shape={value.shape}")
-        else:
-            print(f"    {key}: {type(value).__name__}")
-    
-    manager.stop_all()
     manager.close_all()
     
-    return data
+    return frame
 
 
-def demo_multimodal_fusion(data):
+def demo_multimodal_fusion(frame):
     """演示: 跨模态融合"""
     print("\n" + "="*60)
     print("🧠 跨模态融合网络")
     print("="*60)
     
     config = FusionConfig(
-        strategy=FusionStrategy.CROSS_ATTENTION,
+        strategy=FusionStrategy.HYBRID,
         hidden_dim=256,
         num_heads=4,
         num_layers=2
     )
     fusion = CrossModalFusion(config)
     
-    # 构建多模态输入
-    inputs = MultimodalInput(
-        vision=data.get('vision'),
-        audio=data.get('audio'),
-        tactile=data.get('tactile'),
-        force=data.get('force'),
-        imu=data.get('imu')
-    )
+    print(f"  融合策略: {config.strategy.value}")
+    print(f"  隐藏维度: {config.hidden_dim}")
+    print(f"  注意力头数: {config.num_heads}")
+    print(f"  网络层数: {config.num_layers}")
     
-    # 执行融合
-    fused_output = fusion(inputs)
-    print(f"  融合特征维度: {fused_output.fused_features.shape}")
-    print(f"  注意力权重数: {len(fused_output.attention_weights)}")
+    # 融合需要张量输入 (B x C x H x W 等格式)
+    # 实际应用中需先通过 sensors/encoders.py 将传感器数据编码为张量
+    print(f"  输入要求: vision(B×3×224×224), audio(B×T×F), tactile(B×N), force(B×6), imu(B×9)")
+    print(f"  查看 examples/complete_system_demo.py 了解完整融合流程")
     
-    return fused_output
+    return None
 
 
 def demo_agv_control():
@@ -141,26 +135,20 @@ def demo_agv_control():
     print("="*60)
     
     # 创建 M 级 AGV
-    spec = AGVSpec.for_grade(AGVGrade.M)
+    spec = AGVSpec.from_grade(AGVGrade.M)
     controller = AGVMotionController(spec)
     
-    # 设置目标位姿
-    target = AGVPose(x=1.0, y=0.5, theta=0.0)
-    controller.set_target_pose(target)
-    
-    # 运动学正解
-    joint_velocities = np.array([0.5, 0.5])  # 左右轮速
+    # 运动学正解: 轮速 -> AGV速度
+    joint_velocities = np.array([0.5, 0.5])  # 左右轮速 rad/s
     twist = controller.forward_kinematics(joint_velocities)
-    print(f"  运动学正解: v={twist.linear:.3f} m/s, ω={twist.angular:.3f} rad/s")
+    print(f"  运动学正解: vx={twist.vx:.3f} m/s, vy={twist.vy:.3f} m/s, ω={twist.omega:.3f} rad/s")
+    print(f"  AGV规格: 最大线速度={spec.max_linear_speed} m/s, 最大角速度={spec.max_angular_speed} rad/s")
+    print(f"  驱动类型: {spec.drive_type.name}, 控制频率: {spec.control_frequency} Hz")
     
-    # 运动学逆解
-    desired_twist = controller.TwistCommand(linear=0.5, angular=0.0)
+    # 运动学逆解: AGV速度 -> 轮速
+    desired_twist = AGVTwist(vx=0.5, vy=0.0, omega=0.0)
     joint_cmds = controller.inverse_kinematics(desired_twist)
     print(f"  运动学逆解: 左轮={joint_cmds[0]:.3f}, 右轮={joint_cmds[1]:.3f} rad/s")
-    
-    # 更新位姿
-    pose = controller.update_pose(twist, dt=0.1)
-    print(f"  更新后位姿: x={pose.x:.3f}, y={pose.y:.3f}, θ={pose.theta:.3f}")
     
     return controller
 
@@ -171,24 +159,31 @@ def demo_safety_controller():
     print("🛡️ 五级安全控制器")
     print("="*60)
     
-    config = SafetyConfig(grade="M")
+    config = SafetyConfig(
+        joint_limits_lower=np.array([-3.14]*6),
+        joint_limits_upper=np.array([3.14]*6),
+        velocity_limits=np.array([2.0]*6),
+        acceleration_limits=np.array([5.0]*6),
+        torque_limits=np.array([10.0]*6),
+        safety_level=SafetyLevel.M
+    )
     safety = SafetyController(config)
     
-    # 模拟关节状态快照
-    from control.safety_controller import JointStateSnapshot
+    print(f"  当前安全等级: {safety.safety_level.name} ({safety.safety_level.value})")
+    print(f"  关节限位: ±{config.joint_limits_upper[0]:.2f} rad")
+    print(f"  速度限制: {config.velocity_limits[0]:.1f} rad/s")
+    print(f"  力矩限制: {config.torque_limits[0]:.1f} N·m")
+    print(f"  碰撞阈值: {config.collision_threshold} N")
+    
+    # 执行安全检查
     snapshot = JointStateSnapshot(
-        joint_positions=np.array([0.1, 0.2, 0.3, 0.1, 0.2, 0.3]),
-        joint_velocities=np.array([0.0, 0.0, 0.0, 0.1, 0.1, 0.1]),
-        joint_torques=np.array([0.5, 0.6, 0.7, 0.5, 0.6, 0.7]),
+        positions=np.array([0.1, 0.2, 0.3, 0.1, 0.2, 0.3]),
+        velocities=np.array([0.0, 0.0, 0.0, 0.1, 0.1, 0.1]),
+        torques=np.array([0.5, 0.6, 0.7, 0.5, 0.6, 0.7]),
         timestamp=time.time()
     )
-    
-    # 检查安全等级
-    level = safety.check_safety_level(snapshot)
-    print(f"  当前安全等级: {level.name} ({level.value})")
-    print(f"  安全阈值: position={config.position_limit:.3f} rad")
-    print(f"            velocity={config.velocity_limit:.3f} rad/s")
-    print(f"            torque={config.torque_limit:.3f} N·m")
+    result = safety.check(snapshot)
+    print(f"  安全检查: {'通过 ✓' if result.safe else '警告 ✗'}")
     
     return safety
 
@@ -203,14 +198,15 @@ def demo_simulation():
     env = SuperModelGymEnv(config)
     
     # 重置环境
-    obs = env.reset()
-    print(f"  环境观测维度: {obs['state'].shape}")
+    obs, info = env.reset()
+    print(f"  观测空间: {env.observation_space}")
+    print(f"  动作空间: {env.action_space}")
     
     # 随机动作
     action = env.action_space.sample()
-    obs, reward, done, info = env.step(action)
-    print(f"  执行动作: {action[:2]}...")
-    print(f"  奖励: {reward:.4f}, 完成: {done}")
+    obs, reward, done, truncated, info = env.step(action)
+    print(f"  执行动作完成")
+    print(f"  奖励: {reward:.4f}, 终止: {done}, 截断: {truncated}")
     
     env.close()
     
