@@ -5,6 +5,36 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.18.0] - 2026-03-31
+
+### Added
+- **触觉控制模块** (`src/control/tactile_control.py`): 新增 TactileServoController + GraspQualityController
+  - 基于触觉反馈的位置/力混合控制
+  - 滑移检测与reactive控制
+  - 抓取质量监控
+  - 支持AGV五级配置 (S/M/L/XL/XXL)
+- **力觉控制模块** (`src/control/force_control.py`): 新增 ForceController + HybridForcePositionController
+  - 导纳控制: 将力误差转换为位置调整
+  - 碰撞检测与响应
+  - 力位混合控制
+  - 支持AGV五级配置
+- **IMU控制模块** (`src/control/imu_control.py`): 新增 AttitudeStabilizer + MotionEstimator
+  - 姿态稳定控制 (PID)
+  - 运动估计 (速度/位置/轨迹积分)
+  - 倾角检测与报警
+  - 支持AGV五级配置
+- **传感器-控制集成测试** (`tests/sensor_control_integration_tests.py`): 新增 23 项测试
+  - TestTactileServoController: 6 tests
+  - TestForceController: 6 tests
+  - TestAttitudeStabilizer: 6 tests
+  - TestMotionEstimator: 5 tests
+- **控制模块导出更新** (`src/control/__init__.py`): 新增 12 个类导出
+
+### Changed
+- 测试总数: 961 → 984 项, 全部通过 ✅
+
+---
+
 ## [1.17.1] - 2026-03-31
 
 ### Added
