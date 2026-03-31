@@ -2,6 +2,19 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.31.0] - 2026-04-01
+
+### Added
+- **AGV五级快速参考卡** `docs/design/AGV_SPEC_QUICKREF.md` (220行)
+  - 一页速查: 8大子系统规格表 (触觉/力觉/IMU/视觉/听觉/控制/融合/硬件)
+  - 选型速查: S/M/L/XL/XXL 定位与场景对照表
+  - 代码示例: 传感器初始化/AGV规格/触觉伺服/力觉导纳/IMU稳定
+
+### Changed
+- **MODULE_INDEX.md**: 版本 v1.29.0 → v1.31.0
+- **PROGRESS.md**: 版本 v1.30.0 → v1.31.0
+- **全量测试**: 1112项全部通过 (sensor 210 + fusion 104 + 其他 798)
+
 ## [1.30.1] - 2026-04-01
 
 ### Changed
