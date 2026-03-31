@@ -5,6 +5,25 @@ All notable changes to SuperModel will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.0.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.15.0] - 2026-03-31
+
+### Added
+- **具身智能全链路测试** (`tests/embodied_pipeline_tests.py`): 新增 17 项端到端测试
+  - 具身传感全链路: 多模态传感器同步采集与时序一致性
+  - 跨模态融合链路: 五模态融合 + Language 模态
+  - AGV 控制链路: 全等级规格、正逆运动学、位姿更新
+  - 运动控制链路: PID 关节控制
+  - 仿真链路: Gymnasium 环境重置/步进
+  - 端到端闭环: 传感-融合-控制-安全全链路验证
+- **AGV 全规格速查表** (`docs/design/AGV_FULL_SPEC_REFERENCE.md`): 新增完整对照表
+  - 七大子系统 (感知/融合/认知/执行/通信/安全/硬件)
+  - 五级 (S/M/L/XL/XXL) 完整规格参数
+  - 成本估算与典型应用场景
+  - 模块接口速查代码示例
+
+### Changed
+- 全部 912 项测试持续通过 (新增 17 项全链路测试)
+
 ## [1.14.0] - 2026-03-31
 
 ### Added
