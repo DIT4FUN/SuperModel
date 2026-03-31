@@ -2,6 +2,22 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.23.0] - 2026-04-01
+
+### Added
+- **附录D - AGV World Model世界模型规格** (`docs/architecture/AGV_COMPLETE_SPEC_REFERENCE.md` 附录D)
+  - World Model 核心架构: RSSM, 奖励预测器, 观测解码器, 控制器
+  - World Model AGV五级规格表 (S:2M参数 → XXL:500M参数)
+  - World Model 训练模式: Dreamer/VAE/Contrastive/Masked
+  - World Model 性能指标: 观测预测MSE/奖励预测Acc/推理延迟/训练步数
+  - World Model 在具身智能中的作用: 想象/梦学习/跨模态预测/终身学习
+
+### Changed
+- MODULE_INDEX.md 更新至 v1.23.0，新增附录D World Model规格章节
+
+### Fixed
+- 全1019项测试持续通过 ✅
+
 ## [1.22.0] - 2026-04-01
 
 ### Added

@@ -1,10 +1,18 @@
 # SuperModel 模块索引 / Module Index
 
-> **版本**: v1.21.0
+> **版本**: v1.23.0
 > **更新**: 2026-04-01
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 本文档是 SuperModel 项目的完整模块索引，提供所有源代码模块、设计文档和测试用例的快速导航。
+
+---
+
+## 更新日志
+
+- **v1.23.0** (2026-04-01): 新增附录D - AGV World Model世界模型规格
+- **v1.22.0** (2026-04-01): 新增MODULE_INDEX.md模块索引文档
+- **v1.21.0** (2026-04-01): 全模块完成确认 (触觉/力觉/IMU + 控制 + 测试1019项通过)
 
 ---
 
@@ -207,5 +215,98 @@ docs/
 
 ---
 
-*本文档版本: v1.21.0*
+*本文档版本: v1.23.0*
 *最后更新: 2026-04-01*
+
+---
+
+## 附录D: World Model 世界模型规格 (v1.23.0)
+
+### 世界模型核心架构
+
+World Model 位于 `src/learning/world_model.py`，提供环境动力学预测能力。
+
+| 组件 | 类 | 功能 |
+|------|-----|------|
+| 环境模型 | `WorldModel` | 观测预测、动作建模 |
+| 表征学习 | `RSSM` (Recurrent State Space Model) | 序列潜变量建模 |
+| 奖励预测 | `RewardPredictor` | 隐空间奖励预测 |
+| 观测重构 | `ObservationDecoder` | 图像/触觉/力觉重构 |
+| 控制器 | `Controller` | MPC/PEIRL策略学习 |
+
+### World Model AGV五级规格
+
+| 规格 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **潜空间维度** | 32 | 64 | 128 | 256 | 512 |
+| **隐变量维度** | 32 | 32 | 64 | 128 | 256 |
+| **序列长度** | 50 | 100 | 200 | 400 | 1000 |
+| **动作空间** | 7DoF | 7DoF | 12DoF | 18DoF | 自由度 |
+| **预测频率** | 10Hz | 20Hz | 50Hz | 100Hz | 200Hz |
+| **观测重构** | 图像 | 图像+深度 | 多模态 | 多模态 | 全模态 |
+| **NPU加速** | ✗ | RK3588 | RK3588 | RK3588×2 | RK3588×4 |
+| **模型参数量** | 2M | 8M | 30M | 100M | 500M |
+
+### World Model 训练模式
+
+| 模式 | 描述 | 适用场景 |
+|------|------|---------|
+| `dreamer` | DreamerV3 自由运行训练 | 离线强化学习 |
+| `cvae` | Conditional VAE 动作条件生成 | 模仿学习 |
+| `contrastive` | 对比学习表征 | 跨模态对齐 |
+| `masked` | Masked 自编码器 | 传感器融合 |
+
+### World Model 集成接口
+
+```python
+from src.learning.world_model import WorldModel, WorldModelConfig
+
+config = WorldModelConfig(
+    hidden_dim=256,
+    stochastic_dim=32,
+    deterministic_dim=512,
+    action_dim=7,
+    obs_encoder_dim=1024,
+    training_mode="dreamer",
+    device="cuda" if torch.cuda.is_available() else "cpu"
+)
+model = WorldModel(config)
+
+# 观测预测
+observation_embed = encoder(obs)
+posterior_z = model.rssm.encode(observation_embed, action, hidden)
+reconstruction = model.decoder(posterior_z, hidden)
+predicted_reward = model.reward_predictor(posterior_z, hidden)
+```
+
+### World Model 性能指标
+
+| 指标 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **观测预测MSE** | <0.05 | <0.02 | <0.01 | <0.005 | <0.001 |
+| **奖励预测Acc** | >75% | >82% | >88% | >92% | >96% |
+| **推理延迟(ms)** | 8 | 5 | 3 | 1.5 | 0.5 |
+| **训练步数/秒** | 50 | 120 | 300 | 800 | 2000 |
+| **内存占用(MB)** | 256 | 512 | 1024 | 2048 | 8192 |
+
+### World Model 在具身智能中的作用
+
+```
+感知输入 → [编码器] → 观测嵌入
+                           ↓
+动作输入 → [动作编码] → concat → [RSSM] → 潜状态序列
+                                              ↓
+                    [奖励预测器] ← 奖励信号
+                           ↓
+                    [控制器] → 策略动作
+                           ↓
+                    [Decoder] → 下一帧预测
+                           ↓
+                         环境
+```
+
+World Model 使机器人能够：
+1. **想象** 未执行动作的结果 (免费 rollout)
+2. **梦学习** - 在潜空间探索不安全的动作
+3. **跨模态预测** - 用视觉预测触觉/力觉反馈
+4. **终身学习** - 持续更新环境模型
