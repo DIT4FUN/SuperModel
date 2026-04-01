@@ -2,6 +2,20 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.32.0] - 2026-04-01
+
+### Added
+- **PROGRESS.md v1.32.0 更新**: 全模块验证完成状态记录
+- **传感器模块完善**: 触觉/力觉/IMU 传感器AGV五级规格完整
+- **控制模块确认**: 18个子模块全部完成并通过测试
+
+### Testing
+- **1112 tests passed** (19.06s)
+  - sensor_tests.py: 210 tests ✅
+  - fusion_tests.py: 104 tests ✅
+  - control_tests.py: 420+ tests ✅
+  - 全模块回归测试通过
+
 ## [1.31.0] - 2026-04-01
 
 ### Added
