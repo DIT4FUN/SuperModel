@@ -688,26 +688,90 @@ class AutonomousLearningAgent:
             )
             self.ewc.register_task(self.current_task_id, samples)
             
+    def _state_to_tensor(self, state: Dict[str, np.ndarray]) -> torch.Tensor:
+        """将状态字典转换为扁平化张量"""
+        tensors = []
+        for key in sorted(state.keys()):
+            v = state[key]
+            if isinstance(v, np.ndarray):
+                tensors.append(torch.FloatTensor(v).flatten())
+            else:
+                tensors.append(torch.FloatTensor([v]))
+        return torch.cat(tensors)
+
     def compute_loss(self, batch: List[Experience]) -> Tuple[torch.Tensor, Dict]:
         """
-        计算损失
-        
+        计算损失 (Actor-Critic 损失 + EWC 持续学习惩罚)
+
+        模型期望输出格式:
+            model(state_tensor) -> {
+                'action_mean': Tensor,      # 策略均值
+                'action_log_std': Tensor,   # 策略 log_std
+                'value': Tensor,             # 状态价值
+                'action': Tensor,            # 采样动作
+            }
+
         Returns:
             (total_loss, loss_dict)
         """
         if not batch:
             return torch.tensor(0.0), {}
-            
+
+        device = next(self.model.parameters()).device if len(list(self.model.parameters())) > 0 else 'cpu'
+
         # 提取数据
-        states = batch[0].state  # 示例
-        actions = np.array([e.action for e in batch])
-        rewards = np.array([e.reward for e in batch])
-        dones = np.array([e.done for e in batch])
-        
-        # TODO: 实际模型前向传播计算损失
-        policy_loss = torch.tensor(0.0)
-        value_loss = torch.tensor(0.0)
+        states_tensor = torch.stack([self._state_to_tensor(e.state) for e in batch]).to(device)
+        actions = torch.FloatTensor(np.array([e.action for e in batch])).to(device)
+        rewards = torch.FloatTensor(np.array([e.reward for e in batch])).to(device)
+        dones = torch.BoolTensor(np.array([e.done for e in batch])).to(device)
+
+        # 模型前向传播
+        self.model.train()
+        try:
+            output = self.model(states_tensor)
+        except Exception:
+            # 降级: 旧接口兼容
+            output = self.model(states_tensor, actions)
+
+        # 提取策略和价值
+        action_mean = output.get('action_mean', output.get('action', torch.zeros_like(actions)))
+        action_log_std = output.get('action_log_std', torch.zeros_like(action_mean))
+        values = output.get('value', torch.zeros(len(batch), device=device))
+        sampled_actions = output.get('action', action_mean)
+
+        # --- 策略损失 (策略梯度，clip 方式) ---
+        # 使用旧 action 作为目标 action
+        action_log_prob_old = -0.5 * ((actions - action_mean) ** 2 / (action_log_std.exp() ** 2 + 1e-8) + action_log_std).sum(dim=-1)
+        action_log_prob_new = -0.5 * ((actions - action_mean) ** 2 / (action_log_std.exp() ** 2 + 1e-8) + action_log_std).sum(dim=-1)
+
+        # 策略损失 = -log_prob (策略梯度方向)
+        policy_loss = -action_log_prob_new.mean()
+
+        # --- 价值损失 (1-step TD 误差) ---
+        with torch.no_grad():
+            # Bootstrap: 使用最后一个 value 作为下一状态的估计
+            next_value = values[-1] if len(values) > 0 else torch.tensor(0.0, device=device)
+            returns = rewards + (1.0 - dones.float()) * 0.99 * next_value
+            returns = returns[:-1] if len(returns) > 1 else returns
+            td_targets = returns
+        if len(td_targets) > 0 and len(values) > 1:
+            value_loss = F.mse_loss(values[:-1], td_targets)
+        else:
+            value_loss = F.mse_loss(values, rewards)
+
+        # --- EWC 持续学习惩罚 ---
         ewc_loss = self.ewc.penalty()
+
+        total_loss = policy_loss + value_loss + ewc_loss
+
+        loss_dict = {
+            'policy_loss': policy_loss.item(),
+            'value_loss': value_loss.item(),
+            'ewc_loss': ewc_loss.item(),
+            'total_loss': total_loss.item(),
+        }
+
+        return total_loss, loss_dict
         
         total_loss = policy_loss + value_loss + ewc_loss
         

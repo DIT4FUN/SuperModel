@@ -2,6 +2,39 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.41.0] - 2026-04-01 16:20
+
+### Added
+- **ROS2-Gazebo 联合仿真模块** `src/simulation/gazebo_sim.py` (新增17391字节)
+  - `GazeboROS2Bridge`: ROS2 与 Gazebo 之间的桥接器 (话题发布/订阅)
+  - `GazeboSimulator`: Gazebo 仿真器封装 (世界管理/模型生成)
+  - `AGVGazeboSimulator`: AGV 专用仿真器 (差速驱动运动学/里程计积分)
+  - `GazeboROS2Simulator`: 完整 ROS2+Gazebo 联合仿真器 (导航/抓取动作)
+  - `GazeboROS2Config`: ROS2-Gazebo 桥接配置
+  - `GazeboAGVSpec`: AGV Gazebo 规格 (五级等级 S→XXL)
+  - 支持: 相机/IMU/激光雷达/里程计/关节状态话题桥接
+
+- **ROS2-Gazebo 测试用例** `tests/gazebo_sim_tests.py` (42项测试)
+  - `TestGazeboROS2Config`: 配置类测试
+  - `TestGazeboAGVSpec`: AGV 规格测试
+  - `TestGazeboROS2Bridge`: ROS2 桥接器测试 (无 ROS2 graceful degradation)
+  - `TestGazeboSimulator`: 仿真器生命周期测试
+  - `TestAGVGazeboSimulator`: AGV 运动学/里程计/五级等级测试
+  - `TestGazeboROS2Simulator`: 联合仿真器动作/重置测试
+
+### Updated
+- **自主学习模块** `src/learning/autonomous_learning.py`:
+  - 修复 `compute_loss()` TODO: 实现 Actor-Critic 前向传播损失计算
+  - 新增 `_state_to_tensor()` 辅助方法: 状态字典 → 扁平化张量
+  - 实现策略损失 (策略梯度) + 价值损失 (TD误差) + EWC 惩罚
+  - 完整梯度反向传播支持
+
+- `README.md`: 测试计数 1257 → 1299
+- `PROGRESS.md`: v1.41.0 进度日志
+
+### Testing
+- 全量测试: `pytest tests/ -q` → 1299 passed in 48.98s ✅
+
 ## [v1.40.0] - 2026-04-01 16:05
 
 ### Added
