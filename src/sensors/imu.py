@@ -819,6 +819,133 @@ class VirtualIMUSensor:
         ])
         return R
     
+    def simulate_agv_motion(
+        self,
+        linear_velocity: Tuple[float, float] = (0.0, 0.0),
+        angular_velocity: float = 0.0,
+        dt: float = 0.01,
+        grade: str = "M"
+    ) -> IMUFrame:
+        """
+        模拟AGV运动 (考虑不同等级IMU特性)
+        
+        Args:
+            linear_velocity: 线速度 (vx, vy) m/s
+            angular_velocity: 角速度 omega rad/s
+            dt: 时间步长
+            grade: AGV等级 (S/M/L/XL/XXL)
+            
+        Returns:
+            IMUFrame with simulated AGV motion
+        """
+        import math
+        
+        vx, vy = linear_velocity
+        omega = angular_velocity
+        
+        # 根据AGV等级设置噪声特性
+        grade_noise = {
+            'S': (0.01, 0.005),
+            'M': (0.005, 0.002),
+            'L': (0.002, 0.001),
+            'XL': (0.001, 0.0005),
+            'XXL': (0.0005, 0.0002),
+        }
+        accel_n, gyro_n = grade_noise.get(grade, grade_noise['M'])
+        
+        # 加速度 = 线加速度 + 重力分量
+        # 假设AGV在水平面上运动
+        linear_accel_x = 0.0  # 简化，假设匀速
+        linear_accel_y = 0.0
+        linear_accel_z = 0.0
+        
+        # 旋转引起的向心加速度
+        if abs(omega) > 1e-6 and math.sqrt(vx**2 + vy**2) > 1e-6:
+            # 向心加速度 a = v x omega (在2D情况下)
+            centripetal = omega * math.sqrt(vx**2 + vy**2)
+            # 方向指向旋转中心
+            linear_accel_x += -vy * omega
+            linear_accel_y += vx * omega
+        
+        # 完整的比力 (去除重力后的加速度)
+        specific_force = np.array([linear_accel_x, linear_accel_y, linear_accel_z])
+        
+        # 添加噪声
+        noise_accel = np.random.randn(3) * accel_n
+        noise_gyro = np.random.randn(3) * gyro_n
+        
+        frame = IMUFrame(
+            accel=(specific_force + noise_accel).astype(np.float32),
+            gyro=(np.array([0.0, 0.0, omega]) + noise_gyro + self._gyro_bias).astype(np.float32),
+            mag=None,
+            temperature=25.0 + np.random.randn() * 0.3,
+            timestamp=dt * self._frame_id,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+        
+        self._frame_id += 1
+        return frame
+    
+    def simulate_human_walking(
+        self,
+        step_frequency: float = 1.5,
+        walk_speed: float = 1.0,
+        duration_s: float = 5.0,
+        dt: float = 0.01
+    ) -> List[IMUFrame]:
+        """
+        模拟人类步行运动
+        
+        Args:
+            step_frequency: 步频 (Hz)
+            walk_speed: 行走速度 (m/s)
+            duration_s: 持续时间
+            dt: 时间步长
+            
+        Returns:
+            List of IMUFrame
+        """
+        import math
+        
+        frames = []
+        n_frames = int(duration_s / dt)
+        t = np.linspace(0, duration_s, n_frames)
+        
+        step_period = 1.0 / step_frequency
+        
+        for i, ti in enumerate(t):
+            # 步态周期 (0-1)
+            phase = (ti % step_period) / step_period
+            
+            # 髋关节摆动 (简化的正弦模型)
+            hip_swing = math.sin(phase * 2 * math.pi) * 0.3  # 约30度
+            knee_flexion = abs(math.sin(phase * 2 * math.pi)) * 0.4  # 膝关节屈伸
+            
+            # 加速度分量 (简化的行走加速度模型)
+            ax = walk_speed * math.cos(phase * 2 * math.pi) * step_frequency * 0.5
+            ay = 0.0
+            az = -0.5 * math.sin(phase * 4 * math.pi) * step_frequency**2  # 垂直振动
+            
+            # 角速度 (身体摇摆)
+            omega_roll = 0.05 * math.sin(phase * 2 * math.pi)
+            omega_pitch = 0.1 * math.cos(phase * 2 * math.pi)
+            omega_yaw = 0.02 * step_frequency
+            
+            frame = IMUFrame(
+                accel=np.array([ax, ay, az], dtype=np.float32),
+                gyro=np.array([omega_roll, omega_pitch, omega_yaw], dtype=np.float32),
+                mag=None,
+                temperature=25.0 + np.random.randn() * 0.2,
+                timestamp=dt * i,
+                frame_id=self._frame_id,
+                sensor_id=self.sensor_id
+            )
+            frames.append(frame)
+            self._frame_id += 1
+        
+        return frames
+    
     def __enter__(self):
         self.open()
         return self

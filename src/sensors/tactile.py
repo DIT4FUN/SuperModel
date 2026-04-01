@@ -672,6 +672,91 @@ class VirtualTactileSensor:
         
         return frames
     
+    def simulate_multi_contact(
+        self,
+        contacts: List[Tuple[Tuple[float, float], float, float]],
+        noise_level: float = 0.05
+    ) -> TactileFrame:
+        """
+        模拟多点接触事件
+        
+        Args:
+            contacts: 接触列表,每个元素为 (位置, 接触力, 接触半径)
+            noise_level: 噪声水平
+            
+        Returns:
+            TactileFrame with combined pressure map
+        """
+        h, w = self.array_size
+        xx, yy = np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))
+        
+        combined_pressure = np.zeros((h, w), dtype=np.float32)
+        combined_temperature = np.ones((h, w), dtype=np.float32) * 25.0
+        
+        for contact_pos, contact_force, contact_radius in contacts:
+            cx, cy = contact_pos
+            dist = np.sqrt((xx - cx)**2 + (yy - cy)**2)
+            gaussian = np.exp(-dist**2 / (2 * contact_radius**2))
+            pressure = gaussian * (contact_force / 100.0)
+            combined_pressure += pressure
+            combined_temperature += gaussian * contact_force * 0.05
+        
+        # 添加噪声
+        noise = np.random.randn(h, w) * noise_level
+        combined_pressure = np.clip(combined_pressure + noise, 0, 1).astype(np.float32)
+        combined_temperature = combined_temperature + np.random.randn(h, w) * 0.3
+        
+        return TactileFrame(
+            pressure_map=combined_pressure,
+            temperature_map=combined_temperature,
+            timestamp=0.0,
+            frame_id=self._frame_id,
+            sensor_id=self.sensor_id
+        )
+    
+    def simulate_slip_detection(
+        self,
+        normal_force: float = 10.0,
+        friction_coeff: float = 0.3,
+        velocity: Tuple[float, float] = (0.0, 0.0)
+    ) -> Dict[str, float]:
+        """
+        模拟滑移检测结果
+        
+        Args:
+            normal_force: 法向接触力 (N)
+            friction_coeff: 摩擦系数
+            velocity: 滑移速度 (归一化/秒)
+            
+        Returns:
+            滑移检测结果字典
+        """
+        import math
+        v_mag = math.sqrt(velocity[0]**2 + velocity[1]**2)
+        
+        # 库仑摩擦模型: F_friction = mu * F_normal
+        max_static_friction = friction_coeff * normal_force
+        dynamic_friction = 0.8 * max_static_friction  # 动摩擦略小
+        
+        # 滑移判定
+        if v_mag < 0.01:
+            slip_state = "stick"
+            slip_prob = 0.0
+        elif v_mag < 0.05:
+            slip_state = "micro_slip"
+            slip_prob = min(v_mag / 0.05, 1.0) * 0.3
+        else:
+            slip_state = "sliding"
+            slip_prob = min(0.3 + v_mag * 0.5, 1.0)
+        
+        return {
+            "slip_state": slip_state,
+            "slip_probability": slip_prob,
+            "friction_force": dynamic_friction * slip_prob if slip_state == "sliding" else 0.0,
+            "velocity_magnitude": v_mag,
+            "max_static_friction": max_static_friction,
+        }
+    
     def __enter__(self):
         self.open()
         return self

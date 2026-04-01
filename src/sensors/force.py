@@ -704,3 +704,92 @@ class VirtualForceSensor:
     
     def __exit__(self, *args):
         self.close()
+
+    def simulate_surface_contact(
+        self,
+        surface_normal: Tuple[float, float, float] = (0.0, 0.0, 1.0),
+        contact_point: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        penetration_depth: float = 0.001,
+        stiffness: float = 1000.0,
+        damping: float = 50.0
+    ) -> Wrench:
+        """
+        模拟表面接触力 (弹簧阻尼模型)
+        
+        Args:
+            surface_normal: 表面法向量 (归一化)
+            contact_point: 接触点位置 (m)
+            penetration_depth: 穿透深度 (m)
+            stiffness: 接触刚度 (N/m)
+            damping: 接触阻尼 (N·s/m)
+            
+        Returns:
+            Wrench with surface contact force
+        """
+        normal = np.array(surface_normal, dtype=np.float32)
+        normal = normal / (np.linalg.norm(normal) + 1e-6)
+        
+        # 弹簧阻尼力
+        spring_force = stiffness * penetration_depth
+        damping_force = damping * np.random.randn() * 0.1  # 简化阻尼
+        
+        total_force = spring_force + damping_force
+        
+        # 力作用方向为法向量反方向
+        force = -normal * total_force
+        
+        # 力矩 = r x F (接触点相对于传感器中心的力矩)
+        contact_pt = np.array(contact_point, dtype=np.float32)
+        torque = np.cross(contact_pt, force)
+        
+        return self.simulate_contact(
+            force=tuple(force),
+            torque=tuple(torque),
+            add_noise=True
+        )
+    
+    def simulate_friction_contact(
+        self,
+        normal_force: float = 10.0,
+        velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        friction_coeff: float = 0.3,
+        object_mass: float = 1.0
+    ) -> Wrench:
+        """
+        模拟摩擦力
+        
+        Args:
+            normal_force: 法向接触力 (N)
+            velocity: 滑移速度 (m/s)
+            friction_coeff: 摩擦系数
+            object_mass: 物体质量 (kg)
+            
+        Returns:
+            Wrench with friction force
+        """
+        import math
+        v = np.array(velocity, dtype=np.float32)
+        v_mag = math.sqrt(v[0]**2 + v[1]**2 + v[2]**2)
+        
+        if v_mag < 1e-6:
+            return self.simulate_contact((0, 0, 0), (0, 0, 0), add_noise=False)
+        
+        # 摩擦力方向与速度方向相反
+        friction_direction = -v / v_mag
+        
+        # 库仑摩擦模型
+        max_friction = friction_coeff * normal_force
+        
+        # 静摩擦 vs 动摩擦
+        if v_mag < 0.01:
+            friction_magnitude = min(max_friction, object_mass * 9.81 * friction_coeff)
+        else:
+            friction_magnitude = max_friction * 0.8  # 动摩擦略小
+        
+        friction_force = friction_direction * friction_magnitude
+        
+        return self.simulate_contact(
+            force=tuple(friction_force),
+            torque=(0.0, 0.0, 0.0),
+            add_noise=True
+        )

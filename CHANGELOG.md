@@ -5,6 +5,33 @@ All notable changes to SuperModel will be documented in this file.
 ## [Unreleased] - 2026-04-01
 
 ### Added
+- **虚拟触觉传感器增强** `src/sensors/tactile.py`
+  - `simulate_multi_contact()`: 多点接触仿真
+  - `simulate_slip_detection()`: 滑移检测仿真 (库仑摩擦模型)
+  - 支持多点同时接触场景仿真
+
+- **虚拟力觉传感器增强** `src/sensors/force.py`
+  - `simulate_surface_contact()`: 表面接触力仿真 (弹簧阻尼模型)
+  - `simulate_friction_contact()`: 摩擦力仿真 (库仑摩擦模型)
+
+- **虚拟IMU传感器增强** `src/sensors/imu.py`
+  - `simulate_agv_motion()`: AGV运动仿真 (支持S/M/L/XL/XXL五级噪声特性)
+  - `simulate_human_walking()`: 人类步行运动仿真 (步态周期/髋关节/膝关节)
+
+### Improved
+- **虚拟传感器物理真实性提升**
+  - 触觉: 多接触点叠加/温度耦合/滑移概率计算
+  - 力觉: 弹簧阻尼接触模型/静动摩擦切换
+  - IMU: 等级差异化噪声/向心加速度/行走振动
+
+### Testing
+- **314项传感器+融合测试通过** (9.04s)
+  - sensor_tests.py: 210 tests ✅
+  - fusion_tests.py: 104 tests ✅
+
+## [1.34.0] - 2026-04-01
+
+### Added
 - **AGV五级完整规格对照总表** `docs/design/AGV_GRADE_SPEC.md` (附录F, 200+行)
   - 综合规格对比 (F.1)
   - 感知子系统综合规格 (F.2)
