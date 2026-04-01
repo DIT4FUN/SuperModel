@@ -2,6 +2,14 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [Unreleased] - 2026-04-01
+
+### Improved
+- **MODULE_INTERFACE.md 目录导航增强** (5240行文档 → 新增完整目录)
+  - 新增快速导航横幅 (点击章节号跳转)
+  - 新增36节结构化目录表 (含行号范围与功能描述)
+  - 覆盖感知/融合/认知/执行/仿真/ROS2/控制全模块
+
 ## [1.33.0] - 2026-04-01
 
 ### Added
