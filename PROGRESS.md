@@ -1,7 +1,50 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-01 10:30 (v1.34.0)
+> Last Updated: 2026-04-01 11:14 (v1.35.0)
+
+---
+
+## v1.35.0 (2026-04-01 11:14) - 具身Agent演示 + 仓库物流仿真 + 新测试
+
+### 本次更新
+1. **具身智能体演示 (embodied_agent_demo.py)** ✅
+   - 新增 `examples/embodied_agent_demo.py` (完整具身闭环演示)
+   - 传感器 → 跨模态融合 → 世界模型 → 决策 → 运动控制 → 仿真反馈
+   - 支持 AGV M 级完整配置, 50步闭环测试
+   - 世界模型 (Dreamer RSSM) 在线学习演示
+
+2. **仓库物流仿真场景** ✅
+   - 新增 `src/simulation/warehouse_logistics.py` (560+ 行)
+   - 支持单/多/U形三种货架布局
+   - 多AGV任务分配与调度系统
+   - 动态障碍 (人/机器人/托盘) 仿真
+   - 碰撞检测与安全避让
+   - Pickup/Delivery 任务状态机
+   - Gymnasium 风格接口 (step/reset/render)
+   - AGV五级参数 (S/M/L/XL/XXL)
+
+3. **仓库物流测试用例** ✅
+   - 新增 `tests/warehouse_logistics_tests.py` (27项测试)
+   - 覆盖环境初始化/货架布局/AGV状态/任务管理/碰撞检测/仿真步进
+   - 全部 1185 项测试通过 (原有1158 + 新增27)
+
+### 当前状态
+- 传感器模块: ✅ 视觉/听觉/触觉/力觉/IMU/编码器/管理器 全部完成
+- 触觉增强: ✅ 多接触仿真/滑移检测/抓取质量评估
+- 力觉增强: ✅ 表面接触/摩擦力/碰撞仿真
+- IMU增强: ✅ AGV运动/人类步行/五级噪声特性
+- 控制模块: ✅ 18个子模块全部完成
+- 跨模态融合: ✅ CrossModalFusion + 6模态编码器全部完成
+- 自主学习: ✅ Dreamer + WorldModel + 自监督 + 自主学习框架全部完成
+- 仿真环境: ✅ Gymnasium + AGV场景 + 仓库物流 + 差速驱动 + 物理引擎全部完成
+- 测试用例: ✅ 1185项测试全部通过
+- 文档: ✅ MODULE_INDEX + MODULE_INTERFACE + AGV_SPEC + QUICKREF 全部完成
+
+### 下一步建议
+- 具身智能仿真环境强化 (MuJoCo/Isaac Gym 集成)
+- 边缘部署优化 (RK3588 NPU 加速)
+- 真实机器人验证
 
 ---
 
