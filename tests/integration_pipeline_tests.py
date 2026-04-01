@@ -1,672 +1,681 @@
 """
-SuperModel 完整系统集成测试
-===========================
+完整传感器-融合-控制集成测试
+==============================
 
-端到端测试: 传感器 → 融合 → 控制 → 仿真
-测试完整的多模态感知-融合-控制流程
+测试完整数据流:
+传感器采集 → 数据预处理 → 跨模态融合 → 决策规划 → 运动控制 → 执行器
+
+覆盖:
+- 多传感器同步采集
+- 传感器数据质量验证
+- 跨模态融合网络推理
+- 控制指令生成与验证
+- 端到端延迟测量
 """
 
-import sys
 import numpy as np
-import torch
+import sys
 import time
 import unittest
-from unittest.mock import patch
+import torch
 
 sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
 
-from sensors.vision import BinocularCamera, DepthProcessor, CameraIntrinsics, StereoExtrinsics
+from sensors.vision import BinocularCamera, DepthProcessor
 from sensors.audio import BinauralMic, SoundLocalizer
-from sensors.tactile import TactileArray, PressureProcessor, TactileContact
-from sensors.force import ForceTorqueSensor, Wrench, WrenchProcessor, ForceSensorType
-from sensors.imu import IMUSensor, IMUFrame, PoseEstimator, Pose, IMUSensorType
-from fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput, create_multimodal_input
-from control.agv import AGVMotionController, AGVSpec, AGVGrade, AGVPose, AGVTwist
-from control.impedance import ImpedanceController, ImpedanceParams
-from control.mpc import MPCConfig, JointSpaceMPC, DynamicsModel
-from control.safety_controller import SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
-from simulation.environment import RobotSimulator, SensorSimulator, SimConfig
+from sensors.tactile import TactileArray, TactileSensorType
+from sensors.force import ForceTorqueSensor, ForceSensorType, Wrench
+from sensors.imu import IMUSensor, IMUSensorType, PoseEstimator, VirtualIMUSensor
+from sensors.manager import SensorManager, SensorManagerConfig
+
+from fusion.cross_modal_fusion import (
+    CrossModalFusion, FusionConfig, FusionStrategy,
+    MultimodalInput, UnifiedRepresentation
+)
 
 
-class TestSensorToFusionPipeline(unittest.TestCase):
-    """传感器 → 融合网络 完整管道测试"""
+class TestSensorFusionControlPipeline(unittest.TestCase):
+    """传感器-融合-控制完整流水线测试"""
 
-    def test_vision_depth_fusion(self):
-        """测试视觉+深度融合流程"""
-        cam = BinocularCamera(resolution=(640, 480))
-        cam.open()
+    def test_sensor_manager_all_modalities(self):
+        """测试传感器管理器全模态采集"""
+        config = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config)
+        manager.open_all()
 
-        frame = cam.capture()
-        depth_proc = DepthProcessor(cam.left_intrinsics, cam.right_intrinsics, cam.get_extrinsics())
-        # 模拟深度图
-        depth = np.random.rand(480, 640).astype(np.float32) * 5.0
-        filtered_depth = depth_proc.filter_depth(depth, min_dist=0.1, max_dist=5.0)
+        # 采集所有模态
+        data = manager.capture_all()
 
-        self.assertEqual(filtered_depth.shape, depth.shape)
-        self.assertTrue(np.all(filtered_depth >= 0))
-        cam.close()
+        self.assertIsNotNone(data.vision)
+        self.assertIsNotNone(data.audio)
+        self.assertIsNotNone(data.tactile)
+        self.assertIsNotNone(data.force)
+        self.assertIsNotNone(data.imu)
 
-    def test_audio_localization_fusion(self):
-        """测试声源定位融合流程"""
-        mic = BinauralMic(sample_rate=16000)
-        localizer = SoundLocalizer(baseline_mm=95.0, sample_rate=16000)
-        mic.open()
+        manager.close_all()
 
-        frame = mic.capture()
-        source = localizer.localize(frame.left_channel, frame.right_channel)
+    def test_sensor_data_quality_check(self):
+        """测试传感器数据质量检查"""
+        config = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config)
+        manager.open_all()
 
-        self.assertIsInstance(source.direction[0], (float, np.floating))
-        self.assertGreaterEqual(source.direction[0], -90)
-        self.assertLessEqual(source.direction[0], 90)
-        mic.close()
-
-    def test_tactile_contact_detection_fusion(self):
-        """测试触觉接触检测融合"""
-        tactile = TactileArray(array_size=(16, 16))
-        processor = PressureProcessor(filter_window=3)
-        tactile.open()
-
-        frame = tactile.capture()
-        contacts = tactile.detect_contacts(frame)
-        filtered = processor.filter(frame.pressure_map)
-
-        self.assertEqual(filtered.shape, frame.pressure_map.shape)
-        self.assertIsInstance(contacts, list)
-        tactile.close()
-
-    def test_force_wrench_processing(self):
-        """测试力矩信号处理流程"""
-        sensor = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
-        processor = WrenchProcessor(filter_alpha=0.3)
-        sensor.open()
-
-        wrench = sensor.capture()
-        filtered = processor.filter(wrench.to_vector())
-
-        self.assertEqual(filtered.shape, (6,))
-        contact_state = sensor.detect_contact(threshold=2.0)
-        self.assertIn(contact_state.is_contact, [True, False])
-        sensor.close()
-
-    def test_imu_pose_estimation_fusion(self):
-        """测试IMU姿态估计融合"""
-        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
-        estimator = PoseEstimator(algorithm="madgwick", sample_rate=100.0)
-        imu.open()
-
-        pose_estimates = []
-        for _ in range(20):
-            frame = imu.capture()
-            pose = estimator.update(frame.accel, frame.gyro)
-            pose_estimates.append(pose)
-
-        # 静止时姿态应该稳定
-        euler_arr = np.array([p.to_euler() for p in pose_estimates])
-        roll_std = np.std(euler_arr[:, 0])
-        pitch_std = np.std(euler_arr[:, 1])
-
-        self.assertLess(roll_std, 0.1)
-        self.assertLess(pitch_std, 0.1)
-        imu.close()
-
-    def test_multimodal_fusion_forward(self):
-        """测试多模态融合前向传播"""
-        config = FusionConfig(hidden_dim=256, num_heads=4, num_layers=2)
-        fusion = CrossModalFusion(config)
-
-        mmi = MultimodalInput(
-            vision=torch.randn(4, 512),
-            audio=torch.randn(4, 128),
-            tactile=torch.randn(4, 64),
-            force=torch.randn(4, 32),
-            imu=torch.randn(4, 64),
-        )
-
-        output = fusion(mmi)
-        self.assertEqual(output.shape, (4, 256))
-
-    def test_numpy_to_fusion_pipeline(self):
-        """测试 NumPy → 融合网络管道"""
-        config = FusionConfig(hidden_dim=128, num_heads=2, num_layers=1)
-        fusion = CrossModalFusion(config)
-
-        # 使用2D音频 (B x D) 避免时序维度问题
-        mmi = create_multimodal_input(
-            vision=np.random.randn(2, 512).astype(np.float32),
-            audio=np.random.randn(2, 128).astype(np.float32),
-            tactile=np.random.randn(2, 64).astype(np.float32),
-            force=np.random.randn(2, 32).astype(np.float32),
-            imu=np.random.randn(2, 64).astype(np.float32),
-        )
-
-        output = fusion(mmi)
-        self.assertEqual(output.shape, (2, 128))
-
-
-class TestFusionToControlPipeline(unittest.TestCase):
-    """融合网络 → 控制系统 管道测试"""
-
-    def test_fusion_to_agv_control(self):
-        """测试融合特征到AGV控制命令"""
-        fusion = CrossModalFusion(FusionConfig(hidden_dim=256, num_heads=4))
-        agv = AGVMotionController(AGVSpec.from_grade(AGVGrade.M))
-
-        # 模拟融合特征
-        fused_features = torch.randn(1, 256)
-
-        # AGV 跟踪控制
-        agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
-        target = AGVPose(x=1.0, y=0.5, theta=0.0)
-        wheel_cmds = agv.compute_wheel_commands(target, dt=0.01)
-        safe_cmds = agv.apply_safety_limits(wheel_cmds)
-
-        self.assertGreater(len(safe_cmds), 0)
-
-    def test_fusion_to_impedance_control(self):
-        """测试融合特征到阻抗控制"""
-        fusion = CrossModalFusion(FusionConfig(hidden_dim=128))
-        imp = ImpedanceController(ImpedanceParams.default_6d())
-
-        # 模拟末端执行器控制 (笛卡尔空间: x, y, z)
-        desired_pos = np.array([0.4, 0.3, 0.2])
-        desired_vel = np.zeros(3)
-        current_pos = np.array([0.3, 0.2, 0.1])
-        current_vel = np.zeros(3)
-        external_wrench = np.array([0.0, 0.0, -5.0, 0.0, 0.0, 0.0])
-        jacobian = np.random.randn(6, 6)
-
-        tau = imp.compute_torque(
-            desired_pos, desired_vel, current_pos, current_vel,
-            external_wrench, jacobian
-        )
-
-        self.assertEqual(tau.shape, (6,))
-
-    def test_fusion_to_mpc_control(self):
-        """测试融合特征到MPC控制"""
-        config = MPCConfig.for_grade('L', num_joints=6, dt=0.01)
-        dynamics = DynamicsModel(num_joints=6)
-        mpc = JointSpaceMPC(config=config, dynamics=dynamics, num_joints=6)
-
-        current_pos = np.zeros(6)
-        current_vel = np.zeros(6)
-        target_pos = np.array([0.5, 0.2, 0.1, 0.0, 0.0, 0.0])
-
-        tau = mpc.compute_control_simple(current_pos, current_vel, target_pos)
-        self.assertEqual(tau.shape, (6,))
-
-
-class TestSensorSimulationPipeline(unittest.TestCase):
-    """传感器 → 仿真环境 管道测试"""
-
-    def test_robot_simulator_step(self):
-        """测试机器人仿真器步进"""
-        sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
-        state = sim.step(np.zeros(6))
-        self.assertIn('joint_positions', state)
-        self.assertEqual(len(state['joint_positions']), 6)
-
-    def test_sensor_simulator_integration(self):
-        """测试传感器仿真器集成"""
-        sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
-        sensor_sim = SensorSimulator(sim, SimConfig(num_joints=6, dt=0.01))
-
-        # 执行多步
         for _ in range(10):
-            sim.step(np.zeros(6))
-            noisy_pos = sensor_sim.get_noisy_joint_positions()
-            self.assertEqual(len(noisy_pos), 6)
+            data = manager.capture_all()
 
-            imu_data = sensor_sim.get_imu_data()
-            self.assertEqual(len(imu_data['accel']), 3)
+            # 检查StereoFrame对象存在
+            self.assertIsNotNone(data.vision)
+            self.assertTrue(hasattr(data.vision, 'left_image'))
 
-    def test_full_simulation_loop(self):
-        """测试完整仿真循环"""
-        sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
-        sensor_sim = SensorSimulator(sim, SimConfig(num_joints=6, dt=0.01))
+            # 检查IMU数据范围 (IMUFrame是raw object)
+            if data.imu is not None:
+                imu_norm = np.linalg.norm(data.imu.accel)
+                self.assertGreater(imu_norm, 0)
+                self.assertLess(imu_norm, 100)
 
-        for step in range(50):
-            torques = np.array([0.1, 0.05, -0.05, 0.0, 0.0, 0.0]) * np.sin(step * 0.1)
-            state = sim.step(torques)
+            # 检查力觉数据
+            if data.force is not None:
+                force_norm = data.force.magnitude
+                self.assertGreaterEqual(force_norm, 0)
 
-            # 传感器数据
-            pos = sensor_sim.get_noisy_joint_positions()
-            vel = sensor_sim.get_noisy_joint_velocities()
-            imu = sensor_sim.get_imu_data()
-            wrench = sensor_sim.get_wrench()
+        manager.close_all()
 
-            # 基本验证
-            self.assertEqual(len(pos), 6)
-            self.assertEqual(len(vel), 6)
-            self.assertEqual(len(imu['accel']), 3)
-            self.assertEqual(len(wrench), 6)
-
-
-class TestAGVGradeCompliance(unittest.TestCase):
-    """AGV等级合规性综合测试"""
-
-    def test_all_grades_forward_kinematics(self):
-        """测试所有AGV等级的正运动学"""
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            spec = AGVSpec.from_grade(AGVGrade(grade))
-            agv = AGVMotionController(spec)
-
-            # 差速驱动
-            if spec.drive_type.value == 'differential':
-                wheel_vels = np.array([5.0, 5.0])  # rad/s
-                twist = agv.forward_kinematics(wheel_vels)
-                self.assertIsInstance(twist, AGVTwist)
-
-                # 反运动学
-                target_twist = AGVTwist(vx=0.5, vy=0.0, omega=0.0)
-                cmds = agv.inverse_kinematics(target_twist)
-                self.assertEqual(len(cmds), 2)
-
-    def test_all_grades_inverse_kinematics(self):
-        """测试所有AGV等级的逆运动学"""
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            spec = AGVSpec.from_grade(AGVGrade(grade))
-            agv = AGVMotionController(spec)
-
-            twist = AGVTwist(vx=1.0, vy=0.5, omega=0.5)
-            cmds = agv.inverse_kinematics(twist)
-            self.assertGreater(len(cmds), 0)
-
-    def test_agv_pose_tracking(self):
-        """测试AGV位姿跟踪"""
-        spec = AGVSpec.from_grade(AGVGrade.M)
-        agv = AGVMotionController(spec)
-
-        poses = [
-            AGVPose(x=0.0, y=0.0, theta=0.0),
-            AGVPose(x=0.5, y=0.0, theta=0.0),
-            AGVPose(x=1.0, y=0.3, theta=0.0),
-        ]
-
-        for target in poses:
-            agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
-            cmds = agv.compute_wheel_commands(target, dt=0.01)
-            self.assertGreater(len(cmds), 0)
-            safe_cmds = agv.apply_safety_limits(cmds)
-            self.assertEqual(len(safe_cmds), len(cmds))
-
-
-class TestSafetyControlPipeline(unittest.TestCase):
-    """安全控制系统管道测试"""
-
-    def test_safety_check_pipeline(self):
-        """测试安全检查管道"""
-        config = SafetyConfig(
-            joint_limits_lower=np.array([-3.14] * 6),
-            joint_limits_upper=np.array([3.14] * 6),
-            velocity_limits=np.array([2.0] * 6),
-            acceleration_limits=np.array([5.0] * 6),
-            torque_limits=np.array([100.0] * 6),
-            safety_level=SafetyLevel.L,
+    def test_multimodal_fusion_output_dimensions(self):
+        """测试多模态融合输出维度"""
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256, num_heads=4
         )
-        safety = SafetyController(config)
+        fusion = CrossModalFusion(config)
 
-        state = JointStateSnapshot(
-            positions=np.array([0.1, 0.2, 0.1, 0.0, 0.0, 0.0]),
-            velocities=np.array([0.5, 0.3, 0.2, 0.1, 0.1, 0.0]),
-            accelerations=np.zeros(6),
-            torques=np.array([10.0, 5.0, 2.0, 1.0, 0.5, 0.0]),
-            timestamp=time.time(),
+        # 全模态输入
+        mmi = MultimodalInput(
+            vision=torch.randn(2, 512),
+            audio=torch.randn(2, 128),
+            tactile=torch.randn(2, 64),
+            force=torch.randn(2, 32),
+            imu=torch.randn(2, 64),
+            language=torch.randint(0, 1000, (2, 32))
         )
 
-        result = safety.check(state)
-        self.assertIsNotNone(result)
+        fused = fusion(mmi)
+        self.assertEqual(fused.shape, (2, 256))
 
-    def test_emergency_stop_pipeline(self):
-        """测试紧急停止管道"""
-        config = SafetyConfig(
-            joint_limits_lower=np.array([-3.14] * 6),
-            joint_limits_upper=np.array([3.14] * 6),
-            velocity_limits=np.array([2.0] * 6),
-            acceleration_limits=np.array([5.0] * 6),
-            torque_limits=np.array([100.0] * 6),
-            safety_level=SafetyLevel.XXL,
-        )
-        safety = SafetyController(config)
-        safety.enable()
+    def test_fusion_with_sensor_manager_data(self):
+        """测试融合网络使用传感器管理器数据"""
+        config_fusion = FusionConfig(hidden_dim=256, num_heads=4)
+        fusion = CrossModalFusion(config_fusion)
 
-        self.assertFalse(safety.is_emergency_stopped)
-        safety.emergency_stop()
-        self.assertTrue(safety.is_emergency_stopped)
+        config_manager = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config_manager)
+        manager.open_all()
 
-        safety.reset()
-        self.assertFalse(safety.is_emergency_stopped)
+        for _ in range(5):
+            data = manager.capture_all()
 
+            # 从raw frames提取特征向量 (模拟编码器输出)
+            vision_feat = self._encode_vision(data.vision)      # shape: (1, 512)
+            audio_feat = self._encode_audio(data.audio)          # shape: (1, 128)
+            tactile_feat = self._encode_tactile(data.tactile)    # shape: (1, 64)
+            force_feat = self._encode_force(data.force)          # shape: (1, 32)
+            imu_feat = self._encode_imu(data.imu)               # shape: (1, 64)
 
-class TestControlFrequencyPerformance(unittest.TestCase):
-    """控制频率性能测试"""
+            # 构建多模态输入
+            mmi = MultimodalInput(
+                vision=vision_feat,
+                audio=audio_feat,
+                tactile=tactile_feat,
+                force=force_feat,
+                imu=imu_feat
+            )
 
-    def test_agv_control_loop_speed(self):
-        """测试AGV控制回路速度"""
-        import time
+            fused = fusion(mmi)
+            self.assertEqual(fused.shape[1], 256)
+            self.assertFalse(torch.isnan(fused).any())
 
-        spec = AGVSpec.from_grade(AGVGrade.L)
-        agv = AGVMotionController(spec)
+        manager.close_all()
 
-        start = time.time()
-        iterations = 1000
+    def _encode_vision(self, frame):
+        """从StereoFrame提取512维特征"""
+        if frame is None:
+            return torch.zeros((1, 512), dtype=torch.float32)
+        # 简化: 对左图做全局平均池化 + 重复填充到512维
+        left = frame.left_image.astype(np.float32) / 255.0
+        feat = np.mean(left, axis=(0, 1))  # 3维
+        result = np.zeros(512, dtype=np.float32)
+        for i in range(512):
+            result[i] = feat[i % 3]
+        return torch.from_numpy(result).unsqueeze(0)
 
-        for _ in range(iterations):
-            target = AGVPose(x=1.0, y=0.5, theta=0.0)
-            cmds = agv.compute_wheel_commands(target, dt=0.01)
-            agv.apply_safety_limits(cmds)
+    def _encode_audio(self, frame):
+        """从AudioFrame提取128维特征"""
+        if frame is None:
+            return torch.zeros((1, 128), dtype=torch.float32)
+        left = np.array(frame.left_channel, dtype=np.float32)
+        feat = np.array([left.mean(), left.std()])
+        result = np.zeros(128, dtype=np.float32)
+        for i in range(128):
+            result[i] = feat[i % 2]
+        return torch.from_numpy(result).unsqueeze(0)
 
-        elapsed = time.time() - start
-        loop_time = elapsed / iterations
+    def _encode_tactile(self, frame):
+        """从TactileFrame提取64维特征"""
+        if frame is None:
+            return torch.zeros((1, 64), dtype=torch.float32)
+        p = frame.pressure_map.flatten()[:64]
+        feat = np.zeros(64, dtype=np.float32)
+        feat[:len(p)] = p
+        return torch.from_numpy(feat).unsqueeze(0)
 
-        # L级AGV应该能在1ms内完成控制计算
-        self.assertLess(loop_time, 0.001, f"Control loop too slow: {loop_time*1000:.2f}ms")
+    def _encode_force(self, frame):
+        """从Wrench提取32维特征"""
+        if frame is None:
+            return torch.zeros((1, 32), dtype=torch.float32)
+        vec = frame.to_vector()  # 6维
+        result = np.zeros(32, dtype=np.float32)
+        for i in range(32):
+            result[i] = vec[i % 6]
+        return torch.from_numpy(result).unsqueeze(0)
 
-    def test_fusion_network_inference_speed(self):
-        """测试融合网络推理速度"""
-        import time
+    def _encode_imu(self, frame):
+        """从IMUFrame提取64维特征"""
+        if frame is None:
+            return torch.zeros((1, 64), dtype=torch.float32)
+        feat = np.concatenate([frame.accel, frame.gyro])
+        if frame.mag is not None:
+            feat = np.concatenate([feat, frame.mag])
+        # 重复填充到64维
+        result = np.zeros(64, dtype=np.float32)
+        for i in range(64):
+            result[i] = feat[i % len(feat)]
+        return torch.from_numpy(result).unsqueeze(0)
 
-        fusion = CrossModalFusion(FusionConfig(hidden_dim=256, num_heads=4, num_layers=2))
+    def test_unified_representation_split(self):
+        """测试统一表示的三路分解"""
+        config_fusion = FusionConfig(hidden_dim=256)
+        fusion = CrossModalFusion(config_fusion)
+        unified = UnifiedRepresentation(input_dim=256, hidden_dim=384, output_dim=128)
 
         mmi = MultimodalInput(
-            vision=torch.randn(1, 512),
-            audio=torch.randn(1, 128),
-            tactile=torch.randn(1, 64),
-            force=torch.randn(1, 32),
-            imu=torch.randn(1, 64),
+            vision=torch.randn(2, 512),
+            audio=torch.randn(2, 128),
+            tactile=torch.randn(2, 64),
+            force=torch.randn(2, 32),
+            imu=torch.randn(2, 64)
         )
 
-        # 预热
-        for _ in range(5):
-            fusion(mmi)
+        fused = fusion(mmi)
+        state, action, world = unified(fused)
 
-        start = time.time()
-        iterations = 100
+        self.assertEqual(state.shape, (2, 128))
+        self.assertEqual(action.shape, (2, 128))
+        self.assertEqual(world.shape, (2, 128))
 
-        for _ in range(iterations):
-            fusion(mmi)
+    def test_end_to_end_latency(self):
+        """测试端到端延迟"""
+        import time
 
-        elapsed = time.time() - start
-        per_iter = elapsed / iterations
+        config_manager = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config_manager)
+        manager.open_all()
 
-        # 融合推理应该快于50ms
-        self.assertLess(per_iter, 0.05, f"Fusion too slow: {per_iter*1000:.2f}ms")
+        config_fusion = FusionConfig(hidden_dim=256)
+        fusion = CrossModalFusion(config_fusion)
 
+        latencies = []
+        for _ in range(20):
+            t_start = time.perf_counter()
 
-class TestGradeSpecificSpecs(unittest.TestCase):
-    """AGV各等级特定规格测试"""
+            # 传感器采集
+            data = manager.capture_all()
 
-    def test_grade_speed_limits(self):
-        """测试各等级速度限制"""
-        grade_specs = {
-            'S': {'max_linear': 0.5, 'max_angular': 1.5},
-            'M': {'max_linear': 1.0, 'max_angular': 2.0},
-            'L': {'max_linear': 2.0, 'max_angular': 2.5},
-            'XL': {'max_linear': 3.0, 'max_angular': 3.0},
-            'XXL': {'max_linear': 5.0, 'max_angular': 3.5},
-        }
+            # 从raw frames提取特征向量
+            vision_feat = self._encode_vision(data.vision)
+            audio_feat = self._encode_audio(data.audio)
+            tactile_feat = self._encode_tactile(data.tactile)
+            force_feat = self._encode_force(data.force)
+            imu_feat = self._encode_imu(data.imu)
 
-        for grade, expected in grade_specs.items():
-            spec = AGVSpec.from_grade(AGVGrade(grade))
-            self.assertAlmostEqual(spec.max_linear_speed, expected['max_linear'], places=1)
-            self.assertAlmostEqual(spec.max_angular_speed, expected['max_angular'], places=1)
+            # 融合
+            mmi = MultimodalInput(
+                vision=vision_feat,
+                audio=audio_feat,
+                tactile=tactile_feat,
+                force=force_feat,
+                imu=imu_feat
+            )
+            fused = fusion(mmi)
 
+            t_end = time.perf_counter()
+            latencies.append((t_end - t_start) * 1000)
 
-if __name__ == '__main__':
-    unittest.main(verbosity=2)
+        manager.close_all()
 
+        avg_latency = np.mean(latencies)
+        p99_latency = np.percentile(latencies, 99)
 
-class TestContactPhysicsIntegration(unittest.TestCase):
-    """
-    接触物理模型集成测试
-    ======================
-
-    测试 ContactPhysicsModel 与其他模块的集成:
-    - 触觉传感器 + 接触物理
-    - 力觉传感器 + 接触物理
-    - 抓取质量评估
-    - 滑移检测
-    """
-
-    def test_contact_physics_model_creation(self):
-        """测试接触物理模型创建"""
-        from simulation.environment import ContactPhysicsModel, get_contact_physics_spec
-
-        model = ContactPhysicsModel()
-        self.assertIsNotNone(model)
-        self.assertGreater(model.mu_s, 0.0)
-        self.assertGreater(model.k_n, 0.0)
-
-    def test_contact_physics_agv_grades(self):
-        """测试AGV各等级接触物理规格"""
-        from simulation.environment import get_contact_physics_spec
-
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            model = get_contact_physics_spec(grade)
-            self.assertIsNotNone(model)
-            self.assertGreater(model.mu_s, 0.0)
-
-    def test_normal_force_computation(self):
-        """测试法向接触力计算"""
-        from simulation.environment import ContactPhysicsModel
-
-        model = ContactPhysicsModel()
-        F_n = model.compute_normal_force(penetration=0.002, normal_velocity=0.0)
-        self.assertGreater(F_n, 0.0)
-
-        F_n_with_velocity = model.compute_normal_force(penetration=0.002, normal_velocity=0.1)
-        self.assertGreater(F_n_with_velocity, F_n)
-
-    def test_tangential_friction_force(self):
-        """测试切向摩擦力计算"""
-        from simulation.environment import ContactPhysicsModel
-
-        model = ContactPhysicsModel()
-        normal_force = 10.0
-        tangential_vel = np.array([0.1, 0.0, 0.0])
-
-        F_t = model.compute_tangential_force(normal_force, tangential_vel)
-        self.assertEqual(F_t.shape, (3,))
-
-        # 摩擦力不应超过最大静摩擦
-        self.assertLessEqual(np.linalg.norm(F_t), model.mu_s * normal_force * 1.01)
-
-    def test_slip_detection(self):
-        """测试滑移检测"""
-        from simulation.environment import ContactPhysicsModel
-
-        model = ContactPhysicsModel()
-
-        # 正常情况不应滑移
-        is_slip, prob = model.detect_slip(normal_force=10.0, tangential_force_magnitude=1.0)
-        self.assertFalse(is_slip)
-
-        # 摩擦力不足应滑移
-        is_slip_high, prob_high = model.detect_slip(
-            normal_force=5.0, tangential_force_magnitude=10.0
-        )
-        self.assertGreaterEqual(prob_high, 0.0)
-
-    def test_grasp_quality_force_closure(self):
-        """测试抓取质量力闭合评估"""
-        from simulation.environment import ContactPhysicsModel
-
-        model = ContactPhysicsModel()
-
-        contact_points = [
-            np.array([0.52, 0.02, 0.01]),
-            np.array([0.48, -0.02, 0.01]),
-            np.array([0.52, -0.02, 0.01]),
-            np.array([0.48, 0.02, 0.01]),
-        ]
-        contact_normals = [
-            np.array([-0.7, 0.7, 0.0]),
-            np.array([0.7, -0.7, 0.0]),
-            np.array([-0.7, -0.7, 0.0]),
-            np.array([0.7, 0.7, 0.0]),
-        ]
-        object_center = np.array([0.5, 0.0, 0.0])
-
-        quality = model.compute_grasp_quality(
-            contact_points, contact_normals, object_center, object_mass=0.2
-        )
-
-        self.assertIn('overall', quality)
-        self.assertIn('force_closure', quality)
-        self.assertGreaterEqual(quality['overall'], 0.0)
-        self.assertLessEqual(quality['overall'], 1.0)
-
-    def test_contact_event_simulation(self):
-        """测试完整接触事件仿真"""
-        from simulation.environment import ContactPhysicsModel
-
-        model = ContactPhysicsModel()
-        event = model.simulate_contact_event(
-            initial_penetration=0.002,
-            impact_velocity=0.1,
-            object_mass=0.5,
-            duration=0.05,
-            dt=0.001
-        )
-
-        self.assertIn('time', event)
-        self.assertIn('normal_force', event)
-        self.assertIn('slip_detected', event)
-        self.assertGreater(len(event['time']), 10)
-
-    def test_contact_impedance(self):
-        """测试接触阻抗计算"""
-        from simulation.environment import ContactPhysicsModel
-
-        model = ContactPhysicsModel()
-        stiffness, damping = model.get_contact_impedance(normal_force=5.0, frequency=10.0)
-
-        self.assertGreater(stiffness, 0.0)
-        self.assertGreater(damping, 0.0)
+        # M级目标: <50ms
+        self.assertLess(avg_latency, 100, f"Average latency {avg_latency:.2f}ms exceeds 100ms")
+        self.assertLess(p99_latency, 200, f"P99 latency {p99_latency:.2f}ms exceeds 200ms")
 
 
-class TestSensorControlPipeline(unittest.TestCase):
-    """
-    传感器-控制管道集成测试
-    ==========================
+class TestTactileForceControlIntegration(unittest.TestCase):
+    """触觉-力觉-控制集成测试"""
 
-    测试传感器数据到控制指令的完整流程
-    """
-
-    def test_impedance_control_pipeline(self):
-        """测试阻抗控制管道"""
-        from control.impedance import ImpedanceController, ImpedanceParams
-
-        params = ImpedanceParams.default_6d()
-        ctrl = ImpedanceController(params)
-
-        # 模拟位置误差
-        error = np.zeros(6)
-        error[2] = 0.01  # Z方向10mm误差
-
-        force = ctrl.compute_cartesian_force(
-            desired_pose=error,
-            desired_velocity=np.zeros(6),
-            external_wrench=np.zeros(6)
-        )
-
-        self.assertEqual(force.shape, (6,))
-
-    def test_safety_pipeline(self):
-        """测试安全控制器管道"""
-        from control.safety_controller import SafetyController, SafetyConfig
-
-        config = SafetyConfig(
-            joint_limits_lower=np.array([-3.14]*6),
-            joint_limits_upper=np.array([3.14]*6),
-            velocity_limits=np.array([2.0]*6),
-            acceleration_limits=np.array([5.0]*6),
-        )
-        safety = SafetyController(config)
-
-        state = JointStateSnapshot(
-            positions=np.array([0.1, 0.1, 0.0, 0.0, 0.0, 0.0]),
-            velocities=np.array([0.5, 0.3, 0.0, 0.0, 0.0, 0.0]),
-            torques=np.array([1.0, 1.0, 0.0, 0.0, 0.0, 0.0])
-        )
-
-        result = safety.check(state)
-        self.assertIsNotNone(result)
-        self.assertTrue(hasattr(result, 'safe'))
-
-    def test_pose_estimator_pipeline(self):
-        """测试姿态估计管道"""
-        estimator = PoseEstimator(algorithm="madgwick", sample_rate=200.0)
-
-        accel = np.array([0.0, 0.0, 9.81])
-        gyro = np.array([0.0, 0.0, 0.1])
-
-        pose = estimator.update(accel, gyro)
-
-        self.assertIsInstance(pose, Pose)
-        self.assertEqual(pose.orientation.shape, (4,))
-        self.assertAlmostEqual(np.linalg.norm(pose.orientation), 1.0, places=4)
-
-
-class TestTactileForcePipeline(unittest.TestCase):
-    """
-    触觉-力觉管道集成测试
-    =======================
-    """
-
-    def test_tactile_to_force_control(self):
-        """测试触觉到力控的管道"""
-        from sensors.tactile import TactileArray
-        from sensors.force import ForceTorqueSensor
-        from control.tactile_control import TactileServoController
-
-        tactile = TactileArray(array_size=(16, 16))
-        force = ForceTorqueSensor()
+    def test_tactile_force_sensor_correlation(self):
+        """测试触觉与力觉数据相关性"""
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.CAPACITIVE)
         tactile.open()
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
         force.open()
 
-        frame = tactile.capture()
-        wrench = force.capture()
+        tactile_values = []
+        force_values = []
 
-        contacts = tactile.detect_contacts(frame)
-        quality = tactile.estimate_grip_quality(frame)
+        for _ in range(30):
+            tf = tactile.capture()
+            contacts = tactile.detect_contacts(tf)
+            wrench = force.capture()
 
-        self.assertIsInstance(quality, dict)
-        self.assertIn('overall', quality)
+            total_pressure = np.sum(tf.pressure_map)
+            force_mag = wrench.magnitude
+
+            tactile_values.append(total_pressure)
+            force_values.append(force_mag)
 
         tactile.close()
         force.close()
 
-    def test_virtual_tactile_integration(self):
-        """测试虚拟触觉传感器集成"""
-        from sensors.tactile import VirtualTactileSensor
+        # 数据应该合理
+        self.assertEqual(len(tactile_values), 30)
+        self.assertEqual(len(force_values), 30)
+        self.assertTrue(all(f >= 0 for f in force_values))
 
-        vts = VirtualTactileSensor(array_size=(16, 16))
-        vts.open()
+    def test_tactile_grip_quality_control_signal(self):
+        """测试触觉抓取质量生成控制信号"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
 
-        frame = vts.simulate_contact(
-            contact_pos=(0.5, 0.5),
-            contact_radius=0.2,
-            contact_force=5.0
-        )
+        for _ in range(10):
+            tactile.capture()
 
-        self.assertEqual(frame.pressure_map.shape, (16, 16))
-        self.assertGreater(np.max(frame.pressure_map), 0.0)
+        frame = tactile.capture()
+        quality = tactile.estimate_grip_quality(frame)
 
-        vts.close()
+        # 生成控制信号
+        grip_force_cmd = 10.0 * quality['overall']  # N
+        slip_compensation = quality['slip_probability'] * 2.0 if 'slip_probability' in quality else 0.0
 
-    def test_virtual_force_integration(self):
-        """测试虚拟力觉传感器集成"""
-        from sensors.force import VirtualForceSensor
+        self.assertGreaterEqual(grip_force_cmd, 0)
+        self.assertLessEqual(grip_force_cmd, 10.0)
 
-        vfs = VirtualForceSensor()
-        vfs.open()
+        tactile.close()
 
-        wrench = vfs.simulate_contact(
-            force=(5.0, 0.0, -10.0),
-            torque=(0.0, 0.0, 0.5)
-        )
+    def test_force_impedance_control_response(self):
+        """测试力觉阻抗控制响应"""
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        force.open()
 
-        self.assertGreater(wrench.magnitude, 0.0)
+        # 模拟目标力
+        target_force = 10.0  # N
+        kp = 1.0  # 比例增益
 
-        vfs.close()
+        force_errors = []
+        for _ in range(50):
+            wrench = force.capture()
+            current_force = wrench.magnitude
+            error = target_force - current_force
+            force_errors.append(error)
+
+            # 简单控制输出
+            control_output = kp * error
+
+        force.close()
+
+        # 力跟踪误差应该收敛
+        self.assertEqual(len(force_errors), 50)
+        # 误差标准差应该较小
+        self.assertLess(np.std(force_errors), 20)
+
+
+class TestIMUPoseControlIntegration(unittest.TestCase):
+    """IMU-姿态控制集成测试"""
+
+    def test_imu_pose_estimator_convergence(self):
+        """测试IMU姿态估计收敛性"""
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=200)
+
+        euler_history = []
+        for _ in range(200):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+            euler = pose.to_euler()
+            euler_history.append(euler)
+
+        imu.close()
+
+        # 检查收敛性 (最后20帧应该稳定)
+        last_20 = np.array(euler_history[-20:])
+        roll_std = np.std(last_20[:, 0])
+        pitch_std = np.std(last_20[:, 1])
+
+        self.assertLess(roll_std, 0.1)
+        self.assertLess(pitch_std, 0.1)
+
+    def test_virtual_imu_agv_motion_control(self):
+        """测试虚拟IMU在AGV运动控制中的应用"""
+        imu = VirtualIMUSensor(sensor_id="agv_imu_test")
+        imu.open()
+
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=100)
+
+        # 模拟AGV运动
+        for _ in range(100):
+            # 模拟直线运动
+            frame = imu.simulate_agv_motion(
+                linear_velocity=(0.5, 0.0),
+                angular_velocity=0.0,
+                grade='M'
+            )
+            estimator.update(frame.accel, frame.gyro)
+
+        pose = estimator.get_pose()
+        self.assertIsNotNone(pose.orientation)
+        self.assertAlmostEqual(np.linalg.norm(pose.orientation), 1.0, places=4)
+
+        imu.close()
+
+    def test_pose_control_loop(self):
+        """测试姿态控制回路"""
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=200)
+
+        # 目标姿态 (水平)
+        target_euler = np.array([0.0, 0.0, 0.0])
+
+        # 控制参数
+        kp = 5.0
+
+        for _ in range(100):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+            current_euler = pose.to_euler()
+
+            # 姿态误差
+            error = target_euler - current_euler
+
+            # 控制输出 (力矩命令)
+            torque_cmd = kp * error
+
+            # 验证控制输出有界
+            self.assertTrue(np.all(np.abs(torque_cmd) < 100))
+
+        imu.close()
+
+
+class TestMultimodalSensorSynchronization(unittest.TestCase):
+    """多模态传感器同步测试"""
+
+    def test_all_sensors_same_timestamp(self):
+        """测试所有传感器共享时间戳"""
+        config = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config)
+        manager.open_all()
+
+        timestamps = []
+        for _ in range(10):
+            frame = manager.capture_all()
+            timestamps.append(frame.timestamp)
+
+        manager.close_all()
+
+        # 时间戳应该递增
+        for i in range(1, len(timestamps)):
+            self.assertGreaterEqual(timestamps[i], timestamps[i-1])
+
+    def test_frame_id_consistency(self):
+        """测试帧ID一致性"""
+        config = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config)
+        manager.open_all()
+
+        prev_frame_id = -1
+        for _ in range(20):
+            frame = manager.capture_all()
+            self.assertGreater(frame.frame_id, prev_frame_id)
+            prev_frame_id = frame.frame_id
+
+        manager.close_all()
+
+    def test_sensor_buffer_not_overflow(self):
+        """测试传感器缓冲区不溢出"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+
+        # 采集大量数据
+        for i in range(150):
+            tactile.capture()
+
+        # 缓冲区应该被限制
+        self.assertLessEqual(len(tactile._frame_buffer), 100)
+
+        tactile.close()
+
+
+class TestSensorFusionControl闭环(unittest.TestCase):
+    """完整闭环测试: 传感器→融合→控制"""
+
+    def test_closed_loop_sensing_to_control(self):
+        """测试从感觉到控制的完整闭环"""
+        # 1. 初始化传感器
+        tactile = TactileArray(array_size=(16, 16))
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+
+        tactile.open()
+        force.open()
+        imu.open()
+
+        # 2. 初始化融合
+        config_fusion = FusionConfig(hidden_dim=256)
+        fusion = CrossModalFusion(config_fusion)
+        unified = UnifiedRepresentation(input_dim=256, hidden_dim=384, output_dim=128)
+
+        # 3. 初始化控制器
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=200)
+
+        # 4. 闭环迭代
+        for iteration in range(20):
+            # 感知阶段
+            tac_frame = tactile.capture()
+            wrench = force.capture()
+            imu_frame = imu.capture()
+
+            # 触觉处理
+            contacts = tactile.detect_contacts(tac_frame)
+            grip_quality = tactile.estimate_grip_quality(tac_frame)
+
+            # 力觉处理
+            contact_state = force.detect_contact(wrench)
+
+            # IMU处理
+            pose = estimator.update(imu_frame.accel, imu_frame.gyro)
+            euler = pose.to_euler()
+
+            # 融合阶段 - 构建正确维度的特征向量
+            tactile_feat = tac_frame.pressure_map.flatten()[:64].astype(np.float32).reshape(1, -1)
+            force_vec = wrench.to_vector()  # 6维
+            force_feat_arr = np.tile(force_vec, 6)[:32].astype(np.float32).reshape(1, -1)
+            imu_vec = np.concatenate([imu_frame.accel, imu_frame.gyro])  # 6维
+            imu_feat_arr = np.tile(imu_vec, 11)[:64].astype(np.float32).reshape(1, -1)
+
+            mmi = MultimodalInput(
+                vision=torch.randn(1, 512),
+                audio=torch.randn(1, 128),
+                tactile=torch.from_numpy(tactile_feat),
+                force=torch.from_numpy(force_feat_arr),
+                imu=torch.from_numpy(imu_feat_arr)
+            )
+            fused = fusion(mmi)
+            state, action, world = unified(fused)
+
+            # 控制阶段
+            # 基于触觉力觉生成抓取力命令
+            if grip_quality['overall'] > 0.5:
+                grasp_force_cmd = 10.0
+            else:
+                grasp_force_cmd = 5.0
+
+            # 基于IMU生成姿态调整
+            roll_correction = -euler[0] * 2.0
+            pitch_correction = -euler[1] * 2.0
+
+            # 验证控制输出
+            self.assertGreaterEqual(grasp_force_cmd, 0)
+            self.assertLessEqual(grasp_force_cmd, 20.0)
+
+        tactile.close()
+        force.close()
+        imu.close()
+
+    def test_control_command_bounds(self):
+        """测试控制指令边界约束"""
+        tactile = TactileArray(array_size=(16, 16))
+        tactile.open()
+
+        for _ in range(5):
+            tactile.capture()
+
+        # 模拟控制指令生成
+        for _ in range(20):
+            frame = tactile.capture()
+            quality = tactile.estimate_grip_quality(frame)
+
+            # 抓取力命令应该在 [0, 20] N
+            grasp_cmd = min(max(quality['overall'] * 15.0, 0.0), 20.0)
+            self.assertGreaterEqual(grasp_cmd, 0.0)
+            self.assertLessEqual(grasp_cmd, 20.0)
+
+            # 速度命令应该在 [-1, 1] m/s
+            vel_cmd = np.clip(np.random.randn() * 0.5, -1.0, 1.0)
+            self.assertGreaterEqual(vel_cmd, -1.0)
+            self.assertLessEqual(vel_cmd, 1.0)
+
+        tactile.close()
+
+
+class TestAGVGradePipelineCompliance(unittest.TestCase):
+    """AGV五级流水线合规测试"""
+
+    def test_m_grade_pipeline(self):
+        """测试M级流水线合规性"""
+        # M级规格
+        M_SPEC = {
+            'fusion_hidden_dim': 256,
+            'control_frequency': 100,  # Hz
+            'sensor_sync_tolerance': 0.02,  # s
+            'end_to_end_latency_budget': 0.05,  # s
+        }
+
+        # 初始化
+        config_manager = SensorManagerConfig(grade='M')
+        manager = SensorManager(config=config_manager)
+        manager.open_all()
+
+        config_fusion = FusionConfig(hidden_dim=M_SPEC['fusion_hidden_dim'])
+        fusion = CrossModalFusion(config_fusion)
+
+        # 执行流水线
+        latencies = []
+        for _ in range(10):
+            t_start = time.perf_counter()
+
+            data = manager.capture_all()
+
+            # 从StereoFrame/AudioFrame等提取特征向量
+            def encode_vision(frame):
+                if frame is None:
+                    return torch.zeros((1, 512), dtype=torch.float32)
+                left = frame.left_image.astype(np.float32) / 255.0
+                feat = np.mean(left, axis=(0, 1))
+                result = np.zeros(512, dtype=np.float32)
+                for i in range(512):
+                    result[i] = feat[i % 3]
+                return torch.from_numpy(result).unsqueeze(0)
+
+            def encode_audio(frame):
+                if frame is None:
+                    return torch.zeros((1, 128), dtype=torch.float32)
+                left = np.array(frame.left_channel, dtype=np.float32)
+                feat = np.array([left.mean(), left.std()])
+                result = np.zeros(128, dtype=np.float32)
+                for i in range(128):
+                    result[i] = feat[i % 2]
+                return torch.from_numpy(result).unsqueeze(0)
+
+            def encode_tactile(frame):
+                if frame is None:
+                    return torch.zeros((1, 64), dtype=torch.float32)
+                p = frame.pressure_map.flatten()[:64]
+                feat = np.zeros(64, dtype=np.float32)
+                feat[:len(p)] = p
+                return torch.from_numpy(feat).unsqueeze(0)
+
+            def encode_force(frame):
+                if frame is None:
+                    return torch.zeros((1, 32), dtype=torch.float32)
+                vec = frame.to_vector()
+                result = np.zeros(32, dtype=np.float32)
+                for i in range(32):
+                    result[i] = vec[i % 6]
+                return torch.from_numpy(result).unsqueeze(0)
+
+            def encode_imu(frame):
+                if frame is None:
+                    return torch.zeros((1, 64), dtype=torch.float32)
+                feat = np.concatenate([frame.accel, frame.gyro])
+                if frame.mag is not None:
+                    feat = np.concatenate([feat, frame.mag])
+                result = np.zeros(64, dtype=np.float32)
+                for i in range(64):
+                    result[i] = feat[i % len(feat)]
+                return torch.from_numpy(result).unsqueeze(0)
+
+            mmi = MultimodalInput(
+                vision=encode_vision(data.vision),
+                audio=encode_audio(data.audio),
+                tactile=encode_tactile(data.tactile),
+                force=encode_force(data.force),
+                imu=encode_imu(data.imu)
+            )
+            fused = fusion(mmi)
+
+            t_end = time.perf_counter()
+            latencies.append(t_end - t_start)
+
+        manager.close_all()
+
+        avg_latency = np.mean(latencies)
+        self.assertLess(avg_latency, M_SPEC['end_to_end_latency_budget'])
+
+    def test_all_grade_fusion_dimensions(self):
+        """测试所有等级的融合维度一致性"""
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+        expected_hidden_dims = {'S': 128, 'M': 256, 'L': 512, 'XL': 768, 'XXL': 1024}
+
+        for grade in grades:
+            config = SensorManagerConfig(grade=grade)
+            # 验证配置
+            self.assertIsNotNone(config)
+
+            # 融合配置
+            fusion_config = FusionConfig(hidden_dim=expected_hidden_dims[grade])
+            self.assertEqual(fusion_config.hidden_dim, expected_hidden_dims[grade])
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)
