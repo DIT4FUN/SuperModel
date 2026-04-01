@@ -45,6 +45,8 @@ from .learning import (
     get_learning_spec
 )
 
+from . import utils
+
 __all__ = [
     # 版本
     '__version__',
@@ -69,5 +71,8 @@ __all__ = [
     'WorldModel',
     'IntrinsicCuriosity',
     'AutonomousLearning',
-    'get_learning_spec'
+    'get_learning_spec',
+
+    # 工具
+    'utils'
 ]
