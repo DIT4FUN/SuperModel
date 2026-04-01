@@ -402,6 +402,7 @@ SuperModel/
 - [模块接口设计](docs/design/MODULE_INTERFACE.md) — 完整的API接口定义
 - [AGV五级规格表](docs/design/AGV_GRADE_SPEC.md) — S/M/L/XL/XXL各等级参数
 - [系统架构设计](docs/design/SYSTEM_ARCHITECTURE.md) — 整体架构图
+- [真实机器人集成指南](docs/REAL_ROBOT_INTEGRATION.md) — 从仿真到真实硬件的部署指南
 
 ## 测试状态
 
