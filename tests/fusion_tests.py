@@ -1391,3 +1391,4 @@ class TestFusionMemory(unittest.TestCase):
         # 输出大小合理
         self.assertEqual(output.shape, (8, 256))
         self.assertFalse(torch.isnan(output).any())
+
