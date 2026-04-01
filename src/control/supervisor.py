@@ -16,6 +16,7 @@ from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Any, Tuple
 from enum import Enum
 from datetime import datetime
+from abc import ABC, abstractmethod
 import time
 
 
@@ -89,7 +90,7 @@ class ControlState:
     metrics: Dict[str, ControllerMetrics] = field(default_factory=dict)
 
 
-class ControllerInterface:
+class ControllerInterface(ABC):
     """
     控制器标准接口
 
@@ -102,18 +103,22 @@ class ControllerInterface:
         self.is_active = False
         self._metrics = ControllerMetrics(name=name)
 
+    @abstractmethod
     def start(self) -> bool:
         """启动控制器"""
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def stop(self) -> bool:
         """停止控制器"""
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def reset(self):
         """重置控制器状态"""
-        raise NotImplementedError
+        pass
 
+    @abstractmethod
     def compute(self, state: Dict, target: Dict) -> Dict:
         """计算控制输出
 
@@ -124,7 +129,7 @@ class ControllerInterface:
         Returns:
             control_output: 控制输出字典
         """
-        raise NotImplementedError
+        pass
 
     def get_metrics(self) -> ControllerMetrics:
         """获取性能指标"""
