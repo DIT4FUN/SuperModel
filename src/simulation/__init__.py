@@ -32,6 +32,10 @@ from .agv_scenarios import (
     AGVPurePursuitController,
     get_agv_physics_spec
 )
+from .mujoco_sim import (
+    MuJoCoSimulator, MuJoCoConfig, ControlMode,
+    create_mujoco_simulator, HAS_MUJOCO
+)
 
 __all__ = [
     # 基础仿真
@@ -45,6 +49,9 @@ __all__ = [
     # AGV 仿真
     'AGVSimulator', 'AGVPhysicsConfig', 'AGVState', 'AGVStateMachine',
     'AGVPurePursuitController', 'get_agv_physics_spec',
+    # MuJoCo 仿真
+    'MuJoCoSimulator', 'MuJoCoConfig', 'ControlMode',
+    'create_mujoco_simulator', 'HAS_MUJOCO',
 ]
 
 
