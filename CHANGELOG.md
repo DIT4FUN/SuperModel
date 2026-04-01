@@ -2,6 +2,28 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [1.33.0] - 2026-04-01
+
+### Added
+- **AGV 仿真场景模块** `simulation/agv_scenarios.py` (560+ 行)
+  - AGVSimulator: 差速驱动运动学模型 (Differential Drive Kinematics)
+  - AGVPurePursuitController: Pure Pursuit 路径跟踪控制器
+  - AGVStateMachine: 7状态自动机 (IDLE/MOVING/NAVIGATING/DOCKING/CHARGING/ERROR/ESTOP)
+  - AGVPhysicsConfig: 五级物理规格 (S:20kg@0.5m/s → XXL:500kg@8.0m/s)
+  - 里程计漂移/IMU噪声/电池管理/障碍物检测 完整仿真
+- **AGV 场景测试** `tests/agv_scenario_tests.py` (41项测试)
+  - AGVSimulator 运动学/传感器/电池/障碍物测试
+  - PurePursuit 控制器测试
+  - 状态机测试
+  - 导航/多AGV/避障 集成测试
+
+### Testing
+- **1153 tests passed** (18.43s)
+  - sensor_tests.py: 220 tests ✅
+  - fusion_tests.py: 104 tests ✅
+  - agv_scenario_tests.py: 41 tests ✅
+  - 全模块回归测试通过
+
 ## [1.32.0] - 2026-04-01
 
 ### Added

@@ -27,6 +27,11 @@ from .gym_env import (
     make_env, collect_rollout, get_gym_spec,
     register_gym_envs
 )
+from .agv_scenarios import (
+    AGVSimulator, AGVPhysicsConfig, AGVState, AGVStateMachine,
+    AGVPurePursuitController,
+    get_agv_physics_spec
+)
 
 __all__ = [
     # 基础仿真
@@ -37,4 +42,12 @@ __all__ = [
     'SuperModelGymEnv', 'GymEnvConfig',
     'make_env', 'collect_rollout', 'get_gym_spec',
     'register_gym_envs',
+    # AGV 仿真
+    'AGVSimulator', 'AGVPhysicsConfig', 'AGVState', 'AGVStateMachine',
+    'AGVPurePursuitController', 'get_agv_physics_spec',
 ]
+
+
+def get_agv_physics_spec(grade: str) -> 'AGVPhysicsConfig':
+    """获取 AGV 五级物理规格"""
+    return AGVPhysicsConfig.from_grade(grade)
