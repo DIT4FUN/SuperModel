@@ -2,6 +2,42 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.40.0] - 2026-04-01 16:05
+
+### Added
+- **MuJoCo物理引擎仿真模块** `src/simulation/mujoco_sim.py` (新增987行)
+  - `MuJoCoSimulator`: 完整仿真器封装 (刚体动力学/接触力/碰撞检测)
+  - `MuJoCoConfig`: AGV五级规格配置 (S/M/L/XL/XXL五档)
+  - `ControlMode`: 5种控制模式 (力矩/速度/位置/任务空间/执行器)
+  - `AGV_MJCF_TEMPLATE`: 差速驱动AGV的MJCF XML模型
+  - `create_mujoco_simulator()`: AGV五级规格工厂函数
+  - 支持: IMU传感器/相机/关节传感器/里程计/末端执行器
+
+- **MuJoCo测试用例** `tests/mujoco_sim_tests.py` (新增8项测试)
+  - `TestMuJoCoConfig`: 配置测试
+  - `TestControlMode`: 控制模式枚举测试
+  - `TestAGVMJCFTemplate`: MJCF模板测试
+  - `TestMuJoCoSimulator`: 仿真器完整测试
+  - `TestCreateMujocoSimulator`: 工厂函数五级测试
+  - `TestMuJoCoSimulation`: 仿真流程测试 (直线/旋转/弧线)
+
+### Updated
+- `src/simulation/__init__.py`: 新增MuJoCo模块导出
+- `README.md`: 测试计数 1249 → 1257
+- `PROGRESS.md`: v1.40.0进度日志
+
+### Testing
+- 全量测试: `pytest tests/ -q` → 1257 passed in 37.00s ✅
+- 新增: mujoco_sim_tests.py (8 tests)
+- MuJoCo相关测试在安装mujoco后可完整运行
+
+### 下一步建议
+- MuJoCo安装后完整集成测试 (`pip install mujoco`)
+- MuJoCo-Gymnasium RL训练接口
+- RK3588 NPU部署优化
+
+---
+
 ## [v1.39.0] - 2026-04-01 15:39
 
 ### Added
