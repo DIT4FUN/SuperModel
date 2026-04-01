@@ -1392,3 +1392,80 @@ class TestFusionMemory(unittest.TestCase):
         self.assertEqual(output.shape, (8, 256))
         self.assertFalse(torch.isnan(output).any())
 
+
+
+class TestFusionFiveGradeCompliance(unittest.TestCase):
+    """融合网络五级AGV合规性测试"""
+
+    def test_s_grade_fusion_specs(self):
+        """S级融合规格"""
+        cfg = FusionConfig(hidden_dim=128, num_heads=2)
+        self.assertEqual(cfg.hidden_dim, 128)
+        self.assertEqual(cfg.num_heads, 2)
+
+    def test_m_grade_fusion_specs(self):
+        """M级融合规格"""
+        cfg = FusionConfig(hidden_dim=256, num_heads=4)
+        self.assertEqual(cfg.hidden_dim, 256)
+        self.assertEqual(cfg.num_heads, 4)
+
+    def test_l_grade_fusion_specs(self):
+        """L级融合规格"""
+        cfg = FusionConfig(hidden_dim=512, num_heads=8)
+        self.assertEqual(cfg.hidden_dim, 512)
+        self.assertEqual(cfg.num_heads, 8)
+
+    def test_xl_grade_fusion_specs(self):
+        """XL级融合规格"""
+        cfg = FusionConfig(hidden_dim=768, num_heads=12)
+        self.assertEqual(cfg.hidden_dim, 768)
+        self.assertEqual(cfg.num_heads, 12)
+
+    def test_xxl_grade_fusion_specs(self):
+        """XXL级融合规格"""
+        cfg = FusionConfig(hidden_dim=1024, num_heads=16)
+        self.assertEqual(cfg.hidden_dim, 1024)
+        self.assertEqual(cfg.num_heads, 16)
+
+
+class TestFusionTemporalSequences(unittest.TestCase):
+    """融合时序处理测试"""
+
+    def test_temporal_sequence_processing(self):
+        """时序序列处理"""
+        fusion = CrossModalFusion(FusionConfig(
+            hidden_dim=256, num_heads=4, strategy=FusionStrategy.HYBRID
+        ))
+        
+        # 模拟3帧时序数据
+        seq_len = 3
+        mmi = MultimodalInput(
+            vision=torch.randn(seq_len, 512),
+            audio=torch.randn(seq_len, 128),
+            tactile=torch.randn(seq_len, 64),
+            force=torch.randn(seq_len, 32),
+            imu=torch.randn(seq_len, 64)
+        )
+        
+        output = fusion(mmi)
+        
+        self.assertEqual(output.shape[0], seq_len)
+        self.assertEqual(output.shape[1], 256)
+
+    def test_temporal_attention_weights(self):
+        """时序注意力权重"""
+        fusion = CrossModalFusion(FusionConfig(
+            hidden_dim=128, num_heads=2, strategy=FusionStrategy.HYBRID
+        ))
+        
+        mmi = MultimodalInput(
+            vision=torch.randn(4, 512),
+            audio=torch.randn(4, 128),
+            tactile=torch.randn(4, 64),
+            force=torch.randn(4, 32),
+            imu=torch.randn(4, 64)
+        )
+        
+        output = fusion(mmi)
+        self.assertEqual(output.shape, (4, 128))
+        self.assertFalse(torch.isnan(output).any())

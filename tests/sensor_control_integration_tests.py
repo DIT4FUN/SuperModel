@@ -322,3 +322,111 @@ class TestMotionEstimator(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAGVSensorFusionControlIntegration(unittest.TestCase):
+    """AGV传感器-融合-控制联合集成测试"""
+
+    def test_agv_grade_s_motor_specs(self):
+        """S级AGV电机规格验证"""
+        from simulation.agv_scenarios import AGVPhysicsConfig
+        cfg = AGVPhysicsConfig.from_grade('S')
+        self.assertEqual(cfg.grade, 'S')
+        self.assertLess(cfg.mass, 50.0)
+        self.assertLess(cfg.max_linear_speed, 2.0)
+
+    def test_agv_grade_xxl_motor_specs(self):
+        """XXL级AGV电机规格验证"""
+        from simulation.agv_scenarios import AGVPhysicsConfig
+        cfg = AGVPhysicsConfig.from_grade('XXL')
+        self.assertEqual(cfg.grade, 'XXL')
+        self.assertGreater(cfg.mass, 400.0)
+        self.assertGreater(cfg.max_linear_speed, 5.0)
+
+    def test_tactile_imu_coordinated_control(self):
+        """触觉-IMU协调控制测试"""
+        from control.tactile_control import TactileServoController, TactileServoParams
+        from control.imu_control import AttitudeStabilizer, IMUControlParams
+        
+        tactile = TactileArray(array_size=(8, 8), sensor_id="coord_tactile")
+        imu = IMUSensor(sensor_id="coord_imu")
+        
+        tactile.open()
+        imu.open()
+        
+        tctrl = TactileServoController(tactile, TactileServoParams.from_grade('M'))
+        actrl = AttitudeStabilizer(imu, IMUControlParams.from_grade('M'))
+        
+        # IMU保持姿态
+        actrl.set_target_attitude(0.0, 0.0, 0.0)
+        for _ in range(5):
+            imu_frame = imu.capture()
+            ctrl_out = actrl.update(imu_frame, dt=0.02)
+        
+        self.assertIsNotNone(ctrl_out)
+        self.assertEqual(ctrl_out.shape, (3,))
+        
+        tactile.close()
+        imu.close()
+
+    def test_force_imu_coordinated_control(self):
+        """力觉-IMU协调控制测试"""
+        from control.force_control import ForceController, ForceControlParams
+        from control.imu_control import AttitudeStabilizer, IMUControlParams
+        
+        force = ForceTorqueSensor(sensor_id="coord_force")
+        imu = IMUSensor(sensor_id="coord_imu2")
+        
+        force.open()
+        imu.open()
+        
+        fctrl = ForceController(force, ForceControlParams.from_grade('M'))
+        actrl = AttitudeStabilizer(imu, IMUControlParams.from_grade('M'))
+        
+        wrench = Wrench(force=[0.0, 0.0, 0.0], torque=[0.0, 0.0, 0.0])
+        # ForceController uses compute_admittance
+        ctrl = fctrl.compute_admittance(desired_force=np.zeros(3), current_wrench=wrench, dt=0.01)
+        
+        self.assertIsNotNone(ctrl)
+        
+        force.close()
+        imu.close()
+
+    def test_all_grade_force_control_specs(self):
+        """所有等级力控规格验证"""
+        from control.force_control import ForceControlParams, get_force_control_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            params = ForceControlParams.from_grade(grade)
+            self.assertEqual(params.grade, grade)
+            
+            spec = get_force_control_spec(grade)
+            self.assertEqual(spec.grade, grade)
+            self.assertIsNotNone(spec.Kp_force)
+            self.assertIsNotNone(spec.control_rate)
+
+    def test_all_grade_imu_control_specs(self):
+        """所有等级IMU控制规格验证"""
+        from control.imu_control import IMUControlParams, get_imu_control_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            params = IMUControlParams.from_grade(grade)
+            self.assertEqual(params.grade, grade)
+            
+            spec = get_imu_control_spec(grade)
+            self.assertEqual(spec.grade, grade)
+            self.assertIsNotNone(spec.Kp_attitude)
+            self.assertIsNotNone(spec.control_rate)
+
+    def test_all_grade_tactile_control_specs(self):
+        """所有等级触觉控制规格验证"""
+        from control.tactile_control import TactileServoParams, get_tactile_control_spec
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            params = TactileServoParams.from_grade(grade)
+            self.assertEqual(params.grade, grade)
+            
+            spec = get_tactile_control_spec(grade)
+            self.assertEqual(spec.grade, grade)
+            self.assertIsNotNone(spec.Kp_position)
+            self.assertIsNotNone(spec.control_rate)
