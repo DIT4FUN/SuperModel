@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-1299%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-1340%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -34,7 +34,8 @@
 | `hardware/` | **RDK 主板支持** (RK3588/RDK X3/X5 Ultra/S100) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**1299项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**1340项全部通过**) | ✅ 完成 |
+| `evaluation/` | 基准测试与评估报告生成器 (AGV五级合规性) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -355,7 +356,7 @@ SuperModel/
 │   │   └── multi_agent.py      # 多AGV协调控制 (L/XL/XXL)
 │   └── simulation/         # 仿真环境
 │       └── environment.py    # Gymnasium 物理仿真 + 传感器仿真
-├── tests/                   # 1299 项测试全部通过
+├── tests/                   # 1340 项测试全部通过
 │   ├── sensor_tests.py      # 传感器 (184 tests)
 │   ├── fusion_tests.py      # 融合网络 (98 tests)
 │   ├── hardware_tests.py    # 硬件平台 (18 tests)

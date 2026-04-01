@@ -2,6 +2,31 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.42.0] - 2026-04-01 17:55
+
+### Added
+- **评估模块** `src/evaluation/` (新增 31807 字节)
+  - `benchmark.py`: 完整基准测试套件 (SensorBenchmark/FusionBenchmark/ControlBenchmark/EmbodiedBenchmark)
+  - `metrics.py`: 性能指标计算 (延迟/多模态/控制/LatencyTracker)
+  - `reporter.py`: 评估报告生成器 (JSON/Markdown/HTML)
+  - `AGV_LATENCY_SPEC` / `AGV_MEMORY_SPEC`: AGV 五级规格表 (S/M/L/XL/XXL)
+  - 支持: 传感器延迟基准、融合网络基准、控制回路基准、端到端具身智能基准
+  - 纯 numpy 实现 (无 sklearn 依赖)
+
+- **评估测试用例** `tests/evaluation_tests.py` (41项测试)
+  - AGV 五级规格表测试
+  - 基准配置/结果测试
+  - 传感器/融合/控制/具身智能基准测试
+  - 指标计算测试 (LatencyMetrics/MultimodalMetrics/ControlMetrics)
+  - 报告生成器测试 (JSON/Markdown/HTML)
+  - 全部 AGV 等级合规性测试
+
+### Updated
+- **README.md**: 测试计数 1299 → 1340，新增 evaluation 模块说明
+- 测试总数: **1340 项通过** (原 1299 + 新增 41)
+
+---
+
 ## [v1.41.0] - 2026-04-01 16:20
 
 ### Added
