@@ -3,7 +3,7 @@
 > 🤖 融合双耳声觉 + 双目视觉 + 触觉 + 力觉 + IMU 的具身智能大脑
 >
 > ![CI](https://github.com/DIT4FUN/SuperModel/actions/workflows/ci.yml/badge.svg)
-> ![Tests](https://img.shields.io/badge/tests-1019%20passed-brightgreen)
+> ![Tests](https://img.shields.io/badge/tests-1158%20passed-brightgreen)
 > ![Python](https://img.shields.io/badge/python-3.10+-blue)
 
 ## 项目目标
@@ -34,7 +34,7 @@
 | `hardware/` | **RDK 主板支持** (RK3588/RDK X3/X5 Ultra/S100) | ✅ 完成 |
 | `simulation/` | 基础物理仿真环境 | ✅ 完成 |
 | `docs/` | 架构设计与接口文档 | ✅ 完成 |
-| `tests/` | 全套单元测试 (**1019项全部通过**) | ✅ 完成 |
+| `tests/` | 全套单元测试 (**1158项全部通过**) | ✅ 完成 |
 
 ## 🌟 World Model (世界模型)
 
@@ -406,8 +406,8 @@ SuperModel/
 
 | 测试套件 | 测试数 | 状态 |
 |----------|--------|------|
-| sensor_tests.py | 181 | ✅ 全部通过 |
-| fusion_tests.py | 86 | ✅ 全部通过 |
+| sensor_tests.py | 220 | ✅ 全部通过 |
+| fusion_tests.py | 104 | ✅ 全部通过 |
 | control_tests.py | 209 | ✅ 全部通过 |
 | ros2_interface_tests.py | 44 | ✅ 全部通过 |
 | integration_tests.py | 20 | ✅ 全部通过 |
@@ -423,7 +423,9 @@ SuperModel/
 | mpc_tests.py | 25 | ✅ 全部通过 |
 | test_sensor_manager.py | 27 | ✅ 全部通过 |
 | multi_agent_tests.py | 34 | ✅ 全部通过 |
-| **总计** | **1019项全部通过** |
+| supervisor_tests.py | 47 | ✅ 全部通过 |
+| agv_scenario_tests.py | 41 | ✅ 全部通过 |
+| **总计** | **1158项全部通过** |
 
 ## 技术栈
 

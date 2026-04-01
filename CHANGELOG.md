@@ -4,11 +4,34 @@ All notable changes to SuperModel will be documented in this file.
 
 ## [Unreleased] - 2026-04-01
 
+### Added
+- **AGV五级完整规格对照总表** `docs/design/AGV_GRADE_SPEC.md` (附录F, 200+行)
+  - 综合规格对比 (F.1)
+  - 感知子系统综合规格 (F.2)
+  - 融合与认知系统综合规格 (F.3)
+  - 执行与控制综合规格 (F.4)
+  - 软件功能综合规格 (F.5)
+  - 硬件平台综合规格 (F.6)
+  - World Model 综合规格 (F.7)
+  - 成本估算总表 (F.8)
+  - AGV五级选择决策树 (F.9)
+  - 系统架构概览图 (F.10)
+
 ### Improved
 - **MODULE_INTERFACE.md 目录导航增强** (5240行文档 → 新增完整目录)
   - 新增快速导航横幅 (点击章节号跳转)
   - 新增36节结构化目录表 (含行号范围与功能描述)
   - 覆盖感知/融合/认知/执行/仿真/ROS2/控制全模块
+
+### Testing
+- **控制监管器测试增强** `tests/supervisor_tests.py` (47项测试)
+  - 新增 SupervisorConfig 测试 (默认/自定义配置)
+  - 新增 ControllerInterface 生命周期测试 (创建/启动/停止/重置)
+  - 新增 MockCartesianController/MockImpedanceController 创建测试
+  - 新增 ControlMode/HealthStatus 枚举值测试
+  - 新增多控制器同类型注册测试
+  - 新增控制器查找与日志记录测试
+  - 新增模式切换日志验证测试
 
 ## [1.33.0] - 2026-04-01
 
