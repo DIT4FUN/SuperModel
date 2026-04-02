@@ -75,6 +75,10 @@ from .supervisor import (
     ControlState, ControllerMetrics, ControlMode, HealthStatus,
     MockJointController, MockCartesianController, MockImpedanceController
 )
+from .autotune import (
+    AutoTuner, TunerConfig, TunerResult, TuningMethod,
+    SimulatedPlant, autotune_pid
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -115,4 +119,7 @@ __all__ = [
     'MockJointController', 'MockCartesianController', 'MockImpedanceController',
     'SupervisorGrade', 'SupervisorGradeSpec', 'get_supervisor_spec',
     'get_supervisor_config', 'GradeAwareSupervisor',
+    # autotune
+    'AutoTuner', 'TunerConfig', 'TunerResult', 'TuningMethod',
+    'SimulatedPlant', 'autotune_pid',
 ]

@@ -33,6 +33,14 @@ from control.safety import (
     SafetyMonitor,
     EmergencyStopController
 )
+from control.autotune import (
+    AutoTuner,
+    TunerConfig,
+    TunerResult,
+    TuningMethod,
+    SimulatedPlant,
+    autotune_pid
+)
 
 __all__ = [
     # motor
@@ -45,5 +53,8 @@ __all__ = [
     'StandalonePIDController', 'PIDController2D', 'PIDAutotuner',
     # safety
     'SafetyLevel', 'StopReason', 'SafetyStatus',
-    'SafetyMonitor', 'EmergencyStopController'
+    'SafetyMonitor', 'EmergencyStopController',
+    # autotune
+    'AutoTuner', 'TunerConfig', 'TunerResult', 'TuningMethod',
+    'SimulatedPlant', 'autotune_pid'
 ]
