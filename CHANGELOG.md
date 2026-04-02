@@ -2,6 +2,17 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.46.0] - 2026-04-02 21:00
+
+### Added
+- **AGV五级规格速查卡**: 新增 `docs/AGV_SPEC_QUICKREF.md`，一图对比S→M→L→XL→XXL五级规格差异，含选型指南
+- **文档完善**: 速查卡涵盖感知/控制/计算平台/通信安全/学习能力/端到端指标/传感器详细规格表
+
+### Updated
+- **send_report.py**: 进度报告模板更新为v1.46.0版本
+- **版本号**: v1.45.0 → v1.46.0
+- **测试状态**: 1135项测试持续通过
+
 ## [v1.45.0] - 2026-04-02 20:30
 
 ### Updated
