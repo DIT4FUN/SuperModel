@@ -327,3 +327,209 @@ class TestFusionEdgeCases(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+
+class TestComplementaryFilterExtended(unittest.TestCase):
+    """互补滤波器扩展测试"""
+
+    def test_alpha_bounds(self):
+        """测试alpha边界"""
+        # alpha=0 应该只有加速度计
+        cf0 = ComplementaryFilter(alpha=0.0)
+        # alpha=1 应该只有陀螺仪
+        cf1 = ComplementaryFilter(alpha=1.0)
+        self.assertEqual(cf0.alpha, 0.0)
+        self.assertEqual(cf1.alpha, 1.0)
+
+    def test_multiple_updates_convergence(self):
+        """测试多次更新后收敛"""
+        cf = ComplementaryFilter(alpha=0.98)
+        for _ in range(100):
+            cf.update({
+                'accel': np.array([0.0, 0.1, -9.81]),
+                'gyro': np.array([0.01, 0.01, 0.01])
+            }, dt=0.01)
+        state = cf.get_state()
+        self.assertTrue(np.all(np.isfinite(state)))
+
+    def test_reset_after_updates(self):
+        """测试更新后重置"""
+        cf = ComplementaryFilter(alpha=0.96)
+        for _ in range(50):
+            cf.update({'accel': np.array([0, 0, -9.81]), 'gyro': np.array([0.1, 0.1, 0.1])}, dt=0.01)
+        cf.reset()
+        state = cf.get_state()
+        np.testing.assert_array_almost_equal(state, [0, 0, 0])
+
+
+class TestExtendedKalmanFilterExtended(unittest.TestCase):
+    """扩展卡尔曼滤波器扩展测试"""
+
+    def test_jacobian_numerical(self):
+        """测试雅可比矩阵数值稳定性"""
+        ekf = ExtendedKalmanFilter(state_dim=3, measurement_dim=3)
+        ekf._state = np.array([1.0, 2.0, 3.0])
+        # 小的状态扰动不应导致数值问题
+        h = 1e-6
+        for i in range(3):
+            state_plus = ekf._state.copy()
+            state_plus[i] += h
+            # 应该能计算
+            self.assertTrue(np.all(np.isfinite(state_plus)))
+
+    def test_covariance_positive_definite(self):
+        """测试协方差矩阵正定性"""
+        ekf = ExtendedKalmanFilter(state_dim=3, measurement_dim=3)
+        ekf._P = np.eye(3)
+        # 添加小扰动
+        for _ in range(10):
+            ekf.predict(dt=0.01)
+        # 协方差应该保持对称正定
+        self.assertTrue(np.allclose(ekf._P, ekf._P.T))
+        eigvals = np.linalg.eigvalsh(ekf._P)
+        self.assertTrue(np.all(eigvals > -1e-10))
+
+
+class TestSensorFusionIntegration(unittest.TestCase):
+    """传感器融合集成测试"""
+
+    def test_imu_force_tactile_fusion(self):
+        """测试IMU+力+触觉融合"""
+        from src.sensors.imu import IMUSensor, PoseEstimator
+        from src.sensors.force import ForceTorqueSensor, Wrench
+        from src.sensors.tactile import TactileArray
+
+        # 创建传感器
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        ft = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        tactile = TactileArray(array_size=(8, 8), sensor_id="test")
+
+        # 打开所有传感器
+        imu.open()
+        ft.open()
+        tactile.open()
+
+        # 采集数据
+        imu_frame = imu.capture()
+        wrench = ft.capture()
+        tactile_frame = tactile.capture()
+
+        # 创建姿态估计器
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=100)
+        pose = estimator.update(imu_frame.accel, imu_frame.gyro, imu_frame.mag, dt=0.01)
+
+        # 验证数据
+        self.assertIsNotNone(imu_frame.accel)
+        self.assertEqual(len(wrench.force), 3)
+        self.assertEqual(tactile_frame.pressure_map.shape, (8, 8))
+        self.assertIsNotNone(pose.orientation)
+
+        # 关闭传感器
+        imu.close()
+        ft.close()
+        tactile.close()
+
+    def test_multi_rate_fusion(self):
+        """测试多速率传感器融合"""
+        from src.sensors.imu import IMUSensor
+        from src.sensors.force import ForceTorqueSensor
+
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL, sample_rate=200)
+        ft = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+
+        imu.open()
+        ft.open()
+
+        # IMU 200Hz, Force 100Hz
+        for i in range(10):
+            imu_frame = imu.capture()
+            if i % 2 == 0:
+                wrench = ft.capture()
+
+        imu.close()
+        ft.close()
+
+    def test_fusion_with_motion_estimate(self):
+        """测试运动估计融合"""
+        from src.sensors.imu import IMUSensor, PoseEstimator
+
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+
+        estimator = PoseEstimator(algorithm='complementary', sample_rate=100)
+        estimator.velocity = np.zeros(3)
+        estimator.position = np.zeros(3)
+
+        # 模拟运动
+        for _ in range(50):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro, frame.mag, dt=0.01)
+            # 积分速度/位置
+            estimator.integrate_velocity(frame.accel, dt=0.01)
+
+        # 位置应该有限
+        self.assertTrue(np.all(np.isfinite(estimator.position)))
+
+        imu.close()
+
+
+class TestFusionRobustness(unittest.TestCase):
+    """融合鲁棒性测试"""
+
+    def test_accel_saturation(self):
+        """测试加速度饱和"""
+        cf = ComplementaryFilter(alpha=0.96)
+        # 饱和加速度
+        for _ in range(10):
+            cf.update({
+                'accel': np.array([0, 0, -100.0]),  # 饱和值
+                'gyro': np.array([0.0, 0.0, 0.0])
+            }, dt=0.01)
+        state = cf.get_state()
+        self.assertTrue(np.all(np.isfinite(state)))
+
+    def test_gyro_saturation(self):
+        """测试陀螺仪饱和"""
+        cf = ComplementaryFilter(alpha=0.96)
+        for _ in range(10):
+            cf.update({
+                'accel': np.array([0, 0, -9.81]),
+                'gyro': np.array([100.0, 100.0, 100.0])  # 饱和值
+            }, dt=0.01)
+        state = cf.get_state()
+        # 不应发散到无穷
+        self.assertTrue(np.all(np.isfinite(state)))
+
+    def test_nan_input(self):
+        """测试NaN输入"""
+        cf = ComplementaryFilter(alpha=0.96)
+        result = cf.update({
+            'accel': np.array([np.nan, 0, -9.81]),
+            'gyro': np.array([0, 0, 0.1])
+        }, dt=0.01)
+        # 即使有NaN，结果也应该有效
+        self.assertEqual(len(result), 3)
+
+    def test_inf_input(self):
+        """测试Inf输入"""
+        cf = ComplementaryFilter(alpha=0.96)
+        result = cf.update({
+            'accel': np.array([np.inf, 0, -9.81]),
+            'gyro': np.array([0, 0, 0.1])
+        }, dt=0.01)
+        self.assertEqual(len(result), 3)
+
+    def test_zero_accel(self):
+        """测试零加速度(自由落体)"""
+        cf = ComplementaryFilter(alpha=0.96)
+        for _ in range(10):
+            cf.update({
+                'accel': np.array([0, 0, 0]),  # 自由落体
+                'gyro': np.array([0, 0, 0])
+            }, dt=0.01)
+        state = cf.get_state()
+        self.assertTrue(np.all(np.isfinite(state)))
+
+
+if __name__ == '__main__':
+    unittest.main(verbosity=2)

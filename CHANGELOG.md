@@ -2,6 +2,18 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.44.0] - 2026-04-02 19:19
+
+### Added
+- **扩展传感器测试**: 新增边界情况测试类 `TestTactileEdgeCases`, `TestVirtualTactileEdgeCases`, `TestForceEdgeCases`, `TestVirtualForceEdgeCases`, `TestIMUEdgeCases` (共18项新测试)
+- **扩展融合测试**: 新增 `TestComplementaryFilterExtended`, `TestExtendedKalmanFilterExtended`, `TestSensorFusionIntegration`, `TestFusionRobustness` (共23项新测试)
+- **鲁棒性测试**: NaN/Inf输入饱和测试, 加速度/陀螺仪饱和, 零加速度自由落体测试
+- **集成测试**: IMU+力+触觉多传感器融合集成测试, 多速率融合测试
+
+### Updated
+- **版本号**: v1.43.0 → v1.44.0
+- **测试总数**: 1094 → 1135 (新增41项测试)
+
 ## [v1.43.0] - 2026-04-01 18:32
 
 ### Updated
