@@ -3,16 +3,28 @@
 import json, urllib.request, urllib.error, os
 
 CHAT_ID = "oc_930bbab59ae0857f8f4781724990fe23"
-MESSAGE = """SuperModel项目进度更新：
-✅ 已完成：tactile/force/IMU传感器模块、control控制模块、测试用例
-✅ AGV五级规格表已添加到docs/SPEC.md
-✅ 代码已提交并推送至GitHub (v1.44.0 - 0a0de8b)
-📁 新增文件：
-  - src/sensors/tactile.py (触觉传感器)
-  - src/sensors/force.py (六轴力传感器)
-  - src/sensors/imu.py (IMU传感器)
-  - tests/sensor_tests.py
-  - tests/fusion_tests.py
+MESSAGE = """SuperModel项目进度更新 (2026-04-02)：
+✅ 已完成：
+  - sensors/tactile.py (触觉传感器：压阻/触感阵列/压电)
+  - sensors/force.py (六维力传感器：ATI mini40)
+  - sensors/imu.py (IMU传感器：BMI088/MPU9250 + AHRS融合)
+  - control/motor.py (电机控制：DC/BLDC/伺服/步进)
+  - control/motion.py (运动控制：差速/麦轮/轨迹规划)
+  - control/pid.py (PID控制器：通用/二维/自动整定)
+  - control/safety.py (安全监控：限速/边界/碰撞/紧急停止)
+  - tests/sensor_tests.py (传感器单元测试)
+  - tests/fusion_tests.py (融合算法测试)
+✅ README.md 已更新（完整模块文档）
+✅ docs/DESIGN.md 已更新（AGV五级规格表详细版）
+✅ 代码已提交并推送至GitHub (3e408fc)
+
+📊 AGV五级规格表：
+  L1: ≤500kg, ±10mm (磁条/二维码)
+  L2: 500-1500kg, ±5mm (激光导航)
+  L3: 1500-3000kg, ±3mm (SLAM视觉)
+  L4: 3000-5000kg, ±1mm (多传感器融合)
+  L5: >5000kg, <±0.5mm (超模态具身智能)
+
 🔜 下一步：完善仿真环境与集成测试"""
 
 webhook = os.environ.get('FEISHU_WEBHOOK_URL', '')

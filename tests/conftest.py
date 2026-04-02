@@ -11,10 +11,17 @@ pytest 配置和共享 fixtures
 
 import pytest
 import sys
+import os
 import numpy as np
 import torch
 
-sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
+_ProjectRoot = '/home/treeman/.openclaw/workspace/projects/SuperModel'
+# src/ must be inserted BEFORE project_root so project_root ends up at index 0
+# (Python searches from index 0, so project_root must be found first for fusion imports)
+# src/fusion/ lacks sensor_fusion.py; project_root/fusion/ has it
+# Use explicit 'from src.sensors.xxx' imports to avoid stale project_root/sensors/
+sys.path.insert(0, _ProjectRoot)  # project_root at index 0 (for fusion imports)
+sys.path.insert(0, os.path.join(_ProjectRoot, 'src'))  # src/ → will be pushed to index 1
 
 from sensors.vision import BinocularCamera, CameraIntrinsics, StereoExtrinsics
 from sensors.audio import BinauralMic

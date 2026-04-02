@@ -14,11 +14,24 @@ from .cross_modal_fusion import (
     create_multimodal_input
 )
 
+from .sensor_fusion import (
+    SensorFusion,
+    ComplementaryFilter,
+    ExtendedKalmanFilter,
+    MultiSensorFusion
+)
+
 __all__ = [
+    # cross-modal fusion
     'MultimodalInput',
     'FusionConfig',
     'CrossModalFusion',
     'UnifiedRepresentation',
     'FusionStrategy',
-    'create_multimodal_input'
+    'create_multimodal_input',
+    # sensor fusion
+    'SensorFusion',
+    'ComplementaryFilter',
+    'ExtendedKalmanFilter',
+    'MultiSensorFusion'
 ]
