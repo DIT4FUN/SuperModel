@@ -6,21 +6,20 @@ APP_ID = "cli_a94ec91dc1f8dcd5"
 APP_SECRET = "Htb0eWcTokzIMdpiLaK6Aht0XnNetp7S"
 CHAT_ID = "oc_930bbab59ae0857f8f4781724990fe23"
 
-MESSAGE = """SuperModel项目进度更新 (v1.47.0 - 2026-04-02 23:07)：
+MESSAGE = """SuperModel项目进度更新 (v1.47.1 - 2026-04-03 01:40)：
 ✅ 本次完成：
-  - 新增 GradeAwareSupervisor (AGV五级感知控制监管器)
-    * SupervisorGrade 枚举 (S/M/L/XL/XXL五级)
-    * SupervisorGradeSpec 五级监管器完整规格 (性能/故障处理/安全/冗余/看门狗/诊断)
-    * get_supervisor_spec() / get_supervisor_config() 规格查询函数
-    * XL/XXL级: 看门狗监控 (step_watchdog)
-    * XXL级: 故障容忍与自愈 (step_fault_tolerance)
-  - 新增 grade_aware_supervisor_tests.py (37项测试)
-  - 更新 MODULE_INDEX.md / CHANGELOG.md / PROGRESS.md
-  - 版本号: v1.46.0 → v1.47.0
+  - 新增 GradeAwareSupervisor 传感器融合集成测试 (11项)
+    * 控制器注册/注销/查询 (IMU/关节/力控)
+    * 多控制器健康状态与诊断
+    * XXL级故障容错验证
+    * 等级规格边界测试
+  - 修复 control/motor.py 语法错误 (self._ electrical_angle → self._electrical_angle)
+  - 更新 MODULE_INDEX.md / SPEC.md / CHANGELOG.md
+  - 版本号: v1.47.0 → v1.47.1
   - 全模块状态: 传感器✅ 控制✅ 融合✅ 学习✅ 仿真✅ 文档✅
-  - GitHub最新提交: 7cf26a6
+  - GitHub最新提交: (本次)
 
-📊 模块状态总览 (v1.47.0 - 1172项测试通过):
+📊 模块状态总览 (v1.47.1 - 1183项测试通过):
   传感器(5类): vision/audio/tactile/force/imu ✅ + encoders/manager
   控制(19子模块): motion/trajectory/mpc/impedance/force/imu/tactile控制/agv/安全监控/避障/规划/ROS2/多AGV/teleop/supervisor(GradeAwareSupervisor)
   融合: 跨模态Transformer / 互补滤波 / EKF / 多传感器融合

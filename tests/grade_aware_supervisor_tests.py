@@ -323,3 +323,104 @@ class TestGradeAwareEmergencyStop(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestGradeAwareSupervisorSensorFusion(unittest.TestCase):
+    """测试 GradeAwareSupervisor 与传感器融合集成"""
+
+    def test_register_imu_controller(self):
+        """测试 IMU 控制器注册"""
+        from control.supervisor import MockImpedanceController
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.XL)
+        ctrl = MockImpedanceController("imu_ctrl")
+        result = sup.register_controller(ctrl)
+        self.assertTrue(result)
+        self.assertIn("imu_ctrl", sup.list_controllers())
+
+    def test_register_joint_controller(self):
+        """测试关节控制器注册"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.XL)
+        ctrl = MockJointController("joint_ctrl")
+        result = sup.register_controller(ctrl)
+        self.assertTrue(result)
+        self.assertIn("joint_ctrl", sup.list_controllers())
+
+    def test_get_controller_by_name(self):
+        """测试按名称获取控制器"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.XL)
+        ctrl = MockJointController("test_ctrl")
+        sup.register_controller(ctrl)
+        retrieved = sup.get_controller("test_ctrl")
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.name, "test_ctrl")
+
+    def test_mode_switch_affects_state(self):
+        """测试模式切换影响状态"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.M)
+        ctrl = MockJointController("jp_ctrl")
+        sup.register_controller(ctrl)
+        sup.switch_mode(ControlMode.JOINT_POSITION)
+        state = sup.get_state()
+        self.assertEqual(state.mode, ControlMode.JOINT_POSITION)
+
+    def test_health_status_with_multiple_controllers(self):
+        """测试多控制器健康状态"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.XL)
+        for i in range(3):
+            ctrl = MockJointController(f"ctrl_{i}")
+            sup.register_controller(ctrl)
+        self.assertEqual(sup._state.health.value, "healthy")
+
+    def test_xxl_grade_fault_tolerance(self):
+        """测试XXL级故障容错"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.XXL)
+        sup.step_fault_tolerance(fault_detected=False)
+        self.assertEqual(sup._consecutive_faults, 0)
+        sup.step_fault_tolerance(fault_detected=True)
+        self.assertGreater(sup._consecutive_faults, 0)
+
+    def test_supervisor_diagnostics_has_expected_keys(self):
+        """测试诊断数据包含预期键"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.L)
+        diag = sup.get_diagnostics()
+        self.assertIn("registered_controllers", diag)
+        self.assertIn("metrics", diag)
+        self.assertIn("health", diag)
+
+    def test_grade_spec_target_rate_bounds(self):
+        """测试各等级目标频率边界"""
+        for grade in SupervisorGrade:
+            sup = GradeAwareSupervisor(grade=grade)
+            spec = sup.grade_spec
+            self.assertGreater(spec.target_rate_hz, 0)
+            self.assertGreater(spec.target_latency_ms, 0)
+            if grade == SupervisorGrade.XXL:
+                self.assertGreaterEqual(spec.target_rate_hz, 1000)
+            if grade == SupervisorGrade.S:
+                self.assertLessEqual(spec.target_rate_hz, 100)
+
+    def test_config_max_latency_bounds(self):
+        """测试配置最大延迟边界"""
+        for grade in SupervisorGrade:
+            config = get_supervisor_config(grade)
+            self.assertGreater(config.max_latency_ms, config.target_latency_ms)
+
+    def test_unregister_controller(self):
+        """测试注销控制器"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.M)
+        ctrl = MockJointController("remove_ctrl")
+        sup.register_controller(ctrl)
+        self.assertIn("remove_ctrl", sup.list_controllers())
+        result = sup.unregister_controller("remove_ctrl")
+        self.assertTrue(result)
+        self.assertNotIn("remove_ctrl", sup.list_controllers())
+
+    def test_emergency_stop_resets_mode(self):
+        """测试急停重置模式"""
+        sup = GradeAwareSupervisor(grade=SupervisorGrade.L)
+        ctrl = MockJointController("test_ctrl")
+        sup.register_controller(ctrl)
+        sup.switch_mode(ControlMode.JOINT_POSITION)
+        sup.trigger_emergency_stop("test")
+        state = sup.get_state()
+        self.assertEqual(state.mode, ControlMode.EMERGENCY_STOP)

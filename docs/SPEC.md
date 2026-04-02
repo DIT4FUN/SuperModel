@@ -76,6 +76,25 @@
 | `emergency_stop(reason)` | str | None | 触发急停 |
 | `reset_estop()` | - | None | 重置急停 |
 
+#### GradeAwareSupervisor (AGV五级感知控制监管器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(grade, supervisor_id)` | SupervisorGrade, str | GradeAwareSupervisor | 按AGV等级初始化监管器 |
+| `register_controller(controller)` | ControllerInterface | bool | 注册控制器 |
+| `unregister_controller(name)` | str | bool | 注销控制器 |
+| `list_controllers()` | - | List[str] | 列出所有控制器 |
+| `get_controller(name)` | str | ControllerInterface | 按名称获取控制器 |
+| `switch_mode(target_mode)` | ControlMode | bool | 切换控制模式 |
+| `trigger_emergency_stop(reason)` | str | None | 触发紧急停止 |
+| `release_emergency_stop()` | - | bool | 解除紧急停止 |
+| `get_state()` | - | ControlState | 获取当前状态 |
+| `get_diagnostics()` | - | Dict | 获取诊断数据 |
+| `step_watchdog()` | - | bool | 看门狗心跳 (XL/XXL) |
+| `step_fault_tolerance(fault_detected)` | bool | None | 故障容错处理 (XXL) |
+| `get_grade_capabilities()` | - | Dict | 获取等级能力清单 |
+| `register_with_redundancy(controller, modes, is_primary)` | ControllerInterface, List, bool | bool | 冗余注册 (L+) |
+
 #### TrajectoryPlanner (轨迹规划器)
 
 | 方法 | 输入 | 输出 | 说明 |
@@ -360,7 +379,7 @@ pytest tests/sensor_tests.py -v
 # 传感器融合测试 (24项)
 pytest tests/fusion_tests.py -v
 
-# 控制模块测试 (220项)
+# 控制模块测试 (260项)
 pytest tests/control_tests.py -v
 
 # 运行关键测试子集
@@ -378,4 +397,5 @@ pytest tests/five_grade_pipeline_tests.py -v
 | v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
 | v1.1 | 2026-04-02 | 触觉/力觉/IMU模块完成，测试用例完善 |
 | v1.2 | 2026-04-02 | AGV五级规格表完善，接口文档更新 |
+| v1.4 | 2026-04-03 | GradeAwareSupervisor传感器融合集成测试11项、motor.py语法修复、1183项测试通过 |
 | v1.3 | 2026-04-02 | 扩展边界情况测试(NaN/Inf/饱和)，新增41项鲁棒性测试，总计1135项通过 |

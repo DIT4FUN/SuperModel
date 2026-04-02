@@ -285,7 +285,7 @@ class BLDCmotor(Motor):
         # 内部状态
         self._phase_voltage = np.zeros(3)
         self._phase_current = np.zeros(3)
-        self._ electrical_angle = 0.0
+        self._electrical_angle = 0.0
 
     def enable(self):
         """使能电机"""

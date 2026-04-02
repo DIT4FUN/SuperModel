@@ -2,6 +2,24 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.47.1] - 2026-04-03 01:40
+
+### Added
+- **GradeAwareSupervisor传感器融合集成测试**: 新增 `TestGradeAwareSupervisorSensorFusion` 测试类 (11项测试)
+  - 控制器注册/注销 (IMU/关节/力控)
+  - 按名称获取控制器
+  - 多控制器健康状态
+  - XXL级故障容错
+  - 诊断数据验证
+  - 等级规格边界验证
+- **motor.py语法修复**: 修复根目录 `control/motor.py` 中 `self._ electrical_angle` 空格语法错误
+
+### Updated
+- **测试总数**: 1172项 → 1183项 (+11项)
+- **MODULE_INDEX.md**: 版本v1.47.0 → v1.47.1
+- **SPEC.md**: 新增GradeAwareSupervisor接口表、控制模块测试220→260项
+- **版本号**: v1.47.0 → v1.47.1
+
 ## [v1.47.0] - 2026-04-02 23:07
 
 ### Added
