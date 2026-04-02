@@ -2,6 +2,20 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.48.0] - 2026-04-03 05:19
+
+### Fixed
+- `control/__init__.py`: GradeAwareSupervisor, SupervisorGrade, SupervisorGradeSpec, get_supervisor_spec, get_supervisor_config 未导入bug
+
+### Changed
+- `sensors/__init__.py`: 完善模块导出，补充 TactileFrame/TactileContact/Wrench/Pose/IMUFrame 等数据类及 AGV 五级规格常量（get_tactile_spec/AGV_TACTILE_GRADES 等）
+- 传感器-控制模块接口一致性提升
+
+### Testing
+- 1206 tests passed, 22 skipped ✅
+
+---
+
 ## [v1.47.1] - 2026-04-03 01:40
 
 ### Added

@@ -14,9 +14,20 @@ SuperModel 超模态感知模块
 
 from .vision import BinocularCamera, DepthProcessor
 from .audio import BinauralMic, SoundLocalizer
-from .tactile import TactileArray, PressureProcessor, VirtualTactileSensor
-from .force import ForceTorqueSensor, WrenchProcessor, VirtualForceSensor
-from .imu import IMUSensor, PoseEstimator, VirtualIMUSensor
+from .tactile import (
+    TactileArray, TactileFrame, TactileContact, TactileCalibration,
+    TactileSensorType, PressureProcessor, VirtualTactileSensor,
+    get_tactile_spec, AGV_TACTILE_GRADES
+)
+from .force import (
+    ForceTorqueSensor, Wrench, ForceCalibration, ContactState,
+    ForceSensorType, WrenchProcessor, VirtualForceSensor,
+    get_force_spec, AGV_FORCE_GRADES
+)
+from .imu import (
+    IMUSensor, IMUFrame, Pose, PoseEstimator, IMUCalibration,
+    IMUSensorType, VirtualIMUSensor, get_imu_spec, AGV_IMU_GRADES
+)
 from .encoders import (
     VisionEncoder, AudioEncoder, TactileEncoder, ForceEncoder,
     IMUEncoder, LanguageEncoder, SensorEncoderWrapper, EncoderConfig,
@@ -27,9 +38,14 @@ from .manager import SensorManager, SensorManagerConfig, SensorDataFrame, Sensor
 __all__ = [
     'BinocularCamera', 'DepthProcessor',
     'BinauralMic', 'SoundLocalizer',
-    'TactileArray', 'PressureProcessor', 'VirtualTactileSensor',
-    'ForceTorqueSensor', 'WrenchProcessor', 'VirtualForceSensor',
-    'IMUSensor', 'PoseEstimator', 'VirtualIMUSensor',
+    'TactileArray', 'TactileFrame', 'TactileContact', 'TactileCalibration',
+    'TactileSensorType', 'PressureProcessor', 'VirtualTactileSensor',
+    'get_tactile_spec', 'AGV_TACTILE_GRADES',
+    'ForceTorqueSensor', 'Wrench', 'ForceCalibration', 'ContactState',
+    'ForceSensorType', 'WrenchProcessor', 'VirtualForceSensor',
+    'get_force_spec', 'AGV_FORCE_GRADES',
+    'IMUSensor', 'IMUFrame', 'Pose', 'PoseEstimator', 'IMUCalibration',
+    'IMUSensorType', 'VirtualIMUSensor', 'get_imu_spec', 'AGV_IMU_GRADES',
     'VisionEncoder', 'AudioEncoder', 'TactileEncoder', 'ForceEncoder',
     'IMUEncoder', 'LanguageEncoder', 'SensorEncoderWrapper', 'EncoderConfig',
     'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config',

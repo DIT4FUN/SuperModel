@@ -73,7 +73,9 @@ from .imu_control import (
 from .supervisor import (
     ControlSupervisor, ControllerInterface, SupervisorConfig,
     ControlState, ControllerMetrics, ControlMode, HealthStatus,
-    MockJointController, MockCartesianController, MockImpedanceController
+    MockJointController, MockCartesianController, MockImpedanceController,
+    GradeAwareSupervisor, SupervisorGrade, SupervisorGradeSpec,
+    get_supervisor_spec, get_supervisor_config
 )
 from .autotune import (
     AutoTuner, TunerConfig, TunerResult, TuningMethod,
