@@ -222,13 +222,139 @@ class Pose:
     orientation: np.ndarray      # 4, 四元数 (qw, qx, qy, qz)
 ```
 
-## 4. 测试规范
+## 4. AGV五级完整规格表
+
+### 4.1 综合规格对比
+
+| 参数 | L1 | L2 | L3 | L4 | L5 |
+|------|-----|-----|-----|-----|-----|
+| **负载能力** | ≤500kg | 500-1500kg | 1500-3000kg | 3000-5000kg | >5000kg |
+| **导航方式** | 磁条/二维码 | 激光导航 | SLAM视觉 | 多传感器融合 | 超模态具身智能 |
+| **定位精度** | ±10mm | ±5mm | ±3mm | ±1mm | <±0.5mm |
+| **安全标准** | ISO 3691-2 | ISO 3691-4 | ISO 3691-4 | IEC 61508 SIL2 | IEC 61508 SIL3 |
+| **AI算力** | - | - | - | ≥100 TOPS | ≥275 TOPS |
+| **处理器** | PLC | ARM | ARM+GPU | ARM+GPU | NVIDIA Jetson AGX Orin |
+| **典型场景** | 仓储拣选 | 产线配送 | 柔性制造 | 重载车间 | 无人化工厂 |
+| **通讯协议** | 有线/低频WiFi | WiFi/5GHz | WiFi 6/5G | 5G/MQTT | 5G/WiFi 6E |
+
+### 4.2 触觉传感器详细规格 (AGV_TACTILE_GRADES)
+
+| 等级 | 阵列尺寸 | ADC分辨率 | 压力范围(kPa) | 采样频率 | 温度感知 | 通信接口 |
+|------|---------|----------|--------------|---------|---------|----------|
+| **S** | 8×8 | 12bit | 0-500 | 50Hz | 否 | I2C@0x18 |
+| **M** | 16×16 | 12bit | 0-1000 | 100Hz | 是 | SPI@50MHz |
+| **L** | 24×24 | 14bit | 0-2000 | 200Hz | 是 | SPI@50MHz |
+| **XL** | 32×32 | 14bit | 0-5000 | 500Hz | 是 | USB 3.0 |
+| **XXL** | 48×48 | 16bit | 0-10000 | 1000Hz | 是 | USB 3.0 |
+
+### 4.3 力觉传感器详细规格 (AGV_FORCE_GRADES)
+
+| 等级 | 轴数 | 力范围(N) | 力矩范围(N·m) | 分辨率(N) | 采样频率 | 通信接口 |
+|------|-----|----------|--------------|----------|---------|----------|
+| **S** | 3 | ±100 | ±10 | 0.1 | 100Hz | USB HID |
+| **M** | 6 | ±200 | ±20 | 0.05 | 500Hz | CAN/EtherCAT |
+| **L** | 6 | ±500 | ±50 | 0.02 | 1000Hz | CAN/EtherCAT |
+| **XL** | 6 | ±1000 | ±100 | 0.01 | 2000Hz | Ethernet UDP |
+| **XXL** | 6 | ±5000 | ±500 | 0.005 | 5000Hz | Ethernet UDP |
+
+### 4.4 IMU传感器详细规格 (AGV_IMU_GRADES)
+
+| 等级 | 型号 | 加速度范围 | 陀螺仪范围 | 采样频率 | 噪声密度(μg/√Hz) | 通信接口 |
+|------|-----|----------|-----------|---------|----------------|----------|
+| **S** | MPU6050 | ±8g | ±1000°/s | 100Hz | 400 | I2C@100kHz |
+| **M** | BMI088 | ±16g | ±2000°/s | 200Hz | 120 | SPI@20MHz |
+| **L** | BMI088 | ±24g | ±4000°/s | 500Hz | 60 | SPI@20MHz |
+| **XL** | ADIS16470 | ±40g | ±4000°/s | 1000Hz | 20 | SPI@40MHz |
+| **XXL** | ADIS16470 | ±80g | ±8000°/s | 2000Hz | 10 | SPI@40MHz |
+
+### 4.5 通信接口规格
+
+| 接口类型 | 速率 | 典型用途 | 支持等级 |
+|---------|------|---------|----------|
+| I2C | 100-400kHz | 消费级IMU/触觉 | S, M |
+| SPI | 20-50MHz | 工业级IMU/力觉 | M, L, XL, XXL |
+| USB HID | 12-480Mbps | 传感器集线器 | S, M |
+| USB 3.0 | 5Gbps | 高带宽传感器 | XL, XXL |
+| CAN | 1Mbps | 工业控制 | M, L |
+| EtherCAT | 100Mbps | 实时控制 | M, L |
+| Ethernet UDP | 1Gbps | 力觉/视觉传输 | XL, XXL |
+| WiFi 6E | 9.6Gbps | 云端通信 | L4, L5 |
+| 5G | 10Gbps | 远程控制 | L4, L5 |
+
+## 5. 模块接口详细设计
+
+### 5.1 传感器管理器接口 (SensorManager)
+
+```python
+class SensorManager:
+    def __init__(self, grade: str = 'M')
+    def open_all(self) -> Dict[str, bool]
+    def close_all(self)
+    def capture_all(self) -> SensorDataFrame
+    def get_modalities(self) -> List[str]
+    def is_healthy(self) -> bool
+    def get_latencies_ms(self) -> Dict[str, float]
+```
+
+### 5.2 控制模块核心接口
+
+```python
+class AGVMotionController:
+    def set_target_pose(pose: AGVPose) -> None
+    def set_target_twist(twist: AGVTwist) -> None
+    def step(dt: float) -> np.ndarray  # 返回轮速
+    def move_to(x: float, y: float, theta: float, dt: float) -> np.ndarray
+    def stop() -> np.ndarray
+    def emergency_stop() -> None
+
+class SafetyMonitor:
+    def check_velocity(velocity: np.ndarray, dt: float, timestamp: float) -> SafetyStatus
+    def check_boundary(position: np.ndarray, timestamp: float) -> SafetyStatus
+    def check_force(force_magnitude: float, torque_magnitude: float, timestamp: float) -> SafetyStatus
+    def check_collision(collision_detected: bool, timestamp: float) -> SafetyStatus
+    def check_all(...) -> SafetyStatus
+    def emergency_stop(reason: str) -> None
+    def reset_estop() -> None
+
+class TrajectoryPlanner:
+    def plan_line(start: Waypoint, end: Waypoint) -> List[TrajectoryPoint]
+    def plan_arc(start: Waypoint, end: Waypoint, curvature: float) -> List[TrajectoryPoint]
+    def smooth_trajectory(traj: List[TrajectoryPoint]) -> List[TrajectoryPoint]
+    def plan_path(waypoints: List[Waypoint]) -> List[TrajectoryPoint]
+```
+
+### 5.3 融合网络接口
+
+```python
+class CrossModalFusion:
+    def forward(multimodal_input: MultimodalInput) -> UnifiedRepresentation
+    def encode_vision(vision_feat: torch.Tensor) -> torch.Tensor
+    def encode_audio(audio_feat: torch.Tensor) -> torch.Tensor
+    def encode_tactile(tactile_feat: torch.Tensor) -> torch.Tensor
+    def encode_force(force_feat: torch.Tensor) -> torch.Tensor
+    def encode_imu(imu_feat: torch.Tensor) -> torch.Tensor
+
+class ComplementaryFilter:
+    def update(measurements: Dict, dt: float) -> np.ndarray
+    def get_state() -> np.ndarray
+    def reset() -> None
+
+class ExtendedKalmanFilter:
+    def initialize(initial_state: np.ndarray) -> None
+    def predict(dt: float) -> None
+    def correct(measurement: np.ndarray) -> None
+    def update(measurements: Dict, dt: float) -> np.ndarray
+    def get_state() -> np.ndarray
+    def get_covariance() -> np.ndarray
+```
+
+## 6. 测试规范
 
 ```bash
 # 运行所有测试
 pytest tests/ -v
 
-# 传感器模块测试 (89项)
+# 传感器模块测试 (65项)
 pytest tests/sensor_tests.py -v
 
 # 传感器融合测试 (24项)
@@ -239,4 +365,16 @@ pytest tests/control_tests.py -v
 
 # 运行关键测试子集
 pytest tests/sensor_tests.py tests/fusion_tests.py tests/control_tests.py -q
+
+# 集成测试
+pytest tests/integration_pipeline_tests.py -v
+pytest tests/five_grade_pipeline_tests.py -v
 ```
+
+## 7. 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
+| v1.1 | 2026-04-02 | 触觉/力觉/IMU模块完成，测试用例完善 |
+| v1.2 | 2026-04-02 | AGV五级规格表完善，接口文档更新 |
