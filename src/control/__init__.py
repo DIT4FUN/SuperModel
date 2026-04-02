@@ -3,6 +3,7 @@ SuperModel 控制模块
 ==================
 
 执行层模块:
+- motor: 电机控制 (DC/BLDC/伺服/步进 + PID)
 - motion: 运动控制 (速度/位置/力矩控制)
 - trajectory: 轨迹规划 (RRT, 多项式, S曲线)
 - skill: 技能库调度
@@ -81,6 +82,11 @@ from .autotune import (
     AutoTuner, TunerConfig, TunerResult, TuningMethod,
     SimulatedPlant, autotune_pid
 )
+from .motor import (
+    Motor, MotorState, MotorControlMode,
+    DCMotor, BLDCmotor, ServoMotor, StepperMotor,
+    PIDController as MotorPIDController, MotorController
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -124,4 +130,8 @@ __all__ = [
     # autotune
     'AutoTuner', 'TunerConfig', 'TunerResult', 'TuningMethod',
     'SimulatedPlant', 'autotune_pid',
+    # motor
+    'Motor', 'MotorState', 'MotorControlMode',
+    'DCMotor', 'BLDCmotor', 'ServoMotor', 'StepperMotor',
+    'MotorPIDController', 'MotorController',
 ]
