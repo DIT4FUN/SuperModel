@@ -1,298 +1,667 @@
 """
 IMU传感器模块 (Inertial Measurement Unit)
-支持加速度计、陀螺仪、磁力计的融合输出
+支持BMI088、MPU9250等常见IMU芯片
+包含四元数/欧拉角转换工具
 """
 
 import numpy as np
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass, field
-from enum import Enum
+from abc import ABC, abstractmethod
 
 
-class IMUModel(Enum):
-    """IMU型号"""
-    BMI088 = "bmi088"           # 博世BMI088 (AGV常用)
-    MPU6050 = "mpu6050"         # MPU6050 (入门级)
-    MPU9250 = "mpu9250"         # MPU9250 (9轴)
-    ADIS16465 = "adis16465"     # ADIS16465 (高精度工业级)
-    XSENS_MTI = "xsens_mti"     # XSens MTI (室外AGV)
+# 四元数与欧拉角转换辅助函数
+def quaternion_to_euler(q: np.ndarray) -> np.ndarray:
+    """
+    四元数转欧拉角
+
+    Args:
+        q: 四元数 [w, x, y, z]
+
+    Returns:
+        欧拉角 [roll, pitch, yaw] (rad)
+    """
+    w, x, y, z = q[0], q[1], q[2], q[3]
+
+    # Roll (x-axis rotation)
+    sinr_cosp = 2 * (w * x + y * z)
+    cosr_cosp = 1 - 2 * (x * x + y * y)
+    roll = np.arctan2(sinr_cosp, cosr_cosp)
+
+    # Pitch (y-axis rotation)
+    sinp = 2 * (w * y - z * x)
+    if np.abs(sinp) >= 1:
+        pitch = np.sign(sinp) * np.pi / 2  # use 90 degrees if out of range
+    else:
+        pitch = np.arcsin(sinp)
+
+    # Yaw (z-axis rotation)
+    siny_cosp = 2 * (w * z + x * y)
+    cosy_cosp = 1 - 2 * (y * y + z * z)
+    yaw = np.arctan2(siny_cosp, cosy_cosp)
+
+    return np.array([roll, pitch, yaw])
+
+
+def euler_to_quaternion(euler: np.ndarray) -> np.ndarray:
+    """
+    欧拉角转四元数 (ZYX顺序，即 yaw-pitch-roll)
+
+    Args:
+        euler: 欧拉角 [roll, pitch, yaw] (rad)
+
+    Returns:
+        四元数 [w, x, y, z]
+    """
+    roll, pitch, yaw = euler[0], euler[1], euler[2]
+
+    # 半角
+    cr = np.cos(roll / 2)
+    sr = np.sin(roll / 2)
+    cp = np.cos(pitch / 2)
+    sp = np.sin(pitch / 2)
+    cy = np.cos(yaw / 2)
+    sy = np.sin(yaw / 2)
+
+    w = cr * cp * cy + sr * sp * sy
+    x = sr * cp * cy - cr * sp * sy
+    y = cr * sp * cy + sr * cp * sy
+    z = cr * cp * sy - sr * sp * cy
+
+    return np.array([w, x, y, z])
+
+
+def quaternion_multiply(q1: np.ndarray, q2: np.ndarray) -> np.ndarray:
+    """
+    四元数乘法
+
+    Args:
+        q1: 四元数 [w, x, y, z]
+        q2: 四元数 [w, x, y, z]
+
+    Returns:
+        乘积四元数 [w, x, y, z]
+    """
+    w1, x1, y1, z1 = q1
+    w2, x2, y2, z2 = q2
+
+    w = w1 * w2 - x1 * x2 - y1 * y2 - z1 * z2
+    x = w1 * x2 + x1 * w2 + y1 * z2 - z1 * y2
+    y = w1 * y2 - x1 * z2 + y1 * w2 + z1 * x2
+    z = w1 * z2 + x1 * y2 - y1 * x2 + z1 * w2
+
+    return np.array([w, x, y, z])
+
+
+def quaternion_conjugate(q: np.ndarray) -> np.ndarray:
+    """
+    四元数共轭
+
+    Args:
+        q: 四元数 [w, x, y, z]
+
+    Returns:
+        共轭四元数 [w, -x, -y, -z]
+    """
+    return np.array([q[0], -q[1], -q[2], -q[3]])
+
+
+def normalize_quaternion(q: np.ndarray) -> np.ndarray:
+    """
+    归一化四元数
+
+    Args:
+        q: 四元数 [w, x, y, z]
+
+    Returns:
+        归一化四元数
+    """
+    norm = np.linalg.norm(q)
+    if norm < 1e-10:
+        return np.array([1.0, 0.0, 0.0, 0.0])  # 单位四元数
+    return q / norm
 
 
 @dataclass
 class IMUData:
     """IMU数据"""
-    timestamp: float
     sensor_id: str
-    model: IMUModel
-    # 加速度 (m/s²) [ax, ay, az]
+    timestamp: float
+
+    # 加速度 (m/s²)
     acceleration: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    # 角速度 (rad/s) [wx, wy, wz]
+    # 角速度 (rad/s)
     angular_velocity: np.ndarray = field(default_factory=lambda: np.zeros(3))
-    # 磁场 (μT) [mx, my, mz]
-    magnetic_field: Optional[np.ndarray] = None
+    # 磁场 (μT)
+    magnetic_field: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # 欧拉角 (rad) [roll, pitch, yaw]
+    euler: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    # 四元数 [w, x, y, z]
+    quaternion: np.ndarray = field(default_factory=lambda: np.array([1.0, 0.0, 0.0, 0.0]))
     # 温度 (°C)
     temperature: float = 25.0
-    # 欧拉角 (rad) [roll, pitch, yaw]
-    euler: Optional[np.ndarray] = None
-    # 四元数 [w, x, y, z]
-    quaternion: Optional[np.ndarray] = None
     # 原始数据
-    raw_accel: Optional[np.ndarray] = None
-    raw_gyro: Optional[np.ndarray] = None
-    # 信号质量指标
-    signal_quality: Dict[str, float] = field(default_factory=lambda: {
-        "accel": 1.0, "gyro": 1.0, "mag": 1.0
-    })
+    raw_accel: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_gyro: np.ndarray = field(default_factory=lambda: np.zeros(3))
+    raw_mag: np.ndarray = field(default_factory=lambda: np.zeros(3))
+
+    def __post_init__(self):
+        for name in ['acceleration', 'angular_velocity', 'magnetic_field',
+                     'euler', 'quaternion', 'raw_accel', 'raw_gyro', 'raw_mag']:
+            val = getattr(self, name)
+            if isinstance(val, list):
+                setattr(self, name, np.array(val))
 
     def to_vector(self) -> np.ndarray:
-        """转换为特征向量"""
-        vec = list(self.acceleration) + list(self.angular_velocity)
-        if self.magnetic_field is not None:
-            vec.extend(self.magnetic_field)
-        return np.array(vec)
+        """
+        返回归一化特征向量
+        格式: [ax_norm, ay_norm, az_norm, wx_norm, wy_norm, wz_norm,
+               mx_norm, my_norm, mz_norm, roll_norm, pitch_norm, yaw_norm]
+        """
+        # 加速度归一化 (假设最大 ±24g = ±235.2 m/s²)
+        accel_norm = self.acceleration / 235.2
+        # 角速度归一化 (假设最大 ±2000°/s = ±34.9 rad/s)
+        gyro_norm = self.angular_velocity / 34.9
+        # 磁场归一化 (假设最大 ±100 μT)
+        mag_norm = self.magnetic_field / 100.0
+        # 欧拉角归一化 (±π, ±π/2)
+        euler_norm = self.euler / np.array([np.pi, np.pi/2, np.pi])
 
-    def get_imu_pose_change(self, dt: float) -> Dict[str, float]:
-        """从IMU数据计算姿态变化"""
-        delta_angle = self.angular_velocity * dt
-        delta_vel = self.acceleration * dt
-        return {
-            "delta_angle_x": delta_angle[0],
-            "delta_angle_y": delta_angle[1],
-            "delta_angle_z": delta_angle[2],
-            "delta_vel_x": delta_vel[0],
-            "delta_vel_y": delta_vel[1],
-            "delta_vel_z": delta_vel[2],
-        }
+        return np.concatenate([
+            accel_norm, gyro_norm, mag_norm, euler_norm
+        ])
+
+    def get_roll(self) -> float:
+        """获取翻滚角 (roll)"""
+        return self.euler[0]
+
+    def get_pitch(self) -> float:
+        """获取俯仰角 (pitch)"""
+        return self.euler[1]
+
+    def get_yaw(self) -> float:
+        """获取偏航角 (yaw)"""
+        return self.euler[2]
+
+    def get_heading(self) -> float:
+        """获取航向角 (0-360°)"""
+        yaw_deg = np.degrees(self.euler[2])
+        if yaw_deg < 0:
+            yaw_deg += 360
+        return yaw_deg
+
+    def is_data_valid(self) -> bool:
+        """检查数据是否有效"""
+        # 检查是否有 NaN
+        if (np.isnan(self.acceleration).any() or
+            np.isnan(self.angular_velocity).any() or
+            np.isnan(self.euler).any()):
+            return False
+
+        # 检查量程
+        if np.linalg.norm(self.acceleration) > 500:  # > 50g
+            return False
+
+        return True
 
 
-class IMUSensor:
+class IMUSensor(ABC):
     """IMU传感器基类"""
 
-    GRAVITY = 9.81
-
-    def __init__(self, sensor_id: str, model: IMUModel, config: Optional[Dict] = None):
+    def __init__(self, sensor_id: str, name: str = "IMUSensor"):
         self.sensor_id = sensor_id
-        self.model = model
-        self.config = config or {}
-        self._orientation = np.array([1.0, 0.0, 0.0, 0.0])  # 四元数 [w, x, y, z]
-        self._last_timestamp: Optional[float] = None
-        self._sample_count = 0
-        self._drift_bias_accel = np.zeros(3)
-        self._drift_bias_gyro = np.zeros(3)
+        self.name = name
 
-    def read(self, timestamp: Optional[float] = None) -> IMUData:
+        # 校准相关
+        self._accel_bias = np.zeros(3)
+        self._gyro_bias = np.zeros(3)
+        self._mag_bias = np.zeros(3)
+        self._is_calibrated = False
+
+        # 方向 (四元数表示)
+        self._quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+        self._euler = np.zeros(3)
+
+        # 采样率
+        self._sampling_rate = 1000.0  # Hz
+
+    @abstractmethod
+    def read(self, timestamp: float) -> IMUData:
         """读取IMU数据"""
-        raise NotImplementedError
+        pass
 
     def update_orientation(self, gyro_data: np.ndarray, dt: float):
-        """更新四元数姿态 (简单积分)"""
-        wx, wy, wz = gyro_data
-        # 四元数导数
-        q = self._orientation
-        q_dot = 0.5 * np.array([
-            -q[1]*wx - q[2]*wy - q[3]*wz,
-             q[0]*wx + q[2]*wz - q[3]*wy,
-             q[0]*wy - q[1]*wz + q[3]*wx,
-             q[0]*wz + q[1]*wy - q[2]*wx
-        ])
-        self._orientation = q + q_dot * dt
-        self._orientation /= np.linalg.norm(self._orientation)
+        """
+        通过陀螺仪积分更新姿态 (四元数形式)
+
+        Args:
+            gyro_data: 角速度 [wx, wy, wz] (rad/s)
+            dt: 时间步长 (s)
+        """
+        # 四元数导数 = 0.5 * q * omega
+        # 其中 omega 是纯四元数形式的角速度
+
+        # 归一化陀螺仪数据
+        omega = np.array([0, gyro_data[0], gyro_data[1], gyro_data[2]])
+
+        # 四元数乘法形式
+        q = self._quaternion
+        omega_quat = omega
+
+        # q_dot = 0.5 * q ⊗ omega
+        q_dot = 0.5 * quaternion_multiply(q, omega_quat)
+
+        # 积分
+        self._quaternion = normalize_quaternion(q + q_dot * dt)
+
+        # 更新欧拉角
+        self._euler = quaternion_to_euler(self._quaternion)
 
     def get_euler_from_quaternion(self, q: np.ndarray) -> np.ndarray:
-        """从四元数转欧拉角"""
-        w, x, y, z = q
-        # Roll (X轴旋转)
-        roll = np.arctan2(2*(w*x + y*z), 1 - 2*(x*x + y*y))
-        # Pitch (Y轴旋转)
-        sinp = 2*(w*y - z*x)
-        sinp = np.clip(sinp, -1, 1)
-        pitch = np.arcsin(sinp)
-        # Yaw (Z轴旋转)
-        yaw = np.arctan2(2*(w*z + x*y), 1 - 2*(y*y + z*z))
-        return np.array([roll, pitch, yaw])
+        """从四元数获取欧拉角"""
+        return quaternion_to_euler(q)
+
+    def calibrate_gyro_bias(self, samples: int = 100):
+        """
+        校准陀螺仪零偏 (假设静止)
+
+        Args:
+            samples: 采样次数
+        """
+        gyro_samples = []
+        for _ in range(samples):
+            data = self.read(0.0)
+            gyro_samples.append(data.angular_velocity.copy())
+
+        self._gyro_bias = np.mean(gyro_samples, axis=0)
+        self._is_calibrated = True
+
+    def calibrate_accel_bias(self, samples: int = 100):
+        """校准加速度计零偏 (假设静止水平)"""
+        accel_samples = []
+        for _ in range(samples):
+            data = self.read(0.0)
+            accel_samples.append(data.acceleration.copy())
+
+        self._accel_bias = np.mean(accel_samples, axis=0)
+        # 假设水平放置时 Z 轴应该为 g
+        self._accel_bias[2] -= 9.81
+
+    def reset_orientation(self):
+        """重置姿态"""
+        self._quaternion = np.array([1.0, 0.0, 0.0, 0.0])
+        self._euler = np.zeros(3)
+
+    def set_sampling_rate(self, rate: float):
+        """设置采样率"""
+        self._sampling_rate = rate
+
+    def get_quaternion(self) -> np.ndarray:
+        """获取当前四元数"""
+        return self._quaternion.copy()
+
+    def get_euler(self) -> np.ndarray:
+        """获取当前欧拉角"""
+        return self._euler.copy()
 
 
 class BMI088(IMUSensor):
-    """博世BMI088 IMU (AGV常用)"""
+    """
+    博世 BMI088 IMU
+    广泛应用于AGV、无人机等场景
+    特点: 高性能、低噪声、支持高温
+    """
 
-    # 典型噪声密度
-    NOISE_DENSITY_ACCEL = 150e-6  # μg/√Hz
-    NOISE_DENSITY_GYRO = 3e-6     # °/s/√Hz
+    def __init__(
+        self,
+        sensor_id: str,
+        name: str = "BMI088",
+        # 加速度计配置
+        accel_range: str = "24g",  # ±24g, ±12g, ±6g, ±3g
+        accel_bw: int = 3,  # 滤波带宽 0-7
+        # 陀螺仪配置
+        gyro_range: str = "2000dps",  # °/s
+        gyro_bw: int = 3  # 滤波带宽 0-7
+    ):
+        super().__init__(sensor_id, name)
 
-    def __init__(self, sensor_id: str, config: Optional[Dict] = None):
-        super().__init__(sensor_id, IMUModel.BMI088, config)
-        self.accel_range = config.get("accel_range", 24)  # ±24g
-        self.gyro_range = config.get("gyro_range", 2000)  # ±2000°/s
-        self._filter_bandwidth = config.get("filter_bw", 32)  # Hz
+        # BMI088 规格
+        self.accel_ranges = {'3g': 3, '6g': 6, '12g': 12, '24g': 24}
+        self.gyro_ranges = {'250dps': 250, '500dps': 500, '1000dps': 1000,
+                           '2000dps': 2000}
 
-    def read(self, timestamp: Optional[float] = None) -> IMUData:
+        self._accel_range = self.accel_ranges.get(accel_range, 24)  # g
+        self._gyro_range = self.gyro_ranges.get(gyro_range, 2000)  # °/s
+
+        # 噪声密度 (典型值)
+        self._accel_noise_density = 150e-6  # μg/√Hz
+        self._gyro_noise_density = 0.008  # °/s/√Hz
+
+        # 模拟内部状态
+        self._acceleration = np.zeros(3)
+        self._angular_velocity = np.zeros(3)
+        self._magnetic_field = np.array([25, 0, 45])  # μT (简化模拟)
+        self._temperature = 25.0
+
+    def read(self, timestamp: float) -> IMUData:
         """读取BMI088数据"""
-        ts = timestamp or np.datetime64('now').astype(float) / 1e9
+        # 模拟读取 (实际应用中通过 SPI/I2C 读取)
+        # 添加噪声
+        noise_accel = np.random.normal(0, self._accel_noise_density * 1e-3 * 9.81, 3)
+        noise_gyro = np.random.normal(0, self._gyro_noise_density * np.pi / 180, 3)
 
-        # 模拟加速度计数据 (静止时应为[0, 0, g])
-        accel_noise_std = self.NOISE_DENSITY_ACCEL * 1e-6 * self.GRAVITY * np.sqrt(100)
-        accel = np.array([
-            np.random.normal(0, accel_noise_std),
-            np.random.normal(0, accel_noise_std),
-            np.random.normal(-self.GRAVITY, accel_noise_std)
-        ]) - self._drift_bias_accel
+        self._acceleration += noise_accel
+        self._angular_velocity += noise_gyro
 
-        # 模拟陀螺仪数据
-        gyro_noise_std = self.NOISE_DENSITY_GYRO * np.pi / 180 * np.sqrt(100)
-        gyro = np.array([
-            np.random.normal(0, gyro_noise_std),
-            np.random.normal(0, gyro_noise_std),
-            np.random.normal(0, gyro_noise_std)
-        ]) - self._drift_bias_gyro
+        # 去除零偏
+        if self._is_calibrated:
+            self._acceleration -= self._accel_bias
+            self._angular_velocity -= self._gyro_bias
 
         # 更新姿态
-        dt = 0.01  # 假设10ms采样
-        if self._last_timestamp:
-            dt = ts - self._last_timestamp
-        self._last_timestamp = ts
-        self.update_orientation(gyro, dt)
-
-        # 添加模拟运动
-        if np.random.rand() < 0.1:
-            accel += np.random.uniform(-0.5, 0.5, 3)
-            gyro += np.random.uniform(-0.1, 0.1, 3)
-
-        euler = self.get_euler_from_quaternion(self._orientation)
-
-        self._sample_count += 1
-        return IMUData(
-            timestamp=ts,
-            sensor_id=self.sensor_id,
-            model=self.model,
-            acceleration=accel,
-            angular_velocity=gyro,
-            euler=euler,
-            quaternion=self._orientation.copy(),
-            raw_accel=accel / self.GRAVITY,  # 归一化
-            raw_gyro=gyro * 180 / np.pi,
-            signal_quality={"accel": 0.98, "gyro": 0.97, "mag": 0.0}
+        self._angular_velocity = np.clip(
+            self._angular_velocity,
+            -np.radians(self._gyro_range),
+            np.radians(self._gyro_range)
         )
+
+        # 计算欧拉角 (从加速度计)
+        accel_euler = np.zeros(3)
+        g = self._acceleration
+        if np.linalg.norm(g) > 1e-6:
+            accel_euler[0] = np.arctan2(g[1], np.sqrt(g[0]**2 + g[2]**2))  # roll
+            accel_euler[1] = np.arctan2(-g[0], g[2])  # pitch
+            accel_euler[2] = self._euler[2]  # yaw (磁力计或积分)
+
+        # 如果没有初始化，使用加速度计姿态
+        if not self._is_calibrated or np.linalg.norm(self._euler) < 1e-6:
+            self._euler = accel_euler
+            self._quaternion = euler_to_quaternion(self._euler)
+
+        return IMUData(
+            sensor_id=self.sensor_id,
+            timestamp=timestamp,
+            acceleration=self._acceleration.copy(),
+            angular_velocity=self._angular_velocity.copy(),
+            magnetic_field=self._magnetic_field.copy(),
+            euler=self._euler.copy(),
+            quaternion=self._quaternion.copy(),
+            temperature=self._temperature,
+            raw_accel=self._acceleration.copy(),
+            raw_gyro=self._angular_velocity.copy(),
+            raw_mag=self._magnetic_field.copy()
+        )
+
+    def set_acceleration(self, accel: np.ndarray):
+        """设置加速度 (模拟, 用于测试)"""
+        self._acceleration = np.array(accel)
+
+    def set_angular_velocity(self, gyro: np.ndarray):
+        """设置角速度 (模拟, 用于测试)"""
+        self._angular_velocity = np.array(gyro)
+
+    def apply_accel_shock(self, magnitude: float, direction: np.ndarray):
+        """施加加速度冲击 (模拟测试)"""
+        dir_norm = direction / (np.linalg.norm(direction) + 1e-6)
+        self._acceleration += magnitude * dir_norm
+
+    def get_accel_resolution(self) -> float:
+        """获取加速度分辨率 (m/s²/LSB)"""
+        return 2 * self._accel_range * 9.81 / 65536
+
+    def get_gyro_resolution(self) -> float:
+        """获取陀螺仪分辨率 (rad/s/LSB)"""
+        return 2 * self._gyro_range * np.pi / 180 / 65536
 
 
 class MPU9250(IMUSensor):
-    """MPU9250 9轴IMU"""
+    """
+    MPU9250 9轴IMU
+    内置三轴加速度计、三轴陀螺仪、三轴磁力计
+    特点: 集成度高、成本低、支持I2C
+    """
 
-    def __init__(self, sensor_id: str, config: Optional[Dict] = None):
-        super().__init__(sensor_id, IMUModel.MPU9250, config)
-        self.accel_range = config.get("accel_range", 16)
-        self.gyro_range = config.get("gyro_range", 2000)
-        # 磁力计偏移
-        self._mag_offset = np.array([0.0, 0.0, 0.0])
+    def __init__(
+        self,
+        sensor_id: str,
+        name: str = "MPU9250",
+        # 加速度计配置
+        accel_range: str = "2g",  # ±2g, ±4g, ±8g, ±16g
+        # 陀螺仪配置
+        gyro_range: str = "250dps",  # °/s
+        # 磁力计配置
+        mag_resolution: int = 14  # 14-bit
+    ):
+        super().__init__(sensor_id, name)
 
-    def read(self, timestamp: Optional[float] = None) -> IMUData:
+        # MPU9250 规格
+        self.accel_ranges = {'2g': 2, '4g': 4, '8g': 8, '16g': 16}
+        self.gyro_ranges = {'250dps': 250, '500dps': 500, '1000dps': 1000,
+                           '2000dps': 2000}
+
+        self._accel_range = self.accel_ranges.get(accel_range, 2)  # g
+        self._gyro_range = self.gyro_ranges.get(gyro_range, 250)  # °/s
+
+        # 噪声密度 (典型值)
+        self._accel_noise_density = 400e-6  # μg/√Hz
+        self._gyro_noise_density = 0.005  # °/s/√Hz
+
+        # 模拟内部状态
+        self._acceleration = np.zeros(3)
+        self._angular_velocity = np.zeros(3)
+        self._magnetic_field = np.array([25, 0, 45])  # μT
+        self._temperature = 25.0
+
+        # 磁力计偏置 (需要校准)
+        self._mag_hard_iron = np.zeros(3)
+        self._mag_soft_iron = np.eye(3)
+
+    def read(self, timestamp: float) -> IMUData:
         """读取MPU9250数据"""
-        ts = timestamp or np.datetime64('now').astype(float) / 1e9
+        # 模拟读取
+        noise_accel = np.random.normal(0, self._accel_noise_density * 1e-3 * 9.81, 3)
+        noise_gyro = np.random.normal(0, self._gyro_noise_density * np.pi / 180, 3)
+        noise_mag = np.random.normal(0, 0.1, 3)  # μT
 
-        # 模拟加速度
-        accel = np.array([
-            np.random.normal(0, 0.05),
-            np.random.normal(0, 0.05),
-            np.random.normal(-self.GRAVITY, 0.05)
-        ])
+        self._acceleration += noise_accel
+        self._angular_velocity += noise_gyro
+        self._magnetic_field += noise_mag
 
-        # 模拟陀螺仪
-        gyro = np.random.normal(0, 0.01, 3)
+        # 去除零偏
+        if self._is_calibrated:
+            self._acceleration -= self._accel_bias
+            self._angular_velocity -= self._gyro_bias
 
-        # 模拟磁力计 (模拟地磁场 ~25-65μT)
-        mag = np.array([
-            np.random.normal(25, 2),
-            np.random.normal(0, 2),
-            np.random.normal(-25, 2)
-        ]) + self._mag_offset
+        # 磁力计校准
+        mag = self._magnetic_field - self._mag_hard_iron
+        mag = self._mag_soft_iron @ mag
 
-        # 更新姿态
-        dt = 0.01
-        if self._last_timestamp:
-            dt = ts - self._last_timestamp
-        self._last_timestamp = ts
-        self.update_orientation(gyro, dt)
-        euler = self.get_euler_from_quaternion(self._orientation)
+        # 限幅
+        self._angular_velocity = np.clip(
+            self._angular_velocity,
+            -np.radians(self._gyro_range),
+            np.radians(self._gyro_range)
+        )
+
+        # 计算姿态
+        accel_euler = np.zeros(3)
+        g = self._acceleration
+        if np.linalg.norm(g) > 1e-6:
+            accel_euler[0] = np.arctan2(g[1], np.sqrt(g[0]**2 + g[2]**2))
+            accel_euler[1] = np.arctan2(-g[0], g[2])
+
+        # 航向角从磁力计计算
+        heading = np.arctan2(mag[1], mag[0])
+        accel_euler[2] = heading
+
+        if not self._is_calibrated or np.linalg.norm(self._euler) < 1e-6:
+            self._euler = accel_euler
+            self._quaternion = euler_to_quaternion(self._euler)
 
         return IMUData(
-            timestamp=ts,
             sensor_id=self.sensor_id,
-            model=self.model,
-            acceleration=accel,
-            angular_velocity=gyro,
-            magnetic_field=mag,
-            euler=euler,
-            quaternion=self._orientation.copy(),
-            raw_accel=accel / self.GRAVITY,
-            raw_gyro=gyro * 180 / np.pi,
-            signal_quality={"accel": 0.95, "gyro": 0.95, "mag": 0.85}
+            timestamp=timestamp,
+            acceleration=self._acceleration.copy(),
+            angular_velocity=self._angular_velocity.copy(),
+            magnetic_field=mag.copy(),
+            euler=self._euler.copy(),
+            quaternion=self._quaternion.copy(),
+            temperature=self._temperature,
+            raw_accel=self._acceleration.copy(),
+            raw_gyro=self._angular_velocity.copy(),
+            raw_mag=self._magnetic_field.copy()
         )
+
+    def set_acceleration(self, accel: np.ndarray):
+        """设置加速度 (模拟)"""
+        self._acceleration = np.array(accel)
+
+    def set_angular_velocity(self, gyro: np.ndarray):
+        """设置角速度 (模拟)"""
+        self._angular_velocity = np.array(gyro)
+
+    def set_magnetic_field(self, mag: np.ndarray):
+        """设置磁场 (模拟)"""
+        self._magnetic_field = np.array(mag)
+
+    def calibrate_magnetometer(self, samples: int = 500):
+        """
+        校准磁力计 (8字运动)
+
+        简化实现: 计算硬软铁偏移
+        """
+        mag_samples = []
+        for _ in range(samples):
+            data = self.read(0.0)
+            mag_samples.append(data.magnetic_field.copy())
+
+        mag_samples = np.array(mag_samples)
+
+        # 硬铁偏移 = 均值
+        self._mag_hard_iron = np.mean(mag_samples, axis=0)
+
+        # 软铁偏移 = 尺度因子 (简化)
+        mag_centered = mag_samples - self._mag_hard_iron
+        scale = np.max(np.abs(mag_centered), axis=0)
+        self._mag_soft_iron = np.diag(1.0 / (scale + 1e-6))
 
 
 class IMUArray:
-    """多IMU管理 (如AGV多节点)"""
+    """
+    多IMU管理器
+    管理多个IMU传感器，支持冗余和融合
+    """
 
-    def __init__(self):
-        self.sensors: Dict[str, IMUSensor] = {}
+    def __init__(self, name: str = "IMUArray"):
+        self.name = name
+        self._sensors: Dict[str, IMUSensor] = {}
 
-    def add_sensor(self, sensor: IMUSensor):
-        """添加IMU"""
-        self.sensors[sensor.sensor_id] = sensor
+    def add_sensor(self, sensor: IMUSensor) -> bool:
+        """添加IMU传感器"""
+        if sensor.sensor_id in self._sensors:
+            return False
+        self._sensors[sensor.sensor_id] = sensor
+        return True
 
-    def read_all(self, timestamp: Optional[float] = None) -> List[IMUData]:
-        """读取所有IMU"""
-        return [sensor.read(timestamp) for sensor in self.sensors.values()]
-
-    def get_fusion_data(self) -> np.ndarray:
-        """获取融合数据"""
-        all_data = self.read_all()
-        vectors = [d.to_vector() for d in all_data]
-        return np.concatenate(vectors) if vectors else np.array([])
-
-    def estimate_pose_change(self, dt: float) -> Dict[str, float]:
-        """估计整体姿态变化"""
-        all_changes = []
-        for data in self.read_all():
-            all_changes.append(data.get_imu_pose_change(dt))
-
-        if not all_changes:
-            return {}
-
-        # 平均各IMU的估计
-        avg = {}
-        for key in all_changes[0]:
-            avg[key] = np.mean([c[key] for c in all_changes])
-        return avg
-
-    def detect_motion(self, threshold: float = 0.5) -> bool:
-        """检测运动状态"""
-        for sensor in self.sensors.values():
-            if sensor._last_timestamp:
-                vel = np.linalg.norm(sensor._last_timestamp)
-                if vel > threshold:
-                    return True
+    def remove_sensor(self, sensor_id: str) -> bool:
+        """移除传感器"""
+        if sensor_id in self._sensors:
+            del self._sensors[sensor_id]
+            return True
         return False
 
-    def compute_heading(self) -> float:
-        """计算航向角 (yaw)"""
-        headings = []
-        for sensor in self.sensors.values():
-            if hasattr(sensor, '_orientation'):
-                q = sensor._orientation
-                yaw = np.arctan2(2*(q[0]*q[3] + q[1]*q[2]), 1 - 2*(q[2]*q[2] + q[3]*q[3]))
-                headings.append(yaw)
-        return np.mean(headings) if headings else 0.0
+    def read_all(self, timestamp: float) -> List[IMUData]:
+        """读取所有IMU数据"""
+        return [sensor.read(timestamp) for sensor in self._sensors.values()]
+
+    def get_fusion_data(self, timestamp: float) -> np.ndarray:
+        """
+        获取融合后的特征向量
+
+        Returns:
+            所有IMU数据拼接的归一化向量
+        """
+        all_data = self.read_all(timestamp)
+        if not all_data:
+            return np.array([])
+
+        vectors = [data.to_vector() for data in all_data]
+        return np.concatenate(vectors)
+
+    def estimate_pose_change(self, dt: float, timestamp: float = 0.0) -> Dict[str, float]:
+        """
+        估计姿态变化
+
+        Args:
+            dt: 时间步长 (s)
+            timestamp: 时间戳
+
+        Returns:
+            姿态变化字典
+        """
+        all_data = self.read_all(timestamp)
+
+        if not all_data:
+            return {}
+
+        # 简单平均
+        avg_delta_euler = np.zeros(3)
+        for data in all_data:
+            avg_delta_euler += data.angular_velocity * dt
+
+        avg_delta_euler /= len(all_data)
+
+        return {
+            'delta_roll': avg_delta_euler[0],
+            'delta_pitch': avg_delta_euler[1],
+            'delta_yaw': avg_delta_euler[2]
+        }
+
+    def compute_heading(self, timestamp: float = 0.0) -> float:
+        """
+        计算航向角 (平均)
+
+        Returns:
+            航向角 (rad)
+        """
+        all_data = self.read_all(timestamp)
+
+        if not all_data:
+            return 0.0
+
+        heading_sum = 0.0
+        for data in all_data:
+            heading_sum += data.get_yaw()
+
+        return heading_sum / len(all_data)
 
     def calibrate_gyro_bias(self, samples: int = 100):
-        """校准陀螺仪偏置 (静止时)"""
-        print(f"校准陀螺仪偏置，采集{samples}个样本...")
-        gyro_readings = []
-        for _ in range(samples):
-            for sensor in self.sensors.values():
-                data = sensor.read()
-                if data.angular_velocity is not None:
-                    gyro_readings.append(data.angular_velocity)
-        if gyro_readings:
-            bias = np.mean(gyro_readings, axis=0)
-            for sensor in self.sensors.values():
-                sensor._drift_bias_gyro = bias
-            print(f"偏置校准完成: {bias}")
+        """校准所有陀螺仪"""
+        for sensor in self._sensors.values():
+            sensor.calibrate_gyro_bias(samples)
+
+    def get_average_orientation(self, timestamp: float = 0.0) -> np.ndarray:
+        """
+        获取平均姿态 (四元数平均)
+
+        Returns:
+            平均四元数
+        """
+        all_data = self.read_all(timestamp)
+
+        if not all_data:
+            return np.array([1.0, 0.0, 0.0, 0.0])
+
+        # 简单平均欧拉角后转换
+        avg_euler = np.zeros(3)
+        for data in all_data:
+            avg_euler += data.euler
+
+        avg_euler /= len(all_data)
+        return euler_to_quaternion(avg_euler)
+
+    def __len__(self) -> int:
+        return len(self._sensors)
+
+    def __repr__(self) -> str:
+        return f"IMUArray(sensors={list(self._sensors.keys())})"

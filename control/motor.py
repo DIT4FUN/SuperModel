@@ -1,349 +1,687 @@
 """
 电机控制模块 (Motor Control)
-支持直流电机、BLDC电机、步进电机、舵机的控制
+支持DC电机、BLDC、伺服电机、步进电机
+包含PID控制器
 """
 
 import numpy as np
-from typing import Dict, List, Optional, Tuple, Callable
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass, field
+from abc import ABC, abstractmethod
 from enum import Enum
 
 
-class MotorType(Enum):
-    """电机类型"""
-    DC = "dc"                   # 直流电机
-    BLDC = "bldc"              # 无刷直流电机
-    STEPPER = "stepper"        # 步进电机
-    SERVO = "servo"            # 舵机/伺服电机
-    LINEAR = "linear"          # 直线电机
-
-
 class MotorControlMode(Enum):
-    """控制模式"""
+    """电机控制模式"""
     POSITION = "position"      # 位置控制
-    VELOCITY = "velocity"     # 速度控制
-    TORQUE = "torque"         # 力矩控制
-    TRAJECTORY = "trajectory" # 轨迹跟踪
+    VELOCITY = "velocity"      # 速度控制
+    TORQUE = "torque"          # 力矩控制
+    PWM = "pwm"                # PWM开环控制
 
 
 @dataclass
 class MotorState:
     """电机状态"""
-    timestamp: float
     motor_id: str
-    # 位置 (rad 或 m)
-    position: float
-    # 速度 (rad/s 或 m/s)
-    velocity: float
-    # 力矩/电流 (Nm 或 A)
-    torque: float
-    # 目标位置
-    target_position: float = 0.0
-    # 目标速度
-    target_velocity: float = 0.0
-    # 错误标志
-    error: int = 0
+    timestamp: float
+
+    # 位置 (rad)
+    position: float = 0.0
+    # 速度 (rad/s)
+    velocity: float = 0.0
+    # 电流 (A)
+    current: float = 0.0
     # 温度 (°C)
     temperature: float = 25.0
+    # PWM占空比 (0-1)
+    pwm_duty: float = 0.0
+    # 使能状态
+    enabled: bool = False
+    # 错误状态
+    error: str = ""
+    # 目标位置/速度
+    target_position: float = 0.0
+    target_velocity: float = 0.0
+
+    def to_vector(self) -> np.ndarray:
+        """
+        返回特征向量
+        格式: [position_norm, velocity_norm, current_norm, temp_norm, enabled_flag]
+        """
+        return np.array([
+            self.position / (2 * np.pi),  # 归一化到圈数
+            self.velocity / 100.0,  # 假设最大100 rad/s
+            self.current / 10.0,    # 假设最大10A
+            self.temperature / 100.0,
+            1.0 if self.enabled else 0.0
+        ])
+
+    def is_valid(self) -> bool:
+        """检查状态是否有效"""
+        if self.error:
+            return False
+        if self.temperature > 80:  # 过温保护
+            return False
+        return True
 
 
-@dataclass
-class PIDConfig:
-    """PID配置"""
-    kp: float = 1.0
-    ki: float = 0.0
-    kd: float = 0.0
-    # 输出限幅
-    output_limit: float = 100.0
-    # 积分限幅
-    integral_limit: float = 50.0
-    # 微分滤波器系数
-    derivative_filter: float = 0.1
-
-
-class PIDController:
-    """PID控制器"""
-
-    def __init__(self, config: PIDConfig):
-        self.config = config
-        self._integral = 0.0
-        self._prev_error = 0.0
-        self._prev_derivative = 0.0
-
-    def compute(self, setpoint: float, measured: float, dt: float) -> float:
-        """计算PID输出"""
-        error = setpoint - measured
-
-        # 比例
-        p_out = self.config.kp * error
-
-        # 积分
-        self._integral += error * dt
-        self._integral = np.clip(self._integral, -self.config.integral_limit, self.config.integral_limit)
-        i_out = self.config.ki * self._integral
-
-        # 微分 (带滤波)
-        derivative = (error - self._prev_error) / dt if dt > 0 else 0.0
-        derivative_filtered = (self.config.derivative_filter * derivative +
-                                (1 - self.config.derivative_filter) * self._prev_derivative)
-        d_out = self.config.kd * derivative_filtered
-
-        self._prev_error = error
-        self._prev_derivative = derivative_filtered
-
-        output = p_out + i_out + d_out
-        return np.clip(output, -self.config.output_limit, self.config.output_limit)
-
-    def reset(self):
-        """重置积分项"""
-        self._integral = 0.0
-        self._prev_error = 0.0
-        self._prev_derivative = 0.0
-
-
-class Motor:
+class Motor(ABC):
     """电机基类"""
 
-    def __init__(self, motor_id: str, motor_type: MotorType, config: Optional[Dict] = None):
+    def __init__(
+        self,
+        motor_id: str,
+        name: str = "Motor",
+        reduction_ratio: float = 1.0,  # 减速比
+        max_velocity: float = 100.0,  # rad/s (输出轴)
+        max_torque: float = 10.0,  # Nm
+        max_current: float = 10.0  # A
+    ):
         self.motor_id = motor_id
-        self.motor_type = motor_type
-        self.config = config or {}
+        self.name = name
+        self.reduction_ratio = reduction_ratio
+        self.max_velocity = max_velocity
+        self.max_torque = max_torque
+        self.max_current = max_current
 
-        # 电机参数
-        self.max_velocity = self.config.get("max_velocity", 10.0)
-        self.max_torque = self.config.get("max_torque", 10.0)
-        self.gear_ratio = self.config.get("gear_ratio", 1.0)
+        # 当前状态
+        self._state = MotorState(motor_id=motor_id, timestamp=0.0)
+        self._enabled = False
 
-        # 状态
-        self._position = 0.0
-        self._velocity = 0.0
-        self._torque = 0.0
-        self._target_position = 0.0
-        self._target_velocity = 0.0
-        self._control_mode = MotorControlMode.POSITION
-        self._enabled = True
-        self._error = 0
+        # 控制模式
+        self._control_mode = MotorControlMode.VELOCITY
+        self._target = 0.0
 
-        # PID控制器
-        self._pid = PIDController(PIDConfig(
-            kp=self.config.get("kp", 10.0),
-            ki=self.config.get("ki", 0.1),
-            kd=self.config.get("kd", 1.0)
-        ))
+        # 电机参数 (电机轴侧)
+        self._motor_Kv = 1000.0  # RPM/V (无刷电机)
+        self._motor_R = 10.0     # Ohm
+        self._motor_L = 0.01     # H
+
+    @abstractmethod
+    def enable(self):
+        """使能电机"""
+        pass
+
+    @abstractmethod
+    def disable(self):
+        """禁用电机"""
+        pass
+
+    @abstractmethod
+    def set_target(self, target: float, mode: MotorControlMode):
+        """设置目标值"""
+        pass
+
+    @abstractmethod
+    def step(self, dt: float) -> MotorState:
+        """步进控制 (dt: 时间步长秒)"""
+        pass
+
+    def get_state(self) -> MotorState:
+        """获取当前状态"""
+        return self._state
+
+    def get_position_rad(self) -> float:
+        """获取当前位置 (rad, 输出轴)"""
+        return self._state.position
+
+    def get_velocity_rpm(self) -> float:
+        """获取当前速度 (RPM, 输出轴)"""
+        return self._state.velocity * 60.0 / (2 * np.pi)
+
+    def get_position_revs(self) -> float:
+        """获取位置 (圈数, 输出轴)"""
+        return self._state.position / (2 * np.pi)
+
+    def set_control_mode(self, mode: MotorControlMode):
+        """设置控制模式"""
+        self._control_mode = mode
+
+    def is_enabled(self) -> bool:
+        """检查是否使能"""
+        return self._enabled
+
+
+class DCMotor(Motor):
+    """
+    直流电机 (DC Motor)
+    适用于: 简单AGV、输送线、仓储机器人
+    """
+
+    def __init__(
+        self,
+        motor_id: str,
+        name: str = "DCMotor",
+        voltage: float = 24.0,  # V
+        reduction_ratio: float = 30.0,
+        max_velocity: float = 100.0,
+        max_torque: float = 10.0,
+        armature_resistance: float = 5.0,  # Ohm
+        torque_constant: float = 0.1  # Nm/A
+    ):
+        super().__init__(motor_id, name, reduction_ratio, max_velocity, max_torque)
+
+        self.voltage = voltage
+        self.armature_resistance = armature_resistance
+        self.torque_constant = torque_constant
+
+        # 内部状态
+        self._armature_voltage = 0.0
+        self._back_emf = 0.0
 
     def enable(self):
         """使能电机"""
         self._enabled = True
+        self._state.enabled = True
 
     def disable(self):
         """禁用电机"""
         self._enabled = False
+        self._state.enabled = False
+        self._armature_voltage = 0.0
+        self._state.pwm_duty = 0.0
 
-    def set_target(self, target: float, mode: Optional[MotorControlMode] = None):
+    def set_target(self, target: float, mode: MotorControlMode):
         """设置目标值"""
-        if mode:
-            self._control_mode = mode
-        if mode == MotorControlMode.POSITION or self._control_mode == MotorControlMode.POSITION:
-            self._target_position = target
-        elif mode == MotorControlMode.VELOCITY or self._control_mode == MotorControlMode.VELOCITY:
-            self._target_velocity = target
+        self._target = target
+        self._control_mode = mode
 
     def step(self, dt: float) -> MotorState:
-        """执行一个控制周期"""
+        """步进控制"""
         if not self._enabled:
-            return self.get_state()
+            return self._state
 
-        torque_output = self._pid.compute(self._target_position, self._position, dt)
-        self._apply_torque(np.clip(torque_output, -self.max_torque, self.max_torque))
+        # 电机轴速度
+        motor_velocity = self._state.velocity * self.reduction_ratio
 
-        # 积分更新位置
-        self._position += self._velocity * dt
-        self._velocity += self._torque * dt  # 简化
-        self._velocity = np.clip(self._velocity, -self.max_velocity, self.max_velocity)
+        # 根据控制模式计算电压
+        if self._control_mode == MotorControlMode.PWM:
+            self._armature_voltage = target * self.voltage
+        elif self._control_mode == MotorControlMode.VELOCITY:
+            # 速度环: PID输出电压
+            self._armature_voltage = self._compute_voltage_for_velocity(target, motor_velocity, dt)
+        elif self._control_mode == MotorControlMode.POSITION:
+            # 位置环: PID输出电压
+            self._armature_voltage = self._compute_voltage_for_position(target, motor_velocity, dt)
+        elif self._control_mode == MotorControlMode.TORQUE:
+            # 力矩环: Kt * I = torque
+            target_current = target / self.torque_constant
+            self._armature_voltage = target_current * self.armature_resistance
 
-        return self.get_state()
+        # PWM限幅
+        self._armature_voltage = np.clip(self._armature_voltage, -self.voltage, self.voltage)
+        self._state.pwm_duty = abs(self._armature_voltage) / self.voltage
 
-    def _apply_torque(self, torque: float):
-        """施加力矩"""
-        self._torque = torque
+        # 反电动势
+        self._back_emf = motor_velocity / (self._motor_Kv * 60 / (2 * np.pi))
 
-    def get_state(self) -> MotorState:
-        """获取当前状态"""
-        return MotorState(
-            timestamp=np.datetime64('now').astype(float) / 1e9,
-            motor_id=self.motor_id,
-            position=self._position,
-            velocity=self._velocity,
-            torque=self._torque,
-            target_position=self._target_position,
-            target_velocity=self._target_velocity,
-            error=self._error
-        )
+        # 计算电流
+        applied_voltage = self._armature_voltage - self._back_emf
+        self._state.current = applied_voltage / self.armature_resistance
 
-    def get_position_rad(self) -> float:
-        return self._position
+        # 计算力矩
+        torque = self.torque_constant * self._state.current
 
-    def get_velocity_rpm(self) -> float:
-        return self._velocity * 60 / (2 * np.pi)
+        # 更新位置和速度 (输出轴)
+        motor_accel = torque / (self.max_torque + 1e-6) * 1000  # 简化加速度
+        motor_velocity += motor_accel * dt
+        motor_velocity = np.clip(motor_velocity, -self.max_velocity * self.reduction_ratio,
+                                  self.max_velocity * self.reduction_ratio)
 
+        # 限电流
+        self._state.current = np.clip(self._state.current, -self.max_current, self.max_current)
 
-class DCMotor(Motor):
-    """直流电机"""
+        # 更新状态
+        self._state.velocity = motor_velocity / self.reduction_ratio
+        self._state.position += self._state.velocity * dt
+        self._state.target_velocity = target if self._control_mode == MotorControlMode.VELOCITY else 0
+        self._state.target_position = target if self._control_mode == MotorControlMode.POSITION else 0
 
-    def __init__(self, motor_id: str, config: Optional[Dict] = None):
-        super().__init__(motor_id, MotorType.DC, config)
-        self.motor_constant = self.config.get("motor_constant", 0.01)  # Nm/A
-        self.armature_resistance = self.config.get("r", 1.0)  # Ohm
-        self._voltage = 0.0
+        # 温度模拟
+        self._state.temperature += 0.01 * abs(self._state.current)
+        self._state.temperature = np.clip(self._state.temperature, 25, 80)
 
-    def _apply_torque(self, torque: float):
-        """计算并施加电压"""
-        current = torque / self.motor_constant
-        voltage = current * self.armature_resistance
-        self._voltage = np.clip(voltage, -24, 24)
-        self._torque = torque
+        self._state.timestamp += dt
+        return self._state
 
-    def get_power_consumption(self) -> float:
-        """计算功耗 (W)"""
-        return abs(self._voltage * self._torque / self.motor_constant)
+    def _compute_voltage_for_velocity(self, target_vel: float, current_vel: float, dt: float) -> float:
+        """计算速度环电压"""
+        error = target_vel - current_vel / self.reduction_ratio
+        # 简化的PI控制
+        return error * 0.5
+
+    def _compute_voltage_for_position(self, target_pos: float, current_vel: float, dt: float) -> float:
+        """计算位置环电压"""
+        error = target_pos - self._state.position
+        # 简化的PID
+        return error * 2.0
 
 
 class BLDCmotor(Motor):
-    """无刷直流电机"""
+    """
+    无刷直流电机 (BLDC Motor)
+    适用于: 高性能AGV、服务机器人
+    """
 
-    def __init__(self, motor_id: str, config: Optional[Dict] = None):
-        super().__init__(motor_id, MotorType.BLDC, config)
-        self.pole_pairs = self.config.get("pole_pairs", 4)
-        self._commutation_angle = 0.0
+    def __init__(
+        self,
+        motor_id: str,
+        name: str = "BLDCmotor",
+        poles: int = 4,  # 极对数
+        kv: int = 1000,  # RPM/V
+        reduction_ratio: float = 20.0,
+        max_velocity: float = 150.0,
+        max_torque: float = 5.0,
+        phase_resistance: float = 0.1,  # Ohm
+        phase_inductance: float = 0.001  # H
+    ):
+        super().__init__(motor_id, name, reduction_ratio, max_velocity, max_torque)
+
+        self.poles = poles
+        self.kv = kv  # RPM/V
+        self.phase_resistance = phase_resistance
+        self.phase_inductance = phase_inductance
+
+        # 内部状态
+        self._phase_voltage = np.zeros(3)
+        self._phase_current = np.zeros(3)
+        self._ electrical_angle = 0.0
+
+    def enable(self):
+        """使能电机"""
+        self._enabled = True
+        self._state.enabled = True
+
+    def disable(self):
+        """禁用电机"""
+        self._enabled = False
+        self._state.enabled = False
+
+    def set_target(self, target: float, mode: MotorControlMode):
+        """设置目标值"""
+        self._target = target
+        self._control_mode = mode
 
     def step(self, dt: float) -> MotorState:
-        """BLDC控制周期"""
+        """步进控制"""
         if not self._enabled:
-            return self.get_state()
+            return self._state
 
-        # FOC控制
-        torque_output = self._pid.compute(self._target_position, self._position, dt)
-        self._torque = np.clip(torque_output, -self.max_torque, self.max_torque)
+        # 电机轴角速度
+        motor_velocity = self._state.velocity * self.reduction_ratio
 
-        # 更新位置
-        self._position += (self._velocity / self.pole_pairs) * dt
-        # 更新速度
-        self._velocity += self._torque * dt
+        # FOC控制 (简化)
+        if self._control_mode == MotorControlMode.VELOCITY:
+            # 速度环
+            voltage = self._compute_foc_voltage(target, motor_velocity, dt)
+        elif self._control_mode == MotorControlMode.POSITION:
+            # 位置环
+            voltage = self._compute_position_voltage(target, dt)
+        else:
+            voltage = 0.0
 
-        return self.get_state()
+        voltage = np.clip(voltage, -48, 48)  # 48V max
+        self._state.pwm_duty = abs(voltage) / 48.0
+
+        # 计算电流 (简化)
+        self._state.current = voltage / self.phase_resistance
+
+        # 计算力矩
+        torque = self._state.current * 0.1
+
+        # 更新状态
+        motor_accel = torque / (self.max_torque + 1e-6) * 1000
+        motor_velocity += motor_accel * dt
+        motor_velocity = np.clip(motor_velocity, -self.max_velocity * self.reduction_ratio,
+                                 self.max_velocity * self.reduction_ratio)
+
+        self._state.velocity = motor_velocity / self.reduction_ratio
+        self._state.position += self._state.velocity * dt
+
+        # 温度
+        self._state.temperature += 0.005 * abs(self._state.current)
+        self._state.temperature = np.clip(self._state.temperature, 25, 85)
+
+        # 更新电角度
+        self._electrical_angle = (self.poles / 2) * self._state.position
+        self._electrical_angle = self._electrical_angle % (2 * np.pi)
+
+        self._state.timestamp += dt
+        return self._state
+
+    def _compute_foc_voltage(self, target_vel: float, current_vel: float, dt: float) -> float:
+        """计算FOC电压"""
+        error = target_vel - current_vel / self.reduction_ratio
+        return error * 1.0
+
+    def _compute_position_voltage(self, target_pos: float, dt: float) -> float:
+        """计算位置环电压"""
+        error = target_pos - self._state.position
+        return error * 3.0
 
 
 class ServoMotor(Motor):
-    """伺服舵机"""
+    """
+    伺服舵机 (Servo Motor)
+    适用于: 机械臂关节、精密定位
+    """
 
-    def __init__(self, motor_id: str, config: Optional[Dict] = None):
-        super().__init__(motor_id, MotorType.SERVO, config)
-        self.min_angle = self.config.get("min_angle", -3.14)
-        self.max_angle = self.config.get("max_angle", 3.14)
-        self.max_speed = self.config.get("max_speed", 10.0)  # rad/s
+    def __init__(
+        self,
+        motor_id: str,
+        name: str = "ServoMotor",
+        angle_range: float = 360.0,  # 度
+        reduction_ratio: float = 100.0,
+        max_velocity: float = 50.0,
+        max_torque: float = 2.0,
+        position_resolution: float = 0.01  # 度
+    ):
+        super().__init__(motor_id, name, reduction_ratio, max_velocity, max_torque)
 
-    def set_target(self, target: float, mode: Optional[MotorControlMode] = None):
-        """设置目标角度"""
-        target = np.clip(target, self.min_angle, self.max_angle)
-        super().set_target(target, mode)
+        self.angle_range = angle_range  # 度
+        self.position_resolution = position_resolution
+
+        # 位置PID参数
+        self._pos_kp = 10.0
+        self._pos_ki = 0.1
+        self._pos_kd = 0.5
+        self._pos_integral = 0.0
+        self._pos_last_error = 0.0
+
+    def enable(self):
+        """使能舵机"""
+        self._enabled = True
+        self._state.enabled = True
+
+    def disable(self):
+        """禁用舵机"""
+        self._enabled = False
+        self._state.enabled = False
+        self._state.pwm_duty = 0.0
+
+    def set_target(self, target: float, mode: MotorControlMode):
+        """设置目标角度 (度)"""
+        if mode == MotorControlMode.POSITION:
+            self._target = np.clip(target, 0, self.angle_range)
+        else:
+            self._target = target
+        self._control_mode = mode
 
     def step(self, dt: float) -> MotorState:
-        """舵机控制周期"""
+        """步进控制"""
         if not self._enabled:
-            return self.get_state()
+            return self._state
 
-        # 限幅目标速度
-        position_error = self._target_position - self._position
-        max_step = self.max_speed * dt
-        clamped_target = self._position + np.clip(position_error, -max_step, max_step)
+        if self._control_mode == MotorControlMode.POSITION:
+            # 位置PID控制
+            error = self._target - self._state.position * 180.0 / np.pi
 
-        torque_output = self._pid.compute(clamped_target, self._position, dt)
-        self._apply_torque(np.clip(torque_output, -self.max_torque, self.max_torque))
+            # 积分
+            self._pos_integral += error * dt
+            self._pos_integral = np.clip(self._pos_integral, -100, 100)
 
-        # 更新
-        self._velocity = (clamped_target - self._position) / dt if dt > 0 else 0
-        self._position = clamped_target
+            # 微分
+            derivative = (error - self._pos_last_error) / dt if dt > 0 else 0
+            self._pos_last_error = error
 
-        return self.get_state()
+            # PID输出
+            pwm = self._pos_kp * error + self._pos_ki * self._pos_integral + self._pos_kd * derivative
+            self._state.pwm_duty = np.clip(abs(pwm), 0, 1)
+
+        elif self._control_mode == MotorControlMode.VELOCITY:
+            self._state.pwm_duty = np.clip(abs(self._target) / self.max_velocity, 0, 1)
+
+        # 更新状态 (简化)
+        if self._control_mode == MotorControlMode.POSITION:
+            direction = 1 if self._target > self._state.position * 180.0 / np.pi else -1
+            self._state.velocity = direction * self.max_velocity * self._state.pwm_duty
+        else:
+            self._state.velocity = self._target
+
+        self._state.velocity = np.clip(self._state.velocity, -self.max_velocity, self.max_velocity)
+        self._state.position += self._state.velocity * dt
+
+        # 温度
+        self._state.temperature += 0.002 * self._state.pwm_duty
+        self._state.temperature = np.clip(self._state.temperature, 25, 75)
+
+        self._state.timestamp += dt
+        return self._state
 
 
 class StepperMotor(Motor):
-    """步进电机"""
+    """
+    步进电机 (Stepper Motor)
+    适用于: 3D打印机、 CNC、精密传动
+    """
 
-    def __init__(self, motor_id: str, config: Optional[Dict] = None):
-        super().__init__(motor_id, MotorType.STEPPER, config)
-        self.steps_per_rev = self.config.get("steps_per_rev", 200)
-        self._step_angle = 2 * np.pi / self.steps_per_rev
-        self._current_step = 0
-        self._microstep = self.config.get("microstep", 16)
+    def __init__(
+        self,
+        motor_id: str,
+        name: str = "StepperMotor",
+        steps_per_rev: int = 200,  # 每转步数
+        microsteps: int = 16,  # 细分
+        reduction_ratio: float = 10.0,
+        max_velocity: float = 20.0,
+        holding_torque: float = 1.0  # Nm
+    ):
+        super().__init__(motor_id, name, reduction_ratio, max_velocity, holding_torque)
+
+        self.steps_per_rev = steps_per_rev
+        self.microsteps = microsteps
+        self._steps_per_output_rev = steps_per_rev * microsteps * reduction_ratio
+
+        # 内部状态
+        self._step_position = 0  # 步数
+        self._target_step = 0
+
+    def enable(self):
+        """使能电机"""
+        self._enabled = True
+        self._state.enabled = True
+
+    def disable(self):
+        """禁用电机"""
+        self._enabled = False
+        self._state.enabled = False
+
+    def set_target(self, target: float, mode: MotorControlMode):
+        """设置目标位置 (输出轴角度, 度)"""
+        if mode == MotorControlMode.POSITION:
+            # 转换为步数
+            target_deg = target * 180.0 / np.pi  # 转换为度
+            self._target_step = int(target_deg / 360.0 * self._steps_per_output_rev)
+        self._control_mode = mode
 
     def step(self, dt: float) -> MotorState:
-        """步进电机控制"""
+        """步进控制"""
         if not self._enabled:
-            return self.get_state()
+            return self._state
 
-        # 计算所需步数
-        steps_needed = (self._target_position - self._position) / self._step_angle
-        step_cmd = int(round(steps_needed))
+        # 计算目标速度
+        error = self._target_step - self._step_position
+        steps_to_move = np.clip(error, -1000, 1000)
 
-        if step_cmd != 0:
-            self._current_step += step_cmd
-            self._position = self._current_step * self._step_angle
+        # 更新步位置
+        self._step_position += steps_to_move
 
-        self._velocity = step_cmd / dt if dt > 0 else 0
+        # 更新输出轴位置
+        self._state.position = self._step_position / self._steps_per_output_rev * 2 * np.pi
 
-        return self.get_state()
+        # 更新速度
+        self._state.velocity = steps_to_move / (self._steps_per_output_rev * dt) * 2 * np.pi
+        self._state.velocity = np.clip(self._state.velocity, -self.max_velocity, self.max_velocity)
+
+        # PWM占空比表示负载
+        self._state.pwm_duty = min(abs(error) / 100, 1.0)
+
+        # 温度
+        self._state.temperature = 25.0 + 0.001 * self._state.pwm_duty * 50
+
+        self._state.timestamp += dt
+        return self._state
+
+
+class PIDController:
+    """
+    PID控制器
+    通用PID实现，支持位置式和增量式
+    """
+
+    def __init__(
+        self,
+        kp: float = 1.0,
+        ki: float = 0.0,
+        kd: float = 0.0,
+        output_limit: float = None,
+        integral_limit: float = None,
+        derivative_filter: float = 0.0
+    ):
+        self.kp = kp
+        self.ki = ki
+        self.kd = kd
+        self.output_limit = output_limit
+        self.integral_limit = integral_limit
+        self.derivative_filter = derivative_filter
+
+        # 内部状态
+        self._integral = 0.0
+        self._last_error = 0.0
+        self._last_output = 0.0
+        self._filtered_derivative = 0.0
+
+    def compute(self, error: float, dt: float) -> float:
+        """
+        计算PID输出
+
+        Args:
+            error: 误差 (setpoint - measured)
+            dt: 时间步长
+
+        Returns:
+            控制输出
+        """
+        # 比例
+        p = self.kp * error
+
+        # 积分
+        self._integral += error * dt
+        if self.integral_limit is not None:
+            self._integral = np.clip(self._integral, -self.integral_limit, self.integral_limit)
+        i = self.ki * self._integral
+
+        # 微分 (带滤波)
+        if dt > 0:
+            raw_derivative = (error - self._last_error) / dt
+            alpha = self.derivative_filter
+            self._filtered_derivative = alpha * self._filtered_derivative + (1 - alpha) * raw_derivative
+        d = self.kd * self._filtered_derivative
+
+        # 总输出
+        output = p + i + d
+
+        # 输出限幅
+        if self.output_limit is not None:
+            output = np.clip(output, -self.output_limit, self.output_limit)
+
+        self._last_error = error
+        self._last_output = output
+
+        return output
+
+    def reset(self):
+        """重置PID状态"""
+        self._integral = 0.0
+        self._last_error = 0.0
+        self._last_output = 0.0
+        self._filtered_derivative = 0.0
 
 
 class MotorController:
-    """多电机控制器"""
+    """
+    多电机控制器
+    管理多个电机，支持同步控制
+    """
 
-    def __init__(self):
-        self.motors: Dict[str, Motor] = {}
-        self._control_period = 0.001  # 1ms
+    def __init__(self, name: str = "MotorController"):
+        self.name = name
+        self._motors: Dict[str, Motor] = {}
 
-    def add_motor(self, motor: Motor):
-        """添加电机"""
-        self.motors[motor.motor_id] = motor
+    def add_motor(self, motor: Motor) -> bool:
+        """
+        添加电机
 
-    def get_motor(self, motor_id: str) -> Optional[Motor]:
-        return self.motors.get(motor_id)
+        Args:
+            motor: Motor 实例
 
-    def set_all_targets(self, targets: Dict[str, float], mode: Optional[MotorControlMode] = None):
-        """设置所有电机目标"""
-        for motor_id, target in targets.items():
-            if motor_id in self.motors:
-                self.motors[motor_id].set_target(target, mode)
+        Returns:
+            添加是否成功
+        """
+        if motor.motor_id in self._motors:
+            return False
+        self._motors[motor.motor_id] = motor
+        return True
 
-    def step_all(self, dt: Optional[float] = None) -> Dict[str, MotorState]:
-        """执行所有电机控制周期"""
-        dt = dt or self._control_period
-        return {mid: motor.step(dt) for mid, motor in self.motors.items()}
-
-    def get_all_states(self) -> Dict[str, MotorState]:
-        """获取所有电机状态"""
-        return {mid: motor.get_state() for mid, motor in self.motors.items()}
+    def remove_motor(self, motor_id: str) -> bool:
+        """移除电机"""
+        if motor_id in self._motors:
+            del self._motors[motor_id]
+            return True
+        return False
 
     def enable_all(self):
         """使能所有电机"""
-        for motor in self.motors.values():
+        for motor in self._motors.values():
             motor.enable()
 
     def disable_all(self):
         """禁用所有电机"""
-        for motor in self.motors.values():
+        for motor in self._motors.values():
             motor.disable()
 
-    def get_positions(self) -> Dict[str, float]:
-        """获取所有电机位置"""
-        return {mid: m.get_position_rad() for mid, m in self.motors.items()}
+    def set_all_targets(self, targets: Dict[str, float], mode: MotorControlMode):
+        """
+        设置所有电机目标
 
-    def get_velocities(self) -> Dict[str, float]:
-        """获取所有电机速度 (rpm)"""
-        return {mid: m.get_velocity_rpm() for mid, m in self.motors.items()}
+        Args:
+            targets: 电机ID到目标值的字典
+            mode: 控制模式
+        """
+        for motor_id, target in targets.items():
+            if motor_id in self._motors:
+                self._motors[motor_id].set_target(target, mode)
+
+    def step_all(self, dt: float) -> Dict[str, MotorState]:
+        """
+        所有电机步进
+
+        Args:
+            dt: 时间步长 (s)
+
+        Returns:
+            电机ID到状态的字典
+        """
+        states = {}
+        for motor_id, motor in self._motors.items():
+            states[motor_id] = motor.step(dt)
+        return states
+
+    def get_all_states(self) -> Dict[str, MotorState]:
+        """获取所有电机状态"""
+        return {motor_id: motor.get_state() for motor_id, motor in self._motors.items()}
+
+    def get_motor(self, motor_id: str) -> Optional[Motor]:
+        """获取指定电机"""
+        return self._motors.get(motor_id)
 
     def emergency_stop(self):
         """紧急停止"""
-        self.disable_all()
-        for motor in self.motors.values():
-            motor._pid.reset()
+        for motor in self._motors.values():
+            motor.disable()
+            motor.set_target(0.0, MotorControlMode.PWM)
+
+    def __len__(self) -> int:
+        return len(self._motors)
+
+    def __repr__(self) -> str:
+        return f"MotorController(motors={list(self._motors.keys())})"

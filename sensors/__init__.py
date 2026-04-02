@@ -1,22 +1,41 @@
-"""传感器模块"""
-from .tactile import (
-    TactileType, TactileData, TactileSensor,
-    PressureSensor, TaxelArray, PiezoelectricSensor, TactileArray
+"""
+传感器模块 (Sensors)
+支持视觉、听觉、触觉、力觉、IMU等多模态传感器
+"""
+
+from sensors.tactile import (
+    TactileSensor,
+    TactileData,
+    PressureSensor,
+    TaxelArray,
+    PiezoelectricSensor,
+    TactileArray
 )
-from .force import (
-    ForceSensorType, ForceData, ForceSensor,
-    SixAxisFTSensor, SingleAxisForceSensor, ForceSensorArray
+from sensors.force import (
+    ForceSensor,
+    ForceData,
+    SixAxisFTSensor,
+    SingleAxisForceSensor,
+    ForceSensorArray
 )
-from .imu import (
-    IMUModel, IMUData, IMUSensor,
-    BMI088, MPU9250, IMUArray
+from sensors.imu import (
+    IMUSensor,
+    IMUData,
+    BMI088,
+    MPU9250,
+    IMUArray,
+    quaternion_to_euler,
+    euler_to_quaternion
 )
 
 __all__ = [
-    "TactileType", "TactileData", "TactileSensor",
-    "PressureSensor", "TaxelArray", "PiezoelectricSensor", "TactileArray",
-    "ForceSensorType", "ForceData", "ForceSensor",
-    "SixAxisFTSensor", "SingleAxisForceSensor", "ForceSensorArray",
-    "IMUModel", "IMUData", "IMUSensor",
-    "BMI088", "MPU9250", "IMUArray",
+    # tactile
+    'TactileSensor', 'TactileData', 'PressureSensor', 'TaxelArray',
+    'PiezoelectricSensor', 'TactileArray',
+    # force
+    'ForceSensor', 'ForceData', 'SixAxisFTSensor', 'SingleAxisForceSensor',
+    'ForceSensorArray',
+    # imu
+    'IMUSensor', 'IMUData', 'BMI088', 'MPU9250', 'IMUArray',
+    'quaternion_to_euler', 'euler_to_quaternion'
 ]

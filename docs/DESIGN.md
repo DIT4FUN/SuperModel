@@ -230,4 +230,104 @@ python -m unittest tests.fusion_tests -v
 ### 测试覆盖
 - 传感器模块: 单元测试
 - 融合算法: 功能测试 + 稳定性测试
-- 控制模块: 集成测试 (待实现)
+- 控制模块: 集成测试 (PID、安全监控)
+
+## 8. PID控制器详细接口 (pid.py)
+
+### 类结构
+```
+PIDController          # 通用PID
+├── compute()          # 位置式PID
+├── compute_incremental()  # 增量式PID
+├── set_tunings()      # 在线调参
+└── reset()            # 状态重置
+
+PIDController2D        # 二维PID（XY平面）
+PIDAutotuner          # 自动整定（Ziegler-Nichols）
+```
+
+### PIDController 接口
+```python
+class PIDController:
+    def __init__(self, kp=1.0, ki=0.0, kd=0.0,
+                 output_limit=None, integral_limit=None,
+                 derivative_filter=0.0, setpoint=0.0)
+    def compute(error, dt) -> float      # 位置式
+    def compute_incremental(error, dt) -> float  # 增量式
+    def set_setpoint(setpoint)           # 设置目标
+    def set_tunings(kp, ki, kd)           # 在线调参
+    def reset()                           # 重置
+    def get_state() -> Dict               # 获取内部状态
+```
+
+## 9. 安全监控详细接口 (safety.py)
+
+### 类结构
+```
+SafetyLevel           # 安全等级枚举
+StopReason            # 停止原因枚举
+SafetyStatus          # 安全状态数据类
+SafetyMonitor         # 安全监控器
+EmergencyStopController  # 紧急停止控制器
+```
+
+### SafetyMonitor 接口
+```python
+class SafetyMonitor:
+    def __init__(self, max_velocity=2.0, max_acceleration=1.0,
+                 boundary_min=None, boundary_max=None,
+                 force_threshold=100.0, torque_threshold=2.0)
+    def check_velocity(velocity, dt, timestamp) -> SafetyStatus
+    def check_boundary(position, timestamp) -> SafetyStatus
+    def check_force(force_magnitude, torque_magnitude, timestamp) -> SafetyStatus
+    def check_collision(collision_detected, timestamp) -> SafetyStatus
+    def check_sensors(sensor_health, timestamp) -> SafetyStatus
+    def check_all(velocity, position, force_magnitude, torque_magnitude,
+                  collision_detected, sensor_health, dt, timestamp) -> SafetyStatus
+    def emergency_stop(reason)             # 手动急停
+    def reset_estop()                      # 重置急停
+    def add_estop_callback(callback)        # 添加急停回调
+    def is_safe() -> bool
+
+class EmergencyStopController:
+    def trigger(reason) -> bool            # 触发急停
+    def reset(require_lockout=True) -> (bool, str)  # 重置
+    def is_active() -> bool
+    def get_history() -> List[(reason, timestamp)]
+```
+
+## 10. AGV五级规格表 (详细版)
+
+| 等级 | 负载能力 | 导航方式 | 定位精度 | 通讯 | 安全标准 | 典型场景 |
+|------|---------|---------|---------|------|---------|---------|
+| **L1** | ≤500kg | 磁条/二维码 | ±10mm | 有线/低频WiFi | 基本 | 仓储拣选、电商物流 |
+| **L2** | 500-1500kg | 激光导航 | ±5mm | WiFi/5GHz | ISO 3691-2 | 产线配送、工厂物流 |
+| **L3** | 1500-3000kg | SLAM视觉 | ±3mm | WiFi 6/5G | ISO 3691-4 | 柔性制造、医药车间 |
+| **L4** | 3000-5000kg | 多传感器融合 | ±1mm | 5G/MQTT | SIL2 | 重载车间、钢铁冶金 |
+| **L5** | >5000kg | 超模态具身智能 | <±0.5mm | 5G/WiFi 6E | SIL2/功能安全 | 无人化工厂、智慧物流 |
+
+### L5级SuperModel完整规格
+
+| 参数 | 规格 | 备注 |
+|------|------|------|
+| **AI处理器** | NVIDIA Jetson AGX Orin | ≥275 TOPS INT8 |
+| **AI算力** | ≥275 TOPS | 支持INT4/INT8/FP16 |
+| **内存** | 32GB LPDDR5 | 支持更大模型 |
+| **存储** | 64GB eMMC + NVMe | 高速数据存储 |
+| **视觉** | 深度相机 + 4K广角 | RGB-D融合 |
+| **激光雷达** | 360° 30m | 抗干扰 |
+| **IMU** | BMI088 6轴 | 1000Hz采样 |
+| **力觉** | ATI mini40 六维力 | 1000Hz |
+| **触觉** | 16x16 触感阵列 | 1kHz |
+| **麦克风** | 4麦克风阵列 | 远场拾音 |
+| **定位精度** | <±0.5mm | 视觉+激光融合 |
+| **导航速度** | 0-3m/s | 自适应 |
+| **负载能力** | 100-5000kg | 模块化 |
+| **安全标准** | ISO 3691-4, IEC 61508 | SIL2 |
+| **通讯** | WiFi 6E, 5G, MQTT | 双链路备份 |
+| **续航** | 8-24h | 视电池配置 |
+| **充电** | 自动充电/换电 | 24h运行 |
+| **防护** | IP54 | 工业级 |
+| **工作温度** | -20°C to 50°C | 宽温 |
+| **多模态** | 视觉/听觉/触觉/力觉/IMU | 全模态融合 |
+| **具身智能** | 超模态大模型 + RL | 自主学习 |
