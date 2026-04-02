@@ -6,22 +6,20 @@ APP_ID = "cli_a94ec91dc1f8dcd5"
 APP_SECRET = "Htb0eWcTokzIMdpiLaK6Aht0XnNetp7S"
 CHAT_ID = "oc_930bbab59ae0857f8f4781724990fe23"
 
-MESSAGE = """SuperModel项目进度更新 (v1.47.1 - 2026-04-03 01:40)：
+MESSAGE = """SuperModel项目进度更新 (v1.48.0 - 2026-04-03 04:00)：
 ✅ 本次完成：
-  - 新增 GradeAwareSupervisor 传感器融合集成测试 (11项)
-    * 控制器注册/注销/查询 (IMU/关节/力控)
-    * 多控制器健康状态与诊断
-    * XXL级故障容错验证
-    * 等级规格边界测试
-  - 修复 control/motor.py 语法错误 (self._ electrical_angle → self._electrical_angle)
-  - 更新 MODULE_INDEX.md / SPEC.md / CHANGELOG.md
-  - 版本号: v1.47.0 → v1.47.1
-  - 全模块状态: 传感器✅ 控制✅ 融合✅ 学习✅ 仿真✅ 文档✅
-  - GitHub最新提交: (本次)
+  - 新增 AutoTuner PID自动调参模块 (control/autotune.py + src/control/autotune.py)
+    * 支持 Ziegler-Nichols / Cohen-Coon / 继电反馈 三种调参方法
+    * SimulatedPlant 仿真plant，支持一阶/二阶系统
+    * NoiseBand / Hysteresis 等鲁棒性参数
+  - 新增 tests/autotune_tests.py: 23项单元测试 (全部通过)
+  - 更新 control/__init__.py, src/control/__init__.py 导出 AutoTuner 类
+  - 版本号: v1.47.1 → v1.48.0
+  - GitHub最新提交: 08f81d7
 
-📊 模块状态总览 (v1.47.1 - 1183项测试通过):
+📊 模块状态总览 (v1.48.0 - 1206项测试通过):
   传感器(5类): vision/audio/tactile/force/imu ✅ + encoders/manager
-  控制(19子模块): motion/trajectory/mpc/impedance/force/imu/tactile控制/agv/安全监控/避障/规划/ROS2/多AGV/teleop/supervisor(GradeAwareSupervisor)
+  控制(20子模块): motion/trajectory/mpc/impedance/force/imu/tactile控制/agv/安全监控/避障/规划/ROS2/多AGV/teleop/supervisor/autotune(PID自动调参)
   融合: 跨模态Transformer / 互补滤波 / EKF / 多传感器融合
   学习: Dreamer / 世界模型 / 自监督 / 自主学习框架
   仿真: MuJoCo / Gazebo / Gymnasium / 仓储物流场景
