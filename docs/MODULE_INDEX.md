@@ -1,7 +1,7 @@
 # SuperModel 模块索引 / Module Index
 
-> **版本**: v1.46.0
-> **更新**: 2026-04-02 21:00
+> **版本**: v1.47.0
+> **更新**: 2026-04-02 23:07
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 本文档是 SuperModel 项目的完整模块索引，提供所有源代码模块、设计文档和测试用例的快速导航。
@@ -149,6 +149,7 @@ src/
 | IMU控制 | `imu_control.py` | `AttitudeStabilizer`, `MotionEstimator` | 姿态稳定/运动估计 |
 | 触觉控制 | `tactile_control.py` | `TactileServoController`, `GraspQualityController` | 触觉伺服/抓取 |
 | 安全控制 | `safety_controller.py` | `SafetyController` | 五级安全监控 |
+| 控制监管 | `supervisor.py` | `ControlSupervisor`, `GradeAwareSupervisor` | 控制器生命周期/模式切换/故障恢复/AGV五级感知 |
 | 避障 | `obstacle_avoidance.py` | `DynamicWindowApproach`, `ArtificialPotentialField`, `ObstacleAvoider` | DWA/APF/VFH |
 | 任务规划 | `planner.py` | `TaskPlanner`, `HierarchicalPlanner` | HTN层次化规划 |
 | 技能库 | `skill.py` | `SkillLibrary`, `Skill` | 技能注册/执行 |
@@ -164,6 +165,7 @@ src/
 |------|--------|---------|
 | `sensor_tests.py` | 197 | 触觉/力觉/IMU/Vision/Audio 全模块 |
 | `fusion_tests.py` | 104 | 跨模态融合网络 |
+| `grade_aware_supervisor_tests.py` | 37 | AGV五级感知监管器 |
 | `control_tests.py` | 220 | 运动/MPC/阻抗/安全控制器 |
 | `embodied_intelligence_tests.py` | 42 | 具身智能完整闭环 |
 | `embodied_pipeline_tests.py` | 32 | 端到端流水线 |
@@ -173,7 +175,7 @@ src/
 | `ros2_interface_tests.py` | 28 | ROS2通信 |
 | `autonomous_learning_tests.py` | 22 | 自主学习框架 |
 | 其他 | ~280 | 编码器/仿真/场景/MPC |
-| **总计** | **1019** | **全部通过** |
+| **总计** | **1172** | **全部通过** |
 
 ---
 

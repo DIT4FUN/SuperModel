@@ -1,7 +1,7 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-01 18:32 (v1.43.0)
+> Last Updated: 2026-04-02 23:07 (v1.47.0)
 
 ---
 

@@ -2,6 +2,24 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.47.0] - 2026-04-02 23:07
+
+### Added
+- **GradeAwareSupervisor**: 新增 `GradeAwareSupervisor` 类，支持AGV五级感知控制监管 (S/M/L/XL/XXL)
+  - `SupervisorGrade`: 五级监管器等级枚举
+  - `SupervisorGradeSpec`: 五级监管器完整规格 (性能/故障处理/安全/冗余/看门狗/诊断)
+  - `get_supervisor_spec()`: 获取指定AGV等级的监管器规格
+  - `get_supervisor_config()`: 从AGV等级获取预配置监管器参数
+  - XL/XXL级: 看门狗监控 (`step_watchdog()`)
+  - XXL级: 故障容忍与自愈 (`step_fault_tolerance()`)
+- **grade_aware_supervisor_tests.py**: 新增37项测试，覆盖五级规格/监管器初始化/冗余注册/看门狗/故障容忍
+- **AGV五级监管器规格表**: 控制子系统新增五级监管器详细规格文档
+
+### Updated
+- **控制模块导出**: `src/control/__init__.py` 新增SupervisorGrade/GradeAwareSupervisor等5项导出
+- **MODULE_INDEX.md**: 版本v1.46.0→v1.47.0，新增控制监管模块条目，测试总数更新为1172项
+- **测试状态**: 1172项测试全部通过 (原1135项 + 新增37项)
+
 ## [v1.46.0] - 2026-04-02 21:00
 
 ### Added

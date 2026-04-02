@@ -113,4 +113,6 @@ __all__ = [
     'ControlSupervisor', 'ControllerInterface', 'SupervisorConfig',
     'ControlState', 'ControllerMetrics', 'ControlMode', 'HealthStatus',
     'MockJointController', 'MockCartesianController', 'MockImpedanceController',
+    'SupervisorGrade', 'SupervisorGradeSpec', 'get_supervisor_spec',
+    'get_supervisor_config', 'GradeAwareSupervisor',
 ]

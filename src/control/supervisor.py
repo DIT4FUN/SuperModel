@@ -741,3 +741,223 @@ class MockImpedanceController(ControllerInterface):
             "cartesian_velocity": np.zeros(6),
             "joint_torque": np.zeros(6)
         }
+
+
+# ── AGV五级监管器规格表 ──────────────────────────────────────────────────
+
+class SupervisorGrade(Enum):
+    """监管器等级 (与AGV五级对应)"""
+    S = "S"
+    M = "M"
+    L = "L"
+    XL = "XL"
+    XXL = "XXL"
+
+
+@dataclass
+class SupervisorGradeSpec:
+    """AGV五级监管器规格"""
+    grade: SupervisorGrade
+    target_latency_ms: float
+    target_rate_hz: float
+    max_latency_ms: float
+    fault_detection: bool
+    fault_prediction: bool
+    fault_isolation: bool
+    fault_recovery: bool
+    safety_level: str
+    emergency_stop_level: int
+    graceful_degradation: bool
+    controller_redundancy: int
+    hot_swap: bool
+    watchdog_enabled: bool
+    watchdog_timeout_ms: float
+    log_depth: int
+    diagnostics_level: str
+    mode_switch_timeout_s: float
+    auto_mode_switch: bool
+
+
+def get_supervisor_spec(grade: SupervisorGrade) -> SupervisorGradeSpec:
+    specs = {
+        SupervisorGrade.S: SupervisorGradeSpec(
+            grade=SupervisorGrade.S, target_latency_ms=20.0, target_rate_hz=50.0,
+            max_latency_ms=100.0, fault_detection=True, fault_prediction=False,
+            fault_isolation=False, fault_recovery=False, safety_level="basic",
+            emergency_stop_level=1, graceful_degradation=False, controller_redundancy=0,
+            hot_swap=False, watchdog_enabled=False, watchdog_timeout_ms=0.0,
+            log_depth=100, diagnostics_level="basic", mode_switch_timeout_s=5.0,
+            auto_mode_switch=False,
+        ),
+        SupervisorGrade.M: SupervisorGradeSpec(
+            grade=SupervisorGrade.M, target_latency_ms=10.0, target_rate_hz=100.0,
+            max_latency_ms=50.0, fault_detection=True, fault_prediction=False,
+            fault_isolation=True, fault_recovery=True, safety_level="standard",
+            emergency_stop_level=2, graceful_degradation=True, controller_redundancy=0,
+            hot_swap=False, watchdog_enabled=False, watchdog_timeout_ms=0.0,
+            log_depth=500, diagnostics_level="basic", mode_switch_timeout_s=2.0,
+            auto_mode_switch=True,
+        ),
+        SupervisorGrade.L: SupervisorGradeSpec(
+            grade=SupervisorGrade.L, target_latency_ms=5.0, target_rate_hz=200.0,
+            max_latency_ms=25.0, fault_detection=True, fault_prediction=True,
+            fault_isolation=True, fault_recovery=True, safety_level="enhanced",
+            emergency_stop_level=3, graceful_degradation=True, controller_redundancy=1,
+            hot_swap=False, watchdog_enabled=False, watchdog_timeout_ms=0.0,
+            log_depth=1000, diagnostics_level="detailed", mode_switch_timeout_s=1.0,
+            auto_mode_switch=True,
+        ),
+        SupervisorGrade.XL: SupervisorGradeSpec(
+            grade=SupervisorGrade.XL, target_latency_ms=2.0, target_rate_hz=500.0,
+            max_latency_ms=10.0, fault_detection=True, fault_prediction=True,
+            fault_isolation=True, fault_recovery=True, safety_level="high",
+            emergency_stop_level=4, graceful_degradation=True, controller_redundancy=2,
+            hot_swap=True, watchdog_enabled=True, watchdog_timeout_ms=5.0,
+            log_depth=5000, diagnostics_level="detailed", mode_switch_timeout_s=0.5,
+            auto_mode_switch=True,
+        ),
+        SupervisorGrade.XXL: SupervisorGradeSpec(
+            grade=SupervisorGrade.XXL, target_latency_ms=1.0, target_rate_hz=1000.0,
+            max_latency_ms=5.0, fault_detection=True, fault_prediction=True,
+            fault_isolation=True, fault_recovery=True, safety_level="critical",
+            emergency_stop_level=5, graceful_degradation=True, controller_redundancy=3,
+            hot_swap=True, watchdog_enabled=True, watchdog_timeout_ms=2.0,
+            log_depth=20000, diagnostics_level="comprehensive", mode_switch_timeout_s=0.2,
+            auto_mode_switch=True,
+        ),
+    }
+    return specs.get(grade, specs[SupervisorGrade.M])
+
+
+def get_supervisor_config(grade: SupervisorGrade) -> SupervisorConfig:
+    spec = get_supervisor_spec(grade)
+    return SupervisorConfig(
+        mode_switch_timeout_s=spec.mode_switch_timeout_s,
+        controller_heartbeat_s=1.0 / spec.target_rate_hz,
+        max_latency_ms=spec.max_latency_ms,
+        max_tracking_error=0.5 if grade in [SupervisorGrade.S, SupervisorGrade.M] else 0.1,
+        fault_count_threshold=5 if grade == SupervisorGrade.S else (3 if grade == SupervisorGrade.M else 1),
+        enable_fault_recovery=spec.fault_recovery,
+        graceful_degradation=spec.graceful_degradation,
+        emergency_stop_enabled=True,
+        target_latency_ms=spec.target_latency_ms,
+        target_rate_hz=spec.target_rate_hz,
+    )
+
+
+class GradeAwareSupervisor(ControlSupervisor):
+    """
+    AGV五级感知控制监管器
+    
+    根据AGV等级自动配置:
+    - S级: 基础监控，50Hz，5s切换超时，无冗余
+    - M级: 标准监控，100Hz，2s切换超时，优雅降级
+    - L级: 专业监控，200Hz，1s切换超时，单冗余
+    - XL级: 高性能监控，500Hz，0.5s切换超时，双冗余+看门狗
+    - XXL级: 旗舰监控，1000Hz，0.2s切换超时，三冗余+看门狗+自愈
+    """
+
+    def __init__(
+        self,
+        grade: SupervisorGrade = SupervisorGrade.M,
+        supervisor_id: str = "grade_aware_supervisor"
+    ):
+        self.grade = grade
+        self.grade_spec = get_supervisor_spec(grade)
+        config = get_supervisor_config(grade)
+        super().__init__(config=config, supervisor_id=supervisor_id)
+        self._primary_controllers: Dict[str, str] = {}
+        self._backup_controllers: Dict[str, List[str]] = {}
+        self._hot_standby: bool = grade.value in ["XL", "XXL"]
+        self._watchdog_enabled = self.grade_spec.watchdog_enabled
+        self._watchdog_timers: Dict[str, float] = {}
+        self._last_heartbeat: float = time.time()
+        self._fault_tolerance_enabled = (grade == SupervisorGrade.XXL)
+        self._consecutive_faults: int = 0
+        self._max_consecutive_faults: int = 10
+        print(f"[GradeAwareSupervisor] grade={grade.value}, rate={self.grade_spec.target_rate_hz}Hz, "
+              f"latency={self.grade_spec.target_latency_ms}ms, "
+              f"redundancy={self.grade_spec.controller_redundancy}, watchdog={self._watchdog_enabled}")
+
+    def register_with_redundancy(self, controller: ControllerInterface, modes: List[ControlMode],
+                                 is_primary: bool = True) -> bool:
+        success = self.register_controller(controller)
+        if not success:
+            return False
+        for mode in modes:
+            mode_key = mode.value
+            if is_primary:
+                self._primary_controllers[mode_key] = controller.name
+                self._backup_controllers.setdefault(mode_key, [])
+            else:
+                self._backup_controllers.setdefault(mode_key, [])
+                self._backup_controllers[mode_key].append(controller.name)
+        return True
+
+    def kick_watchdog(self, controller_name: str):
+        if not self._watchdog_enabled:
+            return
+        self._watchdog_timers[controller_name] = time.time()
+        self._last_heartbeat = time.time()
+
+    def _check_watchdog(self) -> Tuple[bool, str]:
+        if not self._watchdog_enabled:
+            return True, "OK"
+        current_time = time.time()
+        timeout = self.grade_spec.watchdog_timeout_ms / 1000.0
+        for name, last_time in list(self._watchdog_timers.items()):
+            if current_time - last_time > timeout:
+                return False, f"Watchdog timeout for controller: {name}"
+        return True, "OK"
+
+    def get_grade_capabilities(self) -> Dict[str, Any]:
+        spec = self.grade_spec
+        return {
+            "grade": spec.grade.value,
+            "performance": {
+                "target_latency_ms": spec.target_latency_ms,
+                "target_rate_hz": spec.target_rate_hz,
+                "max_latency_ms": spec.max_latency_ms,
+            },
+            "fault_handling": {
+                "detection": spec.fault_detection,
+                "prediction": spec.fault_prediction,
+                "isolation": spec.fault_isolation,
+                "recovery": spec.fault_recovery,
+            },
+            "safety": {
+                "level": spec.safety_level,
+                "emergency_stop_level": spec.emergency_stop_level,
+                "graceful_degradation": spec.graceful_degradation,
+            },
+            "redundancy": {
+                "controller_count": spec.controller_redundancy,
+                "hot_swap": spec.hot_swap,
+                "hot_standby": self._hot_standby,
+            },
+            "watchdog": {"enabled": spec.watchdog_enabled, "timeout_ms": spec.watchdog_timeout_ms},
+            "diagnostics": {"level": spec.diagnostics_level, "log_depth": spec.log_depth},
+        }
+
+    def step_watchdog(self) -> bool:
+        if not self._watchdog_enabled:
+            return True
+        healthy, msg = self._check_watchdog()
+        if not healthy:
+            print(f"[GradeAwareSupervisor] WATCHDOG TRIGGERED: {msg}")
+            self.trigger_emergency_stop(f"watchdog: {msg}")
+            return False
+        return True
+
+    def step_fault_tolerance(self, fault_detected: bool) -> bool:
+        if not self._fault_tolerance_enabled:
+            return not fault_detected
+        if fault_detected:
+            self._consecutive_faults += 1
+            if self._consecutive_faults > self._max_consecutive_faults:
+                print(f"[GradeAwareSupervisor] CRITICAL: Max consecutive faults exceeded")
+                self.trigger_emergency_stop("fault_tolerance_exceeded")
+                return False
+        else:
+            self._consecutive_faults = max(0, self._consecutive_faults - 1)
+        return True
