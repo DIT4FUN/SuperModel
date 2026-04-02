@@ -18,27 +18,61 @@ SuperModel 是一个超模态大模型具身智能系统，专注于 AGV（自�
 
 ```
 SuperModel/
-├── sensors/              # 传感器模块
-│   ├── visual.py         # 视觉传感器
-│   ├── audio.py          # 听觉传感器
-│   ├── tactile.py        # 触觉传感器（压阻/触感阵列/压电）
-│   ├── force.py          # 力觉传感器（六维力/单轴力）
-│   └── imu.py            # IMU传感器（BMI088/MPU9250）
-├── fusion/               # 跨模态融合网络
-│   └── sensor_fusion.py  # 传感器融合算法（互补滤波/EKF/多传感器融合）
-├── control/              # 控制模块
-│   ├── motor.py          # 电机控制（DC/BLDC/伺服/步进）
-│   ├── motion.py         # 运动控制（差速/麦轮/轨迹规划）
-│   ├── pid.py            # PID控制器（通用/二维/自动整定）
-│   └── safety.py         # 安全监控（限速/边界/碰撞/紧急停止）
-├── learning/             # 自主学习框架
-├── simulation/            # 仿真环境 (待实现)
-├── tests/                # 测试用例
-│   ├── sensor_tests.py   # 传感器单元测试
-│   ├── fusion_tests.py   # 融合算法测试
-│   └── *.py              # 其他集成测试
-├── docs/
-│   └── DESIGN.md         # 架构设计文档
+├── src/
+│   ├── sensors/          # 多模态传感器接口
+│   │   ├── vision.py    # 双目RGBD相机 (RealSense)
+│   │   ├── audio.py     # 双耳麦克风阵列
+│   │   ├── tactile.py   # 电子皮肤触觉阵列
+│   │   ├── force.py     # 六维力矩传感器 (ATI)
+│   │   ├── imu.py        # IMU传感器 (BMI088/MPU9250)
+│   │   ├── encoders.py  # 特征编码器
+│   │   └── manager.py    # 传感器管理器
+│   ├── fusion/           # 跨模态融合网络
+│   │   ├── cross_modal_fusion.py  # 注意力融合Transformer
+│   │   └── sensor_fusion.py        # 互补滤波/EKF/多传感器融合
+│   ├── perception/       # 感知与场景理解
+│   │   └── scene_understanding.py
+│   ├── learning/         # 自主学习框架
+│   │   ├── world_model.py
+│   │   ├── dreamer_agent.py
+│   │   └── autonomous_learning.py
+│   ├── control/          # 动作控制模块
+│   │   ├── motion.py     # 运动控制
+│   │   ├── trajectory.py # 轨迹规划
+│   │   ├── impedance.py  # 阻抗控制
+│   │   ├── mpc.py        # 模型预测控制
+│   │   ├── agv.py        # AGV运动学
+│   │   ├── supervisor.py # 控制监管
+│   │   ├── safety_controller.py
+│   │   ├── ros2_interface.py
+│   │   ├── teleop.py     # 遥操作
+│   │   ├── multi_agent.py
+│   │   ├── obstacle_avoidance.py
+│   │   ├── planner.py    # 任务规划
+│   │   ├── skill.py      # 技能库
+│   │   ├── tactile_control.py
+│   │   ├── force_control.py
+│   │   └── imu_control.py
+│   ├── simulation/       # 仿真环境
+│   │   ├── mujoco_sim.py # MuJoCo仿真
+│   │   ├── gazebo_sim.py # Gazebo/ROS2仿真
+│   │   ├── gym_env.py    # Gymnasium环境
+│   │   └── environment.py
+│   └── utils.py          # 工具函数
+├── examples/             # 示例脚本
+│   ├── complete_embodied_pipeline_demo.py
+│   ├── agv_five_level_demo.py
+│   ├── sensorimotor_integration_demo.py
+│   └── ...
+├── tests/                # 测试用例 (1094项通过)
+│   ├── sensor_tests.py
+│   ├── fusion_tests.py
+│   ├── control_tests.py
+│   └── ...
+├── docs/                 # 设计文档
+│   ├── SPEC.md           # 技术规格
+│   ├── DESIGN.md         # 架构设计
+│   └── MODULE_INDEX.md   # 模块索引
 └── README.md
 ```
 
