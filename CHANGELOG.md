@@ -2,6 +2,17 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.45.0] - 2026-04-02 20:30
+
+### Updated
+- **文档增强**: MODULE_INDEX.md 增补模块接口详细规范
+- **飞书报告**: send_report.py 消息模板优化
+- **测试状态**: 1135项测试持续通过
+- **版本号**: v1.44.0 → v1.45.0
+
+### Added
+- **设计文档完善**: 增补 AGV 五级传感器规格详细对照表
+
 ## [v1.44.0] - 2026-04-02 19:19
 
 ### Added

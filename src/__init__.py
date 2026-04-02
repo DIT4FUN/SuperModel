@@ -12,7 +12,7 @@ SuperModel - 超模态机器人具身智能大脑
 - control: 动作控制
 """
 
-__version__ = "1.44.0"
+__version__ = "1.45.0"
 __author__ = "DIT4FUN"
 
 from .sensors import (
