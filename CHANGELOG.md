@@ -2,6 +2,43 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.50.0] - 2026-04-03 05:16
+
+### Added
+- **触觉传感器模块** `src/sensors/tactile.py`: 电子皮肤触觉阵列完整实现
+  - `TactileArray`: 电阻式/电容式/压电式/光学式触觉传感器
+  - `TactileFrame`, `TactileContact`: 数据结构
+  - `PressureProcessor`: 压力信号处理 (滤波/基线补偿/特征提取)
+  - `VirtualTactileSensor`: 仿真环境虚拟触觉传感器
+  - `AGV_TACTILE_GRADES`: S/M/L/XL/XXL五级规格表
+  - 支持多接触/滑移检测/抓取质量评估/接近觉/温度感知
+- **力觉传感器模块** `src/sensors/force.py`: 六维力矩传感器完整实现
+  - `ForceTorqueSensor`: ATI风格六维力/力矩测量
+  - `Wrench`: 力旋量数据结构 (force+torque)
+  - `WrenchProcessor`: 力信号处理 (滤波/异常值去除/协方差估计)
+  - `VirtualForceSensor`: 仿真环境虚拟力传感器
+  - `AGV_FORCE_GRADES`: S/M/L/XL/XXL五级规格表
+  - 支持碰撞仿真/摩擦力/表面接触/负载估计
+- **IMU传感器模块** `src/sensors/imu.py`: 惯性测量单元完整实现
+  - `IMUSensor`: BMI088/MPU6050/MPU9250/ADIS16470接口
+  - `IMUFrame`, `Pose`: 数据结构
+  - `PoseEstimator`: Madgwick/互补滤波/卡尔曼姿态估计
+  - `VirtualIMUSensor`: 仿真环境虚拟IMU
+  - `AGV_IMU_GRADES`: S/M/L/XL/XXL五级规格表
+  - 支持AGV运动/人类步行轨迹仿真
+- **传感器-控制集成测试** `tests/sensor_tests.py` + `tests/fusion_tests.py`
+  - 触觉/力觉/IMU 单元测试
+  - 边界情况测试 (NaN/Inf/饱和/零输入)
+  - 虚拟传感器仿真测试
+  - 融合网络鲁棒性测试
+
+### Testing
+- **1277 tests passed, 33 skipped, 28 warnings** ✅
+  - sensor_tests.py: 130项 (触觉+力觉+IMU+虚拟传感器+边界情况)
+  - fusion_tests.py: 104项 (互补滤波/EKF/多传感器融合/鲁棒性)
+
+---
+
 ## [v1.48.0] - 2026-04-03 05:19
 
 ### Fixed

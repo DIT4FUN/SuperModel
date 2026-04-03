@@ -64,7 +64,7 @@ SuperModel/
 │   ├── agv_five_level_demo.py
 │   ├── sensorimotor_integration_demo.py
 │   └── ...
-├── tests/                # 测试用例 (1183项通过)
+├── tests/                # 测试用例 (1277项通过)
 │   ├── sensor_tests.py
 │   ├── fusion_tests.py
 │   ├── control_tests.py
