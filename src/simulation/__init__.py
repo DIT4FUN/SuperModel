@@ -36,6 +36,11 @@ from .mujoco_sim import (
     MuJoCoSimulator, MuJoCoConfig, ControlMode,
     create_mujoco_simulator, HAS_MUJOCO
 )
+from .pybullet_sim import (
+    PyBulletSimulator, PyBulletConfig, PyBulletGUI,
+    create_pybullet_simulator, generate_agv_urdf,
+    get_pybullet_spec, HAS_PYBULLET
+)
 
 __all__ = [
     # 基础仿真
@@ -52,6 +57,10 @@ __all__ = [
     # MuJoCo 仿真
     'MuJoCoSimulator', 'MuJoCoConfig', 'ControlMode',
     'create_mujoco_simulator', 'HAS_MUJOCO',
+    # PyBullet 仿真
+    'PyBulletSimulator', 'PyBulletConfig', 'PyBulletGUI',
+    'create_pybullet_simulator', 'generate_agv_urdf',
+    'get_pybullet_spec', 'HAS_PYBULLET',
 ]
 
 
