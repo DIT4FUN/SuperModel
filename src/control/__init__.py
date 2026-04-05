@@ -87,6 +87,11 @@ from .motor import (
     DCMotor, BLDCmotor, ServoMotor, StepperMotor,
     PIDController as MotorPIDController, MotorController
 )
+from .sensorimotor import (
+    SensorimotorIntegration, SensorimotorConfig, SensorimotorState,
+    SensorimotorSimulator,
+    AGV_SENSORIMOTOR_GRADES, get_sensorimotor_spec
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -134,4 +139,8 @@ __all__ = [
     'Motor', 'MotorState', 'MotorControlMode',
     'DCMotor', 'BLDCmotor', 'ServoMotor', 'StepperMotor',
     'MotorPIDController', 'MotorController',
+    # sensorimotor
+    'SensorimotorIntegration', 'SensorimotorConfig', 'SensorimotorState',
+    'SensorimotorSimulator',
+    'AGV_SENSORIMOTOR_GRADES', 'get_sensorimotor_spec',
 ]
