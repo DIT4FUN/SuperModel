@@ -25,6 +25,72 @@
 | **XL** | 超大型AGV | 600kg | 4轮 | 6.5寸轮毂200W x2 |
 | **XXL** | 重型AGV | 1200kg | 4轮 | 7.5寸轮毂300W x4 |
 
+### AGV五级详细规格对照表
+
+#### 整车规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **负载能力** | 30kg | 100kg | 300kg | 600kg | 1200kg |
+| **自重** | 15kg | 35kg | 80kg | 150kg | 300kg |
+| **最大总重** | 45kg | 135kg | 380kg | 750kg | 1500kg |
+| **车体尺寸** | 0.4×0.3×0.12m | 0.6×0.4×0.15m | 0.8×0.6×0.2m | 1.0×0.7×0.25m | 1.2×0.9×0.3m |
+| **轮子配置** | 2轮驱动 | 2轮驱动 | 4轮驱动 | 4轮驱动 | 4轮驱动 |
+| **轮子直径** | 100mm | 140mm | 140mm | 165mm | 200mm |
+| **电机类型** | 57步进 | 5.5寸轮毂150W | 5.5寸轮毂150W×2 | 6.5寸轮毂200W×2 | 7.5寸轮毂300W×4 |
+| **最高速度** | 0.5m/s | 1.5m/s | 2.0m/s | 2.5m/s | 3.0m/s |
+| **最大扭矩** | 5Nm | 15Nm | 30Nm | 60Nm | 120Nm |
+| **定位精度** | ±10mm | ±5mm | ±3mm | ±1mm | ±0.5mm |
+| **防护等级** | IP20 | IP30 | IP54 | IP65 | IP67 |
+| **典型价格** | ¥5-15K | ¥15-50K | ¥50-150K | ¥150-500K | >¥500K |
+
+#### 感知子系统规格
+
+| 模态 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **相机** | 单目640×480 | 双目D435i 720p | 双目D455 60fps | 双目+事件相机 | 多目+3D LiDAR |
+| **麦克风** | 1ch | 2ch阵列 | 4ch阵列 | 6ch阵列 | 8ch阵列 |
+| **触觉阵列** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **力觉** | 3轴±100N | 6轴±200N | 6轴±500N | 6轴±1000N | 6轴±5000N |
+| **IMU** | MPU6050 100Hz | BMI088 200Hz | BMI088 500Hz | ADIS16470 1kHz | ADIS16470 2kHz |
+| **融合编码器** | 128d | 256d | 512d | 768d | 1024d |
+
+#### 控制子系统规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **控制模式** | 位置 | 位置+速度 | 位置+速度+阻抗 | 全模态 | 全模态+MPC |
+| **避障算法** | 人工势场 | DWA | DWA+VFH+APF | 混合 | 多层融合 |
+| **轨迹规划** | 直线 | RRT | RRT*+样条 | MPC+RRT* | MPC+多次RRT* |
+| **碰撞响应** | >100ms | <50ms | <20ms | <10ms | <5ms |
+| **姿态稳定** | <500ms | <200ms | <100ms | <50ms | <20ms |
+
+#### 计算与通信规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **处理器** | RPi 4B | RK3588/Nano | Orin NX | Orin AGX | Orin AGX×2+GPU |
+| **AI算力** | <5 TOPS | 5-20 TOPS | 20-100 TOPS | 100-300 TOPS | >300 TOPS |
+| **内存** | 4GB | 8GB | 16-32GB | 64-128GB | 256+GB |
+| **功耗** | <10W | 15-30W | 30-80W | 80-150W | 150-500W |
+| **实时控制** | ✗ | ✗ | ✓ Xenomai | ✓ RT-PREEMPT | ✓ Xenomai+FPGA |
+| **有线通信** | USB | USB/ETH | Ethernet | EtherCAT | EtherCAT+光纤 |
+| **无线通信** | WiFi | WiFi | WiFi+5G | 5G+LoRa | 5G+卫星 |
+| **多机协同** | ✗ | ✗ | ✗ | ✓ 5台 | ✓ 20台+ |
+
+#### 感知→控制闭环延迟规格
+
+| 阶段 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **传感器采样** | 20ms | 10ms | 5ms | 2ms | 1ms |
+| **特征提取** | 80ms | 30ms | 15ms | 5ms | 2ms |
+| **融合推理** | 30ms | 10ms | 5ms | 2ms | 1ms |
+| **决策规划** | 20ms | 10ms | 5ms | 2ms | 1ms |
+| **控制计算** | 10ms | 5ms | 2ms | 1ms | 0.5ms |
+| **电机响应** | 40ms | 15ms | 5ms | 2ms | 1ms |
+| **总延迟** | <200ms | <80ms | <35ms | <15ms | <7ms |
+
 ### M级 AGV 详细参数
 
 ```
@@ -112,3 +178,65 @@ sim.set_motor_velocities([5.0, -5.0])  # 原地转向
 state = sim.get_agv_state()
 # state = {'x': ..., 'y': ..., 'theta': ..., 'vx': ..., 'vy': ..., 'omega': ...}
 ```
+
+---
+
+## 实用集成示例
+
+### 快速创建五级AGV系统
+
+```python
+# 选择AGV等级
+AGV_GRADE = 'M'  # 可选: S, M, L, XL, XXL
+
+# 传感器初始化
+from sensors.tactile import TactileArray, get_tactile_spec
+from sensors.force import ForceTorqueSensor, get_force_spec
+from sensors.imu import IMUSensor, get_imu_spec
+
+tactile_spec = get_tactile_spec(AGV_GRADE)
+force_spec = get_force_spec(AGV_GRADE)
+imu_spec = get_imu_spec(AGV_GRADE)
+
+print(f"触觉阵列: {tactile_spec['array']} @ {tactile_spec['sample_hz']}Hz")
+print(f"力觉: {force_spec['axes']}轴 @ {force_spec['sample_hz']}Hz")
+print(f"IMU: {imu_spec['model']} @ {imu_spec['sample_hz']}Hz")
+
+# 传感器实例化
+tactile = TactileArray(array_size=tactile_spec['array'])
+force = ForceTorqueSensor()
+imu = IMUSensor(sensor_type=imu_spec['model'], sample_rate=imu_spec['sample_hz'])
+
+# 打开传感器
+tactile.open()
+force.open()
+imu.open()
+
+# 校准
+imu.calibrate_gyro_bias(samples=100)
+imu.calibrate_accel_bias(samples=100)
+
+# 读取数据
+import time
+while True:
+    t = time.time()
+    
+    # 触觉
+    tactile_frame = tactile.capture()
+    contacts = tactile.detect_contacts(tactile_frame)
+    
+    # 力觉
+    wrench = force.capture()
+    contact = force.detect_contact(wrench)
+    
+    # IMU
+    imu_frame = imu.capture()
+    
+    print(f"t={t:.3f} | 触觉={len(contacts)}接触 | 力={wrench.force} | 姿态=({imu_frame.euler[0]:.2f}, {imu_frame.euler[1]:.2f}, {imu_frame.euler[2]:.2f})")
+    
+    time.sleep(0.01)  # 100Hz
+```
+
+### 五级配置快速查询
+
+| 等级 | 传感器配置 | 控制频率 | 适用场景 |\n|------|-----------|---------|---------|\n| **S** | 8×8触觉 + 3轴力 + MPU6050 | 50Hz | 教学/实验 |\n| **M** | 16×16触觉 + 6轴力 + BMI088 | 100Hz | 标准AGV |\n| **L** | 24×24触觉 + 6轴力 + BMI088 500Hz | 200Hz | 工业精密 |\n| **XL** | 32×32触觉 + 6轴力 + ADIS16470 | 500Hz | 高性能 |\n| **XXL** | 48×48触觉 + 6轴力 + ADIS16470 2kHz | 1000Hz | 重载/特种 |\nEOF
