@@ -32,11 +32,13 @@ class MultiAGVDemo(BaseSimulation):
         self.targets = []
         self.completed = 0
         self.collisions = 0
+        self.last_target_id = {}  # 记录上次目标，避免重复
         
         # AGV 参数
-        self.agv_radius = 0.35  # AGV 碰撞半径
-        self.safe_distance = 0.8  # 安全距离
-        self.repulsion_gain = 1.5  # 斥力增益
+        self.agv_radius = 0.35
+        self.safe_distance = 0.8
+        self.repulsion_gain = 1.5
+        self.min_target_distance = 1.5  # 最小目标距离
         
         # 创建 AGV
         colors = [
@@ -69,21 +71,23 @@ class MultiAGVDemo(BaseSimulation):
                 'vy': 0,
                 'color': colors[i],
                 'task': None,
-                'collision_count': 0
+                'collision_count': 0,
+                'arrive_cooldown': 0  # 到达冷却时间
             })
+            self.last_target_id[i] = -1
         
         # 创建目标点
         self.createTargets()
         
         self.camera_distance = 12
         self.camera_pitch = -60
-        print(f"✅ 创建了 {self.num_agvs} 个 AGV")
+        print(f"创建了 {self.num_agvs} 个 AGV")
     
     def createTargets(self):
         """创建任务目标点"""
         target_positions = [
             (4, 4), (-4, 4), (4, -4), (-4, -4),
-            (6, 0), (-6, 0), (0, 6), (0, -6),
+            (6, 0), (-6, 0), (0, 6), (0, -4),
         ]
         
         for i, (tx, ty) in enumerate(target_positions[:8]):
@@ -95,7 +99,7 @@ class MultiAGVDemo(BaseSimulation):
                                                       rgbaColor=[1, 0.8, 0, 0.7]),
                 physicsClientId=self.client
             )
-            self.targets.append({'id': tid, 'x': tx, 'y': ty, 'taken': False})
+            self.targets.append({'id': tid, 'x': tx, 'y': ty, 'taken': False, 'idx': i})
     
     def compute_repulsion(self, agv, all_agvs):
         """计算来自其他AGV的斥力"""
@@ -110,7 +114,6 @@ class MultiAGVDemo(BaseSimulation):
             dist = math.sqrt(dx*dx + dy*dy)
             
             if dist < self.safe_distance and dist > 0.01:
-                # 势场法斥力
                 force_mag = self.repulsion_gain * (1.0/dist - 1.0/self.safe_distance) / (dist + 0.1)
                 repulsion[0] += force_mag * dx / dist
                 repulsion[1] += force_mag * dy / dist
@@ -127,46 +130,80 @@ class MultiAGVDemo(BaseSimulation):
             dy = agv['y'] - other['y']
             dist = math.sqrt(dx*dx + dy*dy)
             
-            if dist < self.agv_radius * 1.5:  # 碰撞阈值
+            if dist < self.agv_radius * 1.5:
                 return True, other
         return False, None
     
-    def assignTask(self, agv):
+    def assignTask(self, agv, agv_idx):
         """分配任务"""
-        if agv['task'] is None:
-            # 优先选择空闲目标
-            free_targets = [t for t in self.targets if not t['taken']]
-            if free_targets:
-                target = random.choice(free_targets)
-                agv['tx'] = target['x']
-                agv['ty'] = target['y']
-                agv['task'] = target
-                target['taken'] = True
+        if agv['task'] is not None:
+            return
+        
+        # 优先选择空闲目标，且距离足够远
+        free_targets = [t for t in self.targets if not t['taken'] and t['idx'] != self.last_target_id.get(agv_idx, -1)]
+        
+        if free_targets:
+            # 计算到每个目标距离，优先选择远的
+            distances = []
+            for t in free_targets:
+                d = math.sqrt((agv['x'] - t['x'])**2 + (agv['y'] - t['y'])**2)
+                distances.append((d, t))
+            distances.sort(reverse=True)  # 距离远的优先
+            
+            target = distances[0][1]
+            agv['tx'] = target['x']
+            agv['ty'] = target['y']
+            agv['task'] = target
+            target['taken'] = True
+            self.last_target_id[agv_idx] = target['idx']
+        else:
+            # 所有目标被占用，巡逻模式
+            patrol_targets = [(4, 4), (-4, 4), (4, -4), (-4, -4), 
+                            (6, 0), (-6, 0), (0, 6), (0, -4)]
+            
+            # 选择离当前AGV足够远的巡逻点
+            far_patrols = []
+            for pt in patrol_targets:
+                d = math.sqrt((agv['x'] - pt[0])**2 + (agv['y'] - pt[1])**2)
+                if d > self.min_target_distance:
+                    far_patrols.append((d, pt))
+            
+            if far_patrols:
+                far_patrols.sort(reverse=True)
+                patrol = far_patrols[0][1]
+                agv['tx'] = patrol[0] + random.uniform(-0.3, 0.3)
+                agv['ty'] = patrol[1] + random.uniform(-0.3, 0.3)
             else:
-                # 所有目标被占用，随机巡逻
-                patrol_targets = [(4, 4), (-4, 4), (4, -4), (-4, -4), 
-                                (6, 0), (-6, 0), (0, 6), (0, -4)]
-                patrol = random.choice(patrol_targets)
-                agv['tx'] = patrol[0] + random.uniform(-0.5, 0.5)
-                agv['ty'] = patrol[1] + random.uniform(-0.5, 0.5)
+                # 找不到足够远的目标，随机一个方向走
+                angle = random.uniform(0, 2 * math.pi)
+                agv['tx'] = agv['x'] + math.cos(angle) * 3
+                agv['ty'] = agv['y'] + math.sin(angle) * 3
+                # 限制范围
+                agv['tx'] = max(-7, min(7, agv['tx']))
+                agv['ty'] = max(-5, min(7, agv['ty']))
     
     def onUpdate(self):
-        for agv in self.agvs:
-            # 分配任务
-            self.assignTask(agv)
+        for idx, agv in enumerate(self.agvs):
+            # 更新冷却时间
+            if agv['arrive_cooldown'] > 0:
+                agv['arrive_cooldown'] -= self.dt
+            
+            # 分配任务（冷却时间结束后）
+            if agv['task'] is None and agv['arrive_cooldown'] <= 0:
+                self.assignTask(agv, idx)
             
             # 计算方向
             dx = agv['tx'] - agv['x']
             dy = agv['ty'] - agv['y']
             dist = math.sqrt(dx*dx + dy*dy)
             
-            # 吸引力（朝目标）
+            # 吸引力
             if dist > 0.1:
                 attraction = np.array([dx/dist * 0.6, dy/dist * 0.6])
             else:
                 attraction = np.array([0.0, 0.0])
             
-            # 斥力（避让其他AGV）
+            # 斥力
             repulsion = self.compute_repulsion(agv, self.agvs)
             
             # 合力
@@ -178,7 +215,6 @@ class MultiAGVDemo(BaseSimulation):
             if speed > max_speed:
                 force = force / speed * max_speed
             elif speed < 0.01 and dist > 0.5:
-                # 速度太小且远离目标，给一个最小推力
                 force = attraction * 0.5
             
             # 平滑速度
@@ -186,9 +222,8 @@ class MultiAGVDemo(BaseSimulation):
             agv['vy'] = agv['vy'] * 0.8 + force[1] * 0.2
             
             # 防止完全停止
-            speed_now = np.linalg.norm([agv['vx'], agv['vy']])
+            speed_now = math.sqrt(agv['vx']**2 + agv['vy']**2)
             if speed_now < 0.01 and dist > 0.3:
-                # 给一个随机扰动避免卡死
                 agv['vx'] += random.uniform(-0.05, 0.05)
                 agv['vy'] += random.uniform(-0.05, 0.05)
             
@@ -206,7 +241,7 @@ class MultiAGVDemo(BaseSimulation):
                 agv['collision_count'] += 1
                 self.collisions += 1
                 if agv['collision_count'] == 1:
-                    print(f"⚠️ AGV碰撞 @ ({agv['x']:.1f}, {agv['y']:.1f})")
+                    print(f"AGV碰撞 @ ({agv['x']:.1f}, {agv['y']:.1f})")
             
             # 到达目标
             if dist < 0.3:
@@ -214,11 +249,9 @@ class MultiAGVDemo(BaseSimulation):
                     agv['task']['taken'] = False
                     agv['task'] = None
                     self.completed += 1
+                    agv['arrive_cooldown'] = 0.5  # 0.5秒冷却
                     if self.completed % 5 == 0:
-                        print(f"✅ 任务完成! 总计: {self.completed}")
-                
-                # 立即分配新任务
-                self.assignTask(agv)
+                        print(f"任务完成! 总计: {self.completed}")
             
             # 角度
             if abs(agv['vx']) > 0.01 or abs(agv['vy']) > 0.01:
