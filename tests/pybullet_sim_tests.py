@@ -151,13 +151,15 @@ class TestGenerateAGVURDF:
             path = generate_agv_urdf(grade)
             with open(path) as f:
                 content = f.read()
-            assert '<robot name="agv_differential">' in content
+            assert '<robot name="agv_2w_' + grade + '">' in content or '<robot name="agv_4w_' + grade + '">' in content
             assert '</robot>' in content
             # 验证关键参数
             if grade == 'S':
-                assert 'mass value="20.0"' in content
-            elif grade == 'XXL':
-                assert 'mass value="500.0"' in content
+                assert 'mass value="15"' in content
+            elif grade == 'M':
+                assert 'mass value="35"' in content
+            elif grade == 'L':
+                assert 'mass value="80"' in content
             # 清理
             import os
             os.remove(path)
@@ -191,7 +193,7 @@ class TestGenerateAGVURDF:
         assert path == str(output)
         assert output.exists()
         content = output.read_text()
-        assert '<robot name="agv_differential">' in content
+        assert '<robot name="agv_2w_M">' in content
 
 
 class TestPyBulletSimulatorBasic:
@@ -504,13 +506,14 @@ class TestAGVGrades:
             assert cfg.dt == grade_dts[grade]
 
     def test_urdf_mass_per_grade(self, all_grades):
-        """各等级 URDF 质量不同"""
-        masses = {'S': '20.0', 'M': '50.0', 'L': '100.0', 'XL': '200.0', 'XXL': '500.0'}
+        """各等级 URDF 质量不同 (5.5寸轮毂电机)"""
+        # 新模型的质量参数
+        masses = {'S': '15', 'M': '35', 'L': '80', 'XL': '150', 'XXL': '300'}
         for grade, mass in masses.items():
             path = generate_agv_urdf(grade)
             with open(path) as f:
                 content = f.read()
-            assert f'mass value="{mass}"' in content
+            assert f'mass value="{mass}"' in content, f"Grade {grade} mass should be {mass}"
             import os
             os.remove(path)
 

@@ -61,6 +61,12 @@ except Exception:
     AGVPhysicsConfig = None
     AGVState = None
 
+# 从AGV模型生成器导入
+try:
+    from .agv_model_generator import generate_agv_urdf_detailed, GRADE_CONFIGS, MOTOR_55_SPECS
+except Exception:
+    from simulation.agv_model_generator import generate_agv_urdf_detailed, GRADE_CONFIGS, MOTOR_55_SPECS
+
 
 class PyBulletGUI(Enum):
     """PyBullet 可视化模式"""
@@ -318,103 +324,20 @@ AGV_URDF_TEMPLATE = """<?xml version="1.0"?>
 """
 
 
-def generate_agv_urdf(grade: str = 'M', output_path: Optional[str] = None) -> str:
+def generate_agv_urdf(grade: str = 'M', output_path: Optional[str] = None, wheel_config: str = '2轮') -> str:
     """生成 AGV URDF 文件
+
+    使用新的详细AGV模型生成器，支持5.5寸轮毂电机参数。
 
     Args:
         grade: AGV 等级 (S/M/L/XL/XXL)
         output_path: 输出路径 (None = 临时文件)
+        wheel_config: 轮子配置 ('2轮' 或 '4轮')
 
     Returns:
         URDF 文件路径
     """
-    # AGV 五级规格参数表
-    grade_params = {
-        'S': dict(
-            body_length=0.4, body_width=0.3, body_height=0.15,
-            mass=20.0, wheel_radius=0.05, wheel_width=0.03,
-            wheel_mass=0.5, track_width=0.25, wheel_offset_x=0.05,
-            caster_radius=0.02, caster_mass=0.05, caster_offset_x=0.12,
-            com_x=0, com_y=0, com_z=0,
-            ixx=0.5, ixy=0, ixz=0, iyy=0.3, iyz=0, izz=0.5,
-            wheel_ixx=5e-5, caster_ixx=1e-6, friction=0.5,
-        ),
-        'M': dict(
-            body_length=0.6, body_width=0.4, body_height=0.2,
-            mass=50.0, wheel_radius=0.1, wheel_width=0.05,
-            wheel_mass=1.0, track_width=0.35, wheel_offset_x=0.1,
-            caster_radius=0.03, caster_mass=0.1, caster_offset_x=0.2,
-            com_x=0, com_y=0, com_z=0,
-            ixx=2.0, ixy=0, ixz=0, iyy=1.0, iyz=0, izz=2.0,
-            wheel_ixx=5e-4, caster_ixx=1e-5, friction=0.5,
-        ),
-        'L': dict(
-            body_length=0.8, body_width=0.5, body_height=0.25,
-            mass=100.0, wheel_radius=0.15, wheel_width=0.06,
-            wheel_mass=2.0, track_width=0.45, wheel_offset_x=0.15,
-            caster_radius=0.04, caster_mass=0.2, caster_offset_x=0.28,
-            com_x=0, com_y=0, com_z=0,
-            ixx=5.0, ixy=0, ixz=0, iyy=3.0, iyz=0, izz=5.0,
-            wheel_ixx=3e-3, caster_ixx=5e-5, friction=0.5,
-        ),
-        'XL': dict(
-            body_length=1.0, body_width=0.7, body_height=0.3,
-            mass=200.0, wheel_radius=0.2, wheel_width=0.08,
-            wheel_mass=4.0, track_width=0.6, wheel_offset_x=0.2,
-            caster_radius=0.05, caster_mass=0.3, caster_offset_x=0.35,
-            com_x=0, com_y=0, com_z=0,
-            ixx=15.0, ixy=0, ixz=0, iyy=10.0, iyz=0, izz=15.0,
-            wheel_ixx=1e-2, caster_ixx=1e-4, friction=0.5,
-        ),
-        'XXL': dict(
-            body_length=1.5, body_width=1.0, body_height=0.4,
-            mass=500.0, wheel_radius=0.3, wheel_width=0.1,
-            wheel_mass=10.0, track_width=0.8, wheel_offset_x=0.3,
-            caster_radius=0.06, caster_mass=0.5, caster_offset_x=0.5,
-            com_x=0, com_y=0, com_z=0,
-            ixx=50.0, ixy=0, ixz=0, iyy=30.0, iyz=0, izz=50.0,
-            wheel_ixx=0.05, caster_ixx=5e-4, friction=0.5,
-        ),
-    }
-
-    params = grade_params.get(grade, grade_params['M'])
-    params['wheel_roll'] = np.pi / 2  # 轮子绕 X 轴旋转
-
-    # 预计算模板中使用的算术表达式
-    # 注意: str.format() 将 {expr} 解析为 {field_name:format_spec}，
-    # 其中 field_name 到第一个 / 或 : 为止，因此包含 / 的表达式会被错误解析
-    # 解决方案: 先用计算值替换模板中的复杂表达式，再做简单 .format()
-    computed = {
-        'bh2': params['body_height'] / 2,
-        'tw2': params['track_width'] / 2,
-        'bl2': params['body_length'] / 2,
-        'bh2_wr_001': params['body_height'] / 2 + params['wheel_radius'] - 0.01,
-        'bh2_wr': params['body_height'] / 2 + params['wheel_radius'],
-        'bh2_002': params['body_height'] / 2 - 0.02,
-    }
-
-    # 替换模板中的复杂表达式 (使用正则不安全，换为字符串替换)
-    urdf_content = (AGV_URDF_TEMPLATE
-        .replace('{body_height/2}', str(computed['bh2']))
-        .replace('{track_width/2}', str(computed['tw2']))
-        .replace('{body_length/2}', str(computed['bl2']))
-        .replace('{body_height/2+wheel_radius-0.01}', str(computed['bh2_wr_001']))
-        .replace('{body_height/2+wheel_radius}', str(computed['bh2_wr']))
-        .replace('{body_height/2-0.02}', str(computed['bh2_002']))
-    )
-    # 现在只有简单占位符，可以安全地使用 format()
-    urdf_content = urdf_content.format(**params)
-
-    if output_path:
-        with open(output_path, 'w') as f:
-            f.write(urdf_content)
-        return output_path
-    else:
-        # 创建临时文件
-        fd, path = tempfile.mkstemp(suffix='.urdf', prefix='agv_')
-        with os.fdopen(fd, 'w') as f:
-            f.write(urdf_content)
-        return path
+    return generate_agv_urdf_detailed(grade=grade, output_path=output_path, wheel_config=wheel_config)
 
 
 # ============================================================================
