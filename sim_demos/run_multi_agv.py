@@ -81,9 +81,9 @@ class MultiAGVDemo(BaseSimulation):
         for i, (tx, ty) in enumerate(target_positions[:8]):
             tid = p.createMultiBody(
                 baseMass=0,
-                basePosition=[tx, ty, 0.1],
-                baseCollisionShapeIndex=p.createVisualShape(p.GEOM_CYLINDER, radius=0.3, height=0.05),
-                baseVisualShapeIndex=p.createVisualShape(p.GEOM_CYLINDER, radius=0.3, height=0.05,
+                basePosition=[tx, ty, 0.05],
+                baseCollisionShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.3, 0.3, 0.05]),
+                baseVisualShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.3, 0.3, 0.05],
                                                       rgbaColor=[1, 0.8, 0, 0.7]),
                 physicsClientId=self.client
             )
