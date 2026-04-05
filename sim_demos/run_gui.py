@@ -24,7 +24,7 @@ import numpy as np
 class SimState:
     """仿真全局状态"""
     def __init__(self):
-        self.speed_multiplier = 1.0
+        self.speed_multiplier = 3.0
         self.camera_distance = 15.0
         self.camera_yaw = 60
         self.camera_pitch = -50

@@ -22,7 +22,7 @@ class BaseSimulation:
         self.client = None
         self.running = True
         self.paused = False
-        self.speed = 1.0
+        self.speed = 3.0
         self.camera_distance = 15.0
         self.camera_yaw = 45
         self.camera_pitch = -50
