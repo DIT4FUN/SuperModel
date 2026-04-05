@@ -134,6 +134,7 @@ class MultiAGVDemo(BaseSimulation):
     def assignTask(self, agv):
         """分配任务"""
         if agv['task'] is None:
+            # 优先选择空闲目标
             free_targets = [t for t in self.targets if not t['taken']]
             if free_targets:
                 target = random.choice(free_targets)
@@ -141,6 +142,13 @@ class MultiAGVDemo(BaseSimulation):
                 agv['ty'] = target['y']
                 agv['task'] = target
                 target['taken'] = True
+            else:
+                # 所有目标被占用，随机巡逻
+                patrol_targets = [(4, 4), (-4, 4), (4, -4), (-4, -4), 
+                                (6, 0), (-6, 0), (0, 6), (0, -4)]
+                patrol = random.choice(patrol_targets)
+                agv['tx'] = patrol[0] + random.uniform(-0.5, 0.5)
+                agv['ty'] = patrol[1] + random.uniform(-0.5, 0.5)
     
     def onUpdate(self):
         for agv in self.agvs:
@@ -169,10 +177,20 @@ class MultiAGVDemo(BaseSimulation):
             max_speed = 0.8 * self.speed
             if speed > max_speed:
                 force = force / speed * max_speed
+            elif speed < 0.01 and dist > 0.5:
+                # 速度太小且远离目标，给一个最小推力
+                force = attraction * 0.5
             
             # 平滑速度
-            agv['vx'] = agv['vx'] * 0.85 + force[0] * 0.15
-            agv['vy'] = agv['vy'] * 0.85 + force[1] * 0.15
+            agv['vx'] = agv['vx'] * 0.8 + force[0] * 0.2
+            agv['vy'] = agv['vy'] * 0.8 + force[1] * 0.2
+            
+            # 防止完全停止
+            speed_now = np.linalg.norm([agv['vx'], agv['vy']])
+            if speed_now < 0.01 and dist > 0.3:
+                # 给一个随机扰动避免卡死
+                agv['vx'] += random.uniform(-0.05, 0.05)
+                agv['vy'] += random.uniform(-0.05, 0.05)
             
             # 更新位置
             agv['x'] += agv['vx'] * self.dt
@@ -198,6 +216,9 @@ class MultiAGVDemo(BaseSimulation):
                     self.completed += 1
                     if self.completed % 5 == 0:
                         print(f"✅ 任务完成! 总计: {self.completed}")
+                
+                # 立即分配新任务
+                self.assignTask(agv)
             
             # 角度
             if abs(agv['vx']) > 0.01 or abs(agv['vy']) > 0.01:
