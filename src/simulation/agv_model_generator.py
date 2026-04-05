@@ -114,6 +114,41 @@ ASTRA_PRO_PLUS_SPECS = {
 
 
 # ============================================================================
+# 奥比中光 C100 / C70 RGB相机
+# ============================================================================
+
+ORBBEC_C100_SPECS = {
+    'model': 'C100',
+    'brand': 'Orbbec (奥比中光)',
+    'type': 'RGB USB相机',
+    'resolution': '1080P (1920×1080)',
+    'fov': 'H112° / V80°',
+    'framerate': '30fps',
+    'sensor': 'CMOS',
+    'exposure': '全局曝光',
+    'interface': 'ZH 1.5-4PIN 转 USB 2.0',
+    'cable_length': '150cm',
+    'dimensions': '47 × 38 × 22.7mm',
+    'weight': 40,           # g
+}
+
+ORBBEC_C70_SPECS = {
+    'model': 'C70',
+    'brand': 'Orbbec (奥比中光)',
+    'type': 'RGB USB相机 (金属外壳)',
+    'resolution': '720P (1280×720)',
+    'fov': 'H85° / V47°',
+    'framerate': '30fps',
+    'sensor': 'CMOS',
+    'exposure': '全局曝光',
+    'interface': 'ZH 1.5-4PIN 转 USB 2.0',
+    'cable_length': '150cm',
+    'dimensions': '47 × 38 × 28.5mm',
+    'weight': 50,           # g
+}
+
+
+# ============================================================================
 # ESUN 2.5寸静音避震万向轮 (从动轮)
 # ============================================================================
 
@@ -476,25 +511,26 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   <!-- ============================================================
        前视深度相机: 奥比中光 Astra Pro Plus
        - 单目结构光, 640x480深度, 1280x960 RGB
-       - 尺寸: 165 x 40 x 30mm
+       - 尺寸: 165 x 40 x 30mm (Astra Pro Plus)
+       - C100: 47 x 38 x 22.7mm / C70: 47 x 38 x 28.5mm
        ============================================================ -->
   <link name="camera_link">
     <inertial>
-      <mass value="0.2"/>
-      <inertia ixx="2e-4" ixy="0" ixz="0" iyy="2e-4" iyz="0" izz="2e-4"/>
+      <mass value="0.04"/>  <!-- C100: 40g -->
+      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
     </inertial>
     <visual>
-      <!-- Astra Pro Plus 尺寸约 165x40x30mm -->
+      <!-- C100/C70 RGB相机: 47x38x22.7mm -->
       <geometry>
-        <box size="0.165 0.04 0.03"/>
+        <box size="0.047 0.038 0.0227"/>
       </geometry>
       <material name="camera_color">
-        <color rgba="0.2 0.2 0.2 1"/>  <!-- 深灰色外壳 -->
+        <color rgba="0.15 0.15 0.15 1"/>  <!-- 深灰色外壳 -->
       </material>
     </visual>
     <collision>
       <geometry>
-        <box size="0.165 0.04 0.03"/>
+        <box size="0.047 0.038 0.0227"/>
       </geometry>
     </collision>
   </link>
@@ -724,20 +760,25 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
     <origin xyz="0 0 {body_height_2}" rpy="0 0 0"/>
   </joint>
 
-  <!-- 相机 -->
+  <!-- RGB相机: 奥比中光 C100/C70 -->
   <link name="camera_link">
     <inertial>
-      <mass value="0.05"/>
+      <mass value="0.04"/>
       <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
     </inertial>
     <visual>
       <geometry>
-        <box size="0.03 0.08 0.03"/>
+        <box size="0.047 0.038 0.0227"/>
       </geometry>
       <material name="camera_color">
-        <color rgba="0.1 0.3 0.8 1"/>
+        <color rgba="0.15 0.15 0.15 1"/>
       </material>
     </visual>
+    <collision>
+      <geometry>
+        <box size="0.047 0.038 0.0227"/>
+      </geometry>
+    </collision>
   </link>
 
   <joint name="camera_joint" type="fixed">
