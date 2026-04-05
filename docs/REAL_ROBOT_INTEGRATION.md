@@ -19,24 +19,36 @@
 | AGV等级 | 计算平台 | 传感器 | 执行器 | 典型场景 |
 |---------|----------|--------|--------|----------|
 | **S** | RK3588 / Jetson Nano | RealSense D435i + MPU6050 | 直流伺服电机 | 教育/实验室 |
-| **M** | RK3588 + FPGA | RealSense D455 + BMI088 | 步进/伺服电机 | 服务机器人 |
+| **M** | RK3588 + FPGA | RealSense D455 + BMI088/ETT10A-PW | 步进/伺服电机 | 服务机器人 |
 | **L** | RK3588 x2 + FPGA | 双目 + ADIS16470 | 伺服电机 + 液压 | 工业搬运 |
 | **XL** | RK3588集群 | 多目 + LiDAR + ADIS16470 | 高性能伺服 | 复杂物流 |
 | **XXL** | RK3588集群 + GPU | 多目 + 3D LiDAR + 工业IMU | 重型伺服 | 柔性制造 |
 
-### 1.2 通信接口
+### 1.2 已采购硬件
+
+| 组件 | 型号 | 数量 | 来源 |
+|------|------|------|------|
+| 激光雷达 | 镭神 N10P | 1 | https://detail.tmall.com/item.htm?id=661907723595 |
+| IMU | ETT10A-PW | 1 | https://item.taobao.com/item.htm?id=622844097690 |
+| 从动轮 | ESUN 2.5寸 | 2 | https://detail.tmall.com/item.htm?id=591810849491 |
+| RGB相机 | 奥比中光 C100 | 1 | https://item.taobao.com/item.htm?id=641692244195 |
+| 深度相机 | 奥比中光 Astra Pro Plus | 1 | https://item.taobao.com/item.htm?id=646073233035 |
+| 电机驱动器 | 中菱 ZLAC8015D | 1 | https://item.taobao.com/item.htm?id=677349695836 |
+
+### 1.3 通信接口
 
 ```
 真实机器人通信架构:
 
   SuperModel (RK3588)
        │
-       ├── CAN FD ──────────→ 电机驱动器 (伺服电机)
+       ├── CANopen/RS485 ───→ 电机驱动器 (ZLAC8015D)
        ├── Ethernet ────────→ ROS2 Humble (多机协同)
-       ├── USB3.0 ──────────→ RealSense D455 (视觉深度)
-       ├── I2C/SPI ─────────→ IMU (BMI088/ADIS16470)
+       ├── USB2.0 ──────────→ 奥比中光 Astra/C100
+       ├── RS485/CAN ───────→ IMU (ETT10A-PW)
+       ├── UART ────────────→ 激光雷达 (N10P)
        ├── GPIO ────────────→ 安全急停/限位开关
-       └── UART ────────────→ 里程计编码器
+       └── USB ────────────→ 里程计编码器
 ```
 
 ---

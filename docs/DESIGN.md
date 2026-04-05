@@ -212,10 +212,35 @@ class AGVController:
 
 ## 6. 仿真环境接口
 
-待实现：
-- Unity / Webots / Isaac Gym 仿真接口
-- ROS2 集成
-- 数字孪生支持
+### PyBullet 仿真
+
+```python
+from simulation.pybullet_sim import PyBulletSimulator
+from simulation.agv_model_generator import generate_agv_urdf_detailed
+
+# 创建仿真器
+sim = PyBulletSimulator(gui=True)
+
+# 生成AGV URDF
+urdf = generate_agv_urdf_detailed('M', '2轮')
+
+# 加载AGV
+agv_id = sim.load_agv_model(urdf)
+
+# 运行仿真
+for i in range(1000):
+    sim.step()
+```
+
+### 支持的AGV等级
+
+| 等级 | 轮子配置 | 自重 | 负载 |
+|------|----------|------|------|
+| S | 2轮 | 15kg | 30kg |
+| M | 2轮 | 35kg | 100kg |
+| L | 4轮 | 80kg | 300kg |
+| XL | 4轮 | 150kg | 600kg |
+| XXL | 4轮 | 300kg | 1200kg |
 
 ## 7. 测试框架
 
@@ -223,14 +248,14 @@ class AGVController:
 ```bash
 cd SuperModel
 python -m pytest tests/ -v
-python -m unittest tests.sensor_tests -v
-python -m unittest tests.fusion_tests -v
+python -m pytest tests/pybullet_sim_tests.py -v
 ```
 
 ### 测试覆盖
-- 传感器模块: 单元测试
-- 融合算法: 功能测试 + 稳定性测试
-- 控制模块: 集成测试 (PID、安全监控)
+- 传感器模块: 单元测试 (114+项)
+- 融合算法: 功能测试 + 稳定性测试 (185+项)
+- 控制模块: 集成测试 (174+项)
+- PyBullet仿真: URDF生成 + 物理模拟 (41项)
 
 ## 8. PID控制器详细接口 (pid.py)
 

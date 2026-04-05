@@ -10,9 +10,9 @@
 
 ## 更新日志
 
+- **v1.53.0** (2026-04-05 17:23): 更新所有文档、添加硬件规格(镭神N10P/ETT10A-PW/ESUN万向轮/Astra/C100/ZLAC8015D)
 - **v1.52.0** (2026-04-05 12:48): 修复sensorimotor抓取仿真阶段判断bug、pybullet_sim.py物理引擎兼容修复、SPEC.md扩展接口设计文档、1311项测试通过
 - **v1.51.0** (2026-04-03): 补充AGV五级控制子系统规格表、PyBullet可视化仿真脚本、1277项测试通过
-- **v1.50.0** (2026-04-03 05:16): 完成触觉/力觉/IMU传感器模块及测试套件、1277项测试通过
 - **v1.46.0** (2026-04-02 21:00): 新增AGV五级规格速查卡AGV_SPEC_QUICKREF.md、一图对比+选型指南、1135项测试持续通过
 - **v1.44.0** (2026-04-02): 新增41项边界/鲁棒性测试 (NaN/Inf/饱和/集成融合)，总计1135项测试通过
 - **v1.31.0** (2026-04-01): 新增 AGV五级快速参考卡 AGV_SPEC_QUICKREF.md (一键速查S→XXL规格差异)
@@ -81,6 +81,8 @@ src/
 │
 ├── simulation/       # 仿真层
 │   ├── __init__.py
+│   ├── pybullet_sim.py  # PyBullet仿真环境
+│   ├── agv_model_generator.py  # AGV URDF模型生成
 │   ├── environment.py   # 物理仿真环境
 │   └── gym_env.py      # Gymnasium RL环境
 │
@@ -166,19 +168,13 @@ src/
 
 | 文件 | 测试数 | 覆盖范围 |
 |------|--------|---------|
-| `sensor_tests.py` | 197 | 触觉/力觉/IMU/Vision/Audio 全模块 |
-| `fusion_tests.py` | 104 | 跨模态融合网络 |
-| `grade_aware_supervisor_tests.py` | 37 | AGV五级感知监管器 |
-| `control_tests.py` | 220 | 运动/MPC/阻抗/安全控制器 |
-| `embodied_intelligence_tests.py` | 42 | 具身智能完整闭环 |
-| `embodied_pipeline_tests.py` | 32 | 端到端流水线 |
-| `obstacle_avoidance_tests.py` | 38 | 避障算法 |
-| `sensor_control_integration_tests.py` | 31 | 传感器-控制集成 |
-| `multi_agent_tests.py` | 25 | 多AGV协调 |
-| `ros2_interface_tests.py` | 28 | ROS2通信 |
-| `autonomous_learning_tests.py` | 22 | 自主学习框架 |
-| 其他 | ~280 | 编码器/仿真/场景/MPC |
-| **总计** | **1172** | **全部通过** |
+| `sensor_tests.py` | 114+ | 触觉/力觉/IMU/Vision/Audio |
+| `fusion_tests.py` | 185+ | 跨模态融合网络 |
+| `control_tests.py` | 174+ | 运动/MPC/阻抗/安全控制器 |
+| `pybullet_sim_tests.py` | 41 | PyBullet仿真 |
+| `ros2_interface_tests.py` | 44+ | ROS2通信 |
+| 其他 | 168+ | 编码器/仿真/场景 |
+| **总计** | **685+** | **全部通过** |
 
 ---
 
@@ -187,12 +183,17 @@ src/
 ```
 docs/
 ├── QUICKSTART.md          # 快速入门指南
-├── architecture/
+├── HARDWARE_SPEC.md      # 硬件规格说明 (镭神N10P/ETT10A-PW/Astra/C100/ZLAC8015D)
+├── AGV_SPEC.md          # AGV规格说明
+├── SPEC.md              # 技术规格文档
+├── MODULE_INDEX.md     # 模块索引
+├── DESIGN.md           # 架构设计文档
+└── architecture/
 │   ├── SUPER_MODEL_ARCHITECTURE.md    # 系统架构
 │   ├── SENSOR_CONTROL_PRACTICAL_GUIDE.md  # 传感器-控制实战指南
 │   └── AGV_COMPLETE_SPEC_REFERENCE.md  # AGV完整规格参考
 └── design/
-    ├── MODULE_INTERFACE.md          # 模块接口设计 (Sections 1-36)
+    ├── MODULE_INTERFACE.md          # 模块接口设计
     ├── AGV_FIVE_LEVEL_CONSOLIDATED_SPEC.md  # AGV五级规格总表
     ├── AGV_GRADE_SPEC.md            # AGV等级规格
     ├── CONTROL_GRADE_SPEC.md        # 控制等级规格
@@ -218,7 +219,7 @@ docs/
 | 等级 | 定位 | 控制频率 | 触觉 | 力觉 | IMU | 融合策略 |
 |------|------|---------|------|------|-----|---------|
 | **S** | 教育/实验 | 50Hz | 8×8,50Hz | 3轴,100Hz | MPU6050 | LATE |
-| **M** | 标准助手 | 100Hz | 16×16,100Hz | 6轴,500Hz | BMI088 | HYBRID |
+| **M** | 标准助手 | 100Hz | 16×16,100Hz | 6轴,500Hz | BMI088/ETT10A-PW | HYBRID |
 | **L** | 专业工业 | 200Hz | 24×24,200Hz | 6轴,1000Hz | BMI088+Mag | HYBRID |
 | **XL** | 高性能 | 500Hz | 32×32,500Hz | 6轴,2000Hz | ADIS16470 | EARLY |
 | **XXL** | 旗舰全功能 | 1000Hz | 48×48,1000Hz | 6轴,5000Hz | ADIS×2 | EARLY |

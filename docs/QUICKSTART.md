@@ -11,7 +11,7 @@ python3 -m venv venv
 source venv/bin/activate
 
 # 安装核心依赖
-pip install torch numpy scipy
+pip install numpy pybullet pytest
 ```
 
 ## 目录结构
@@ -25,11 +25,17 @@ SuperModel/
 │   ├── learning/          # 自主学习
 │   ├── control/           # 运动控制
 │   └── simulation/        # 仿真环境
+│       ├── pybullet_sim.py        # PyBullet仿真
+│       └── agv_model_generator.py  # AGV URDF模型生成
+├── sim_demos/              # PyBullet可视化仿真演示
+│   ├── base_sim.py        # 仿真基类
+│   ├── run_gui.py         # S形路径避障
+│   ├── run_warehouse.py    # 仓库物流仿真
+│   ├── run_multi_agv.py  # 多AGV协同
+│   └── run_agv_showcase.py # AGV等级展示
 ├── tests/                  # 测试用例
 ├── docs/                  # 文档
-│   ├── design/            # 设计文档
-│   └── architecture/      # 架构文档
-└── configs/              # 配置文件
+└── examples/              # 示例脚本
 ```
 
 ## 模块速查
@@ -99,35 +105,73 @@ imu_data = sensor_sim.get_imu_data()
 ## 运行测试
 
 ```bash
-# 所有测试 (317 tests)
+# 所有测试
 python3 -m pytest tests/ -v
 
-# 传感器测试 (60 tests)
+# PyBullet仿真测试
+python3 -m pytest tests/pybullet_sim_tests.py -v
+
+# 传感器测试
 python3 -m pytest tests/sensor_tests.py -v
 
-# 融合测试 (51 tests)
+# 融合测试
 python3 -m pytest tests/fusion_tests.py -v
 
-# 控制模块测试 (101 tests)
+# 控制模块测试
 python3 -m pytest tests/control_tests.py -v
+```
 
-# 仿真环境测试 (44 tests)
-python3 -m pytest tests/simulation_tests.py -v
+## PyBullet 仿真
 
-# 集成测试 (20 tests)
-python3 -m pytest tests/integration_tests.py -v
+```bash
+cd sim_demos
 
-# 性能基准测试 (16 tests)
-python3 -m pytest tests/benchmark_tests.py -v
+# S形路径避障仿真
+python3 run_gui.py
 
-# Dreamer Agent 测试 (7 tests)
-python3 -m pytest tests/test_dreamer.py -v
+# 仓库物流仿真
+python3 run_warehouse.py
 
-# 编码器测试 (9 tests)
-python3 -m pytest tests/test_encoders.py -v
+# 多AGV协同仿真
+python3 run_multi_agv.py
 
-# World Model 测试 (8 tests)
-python3 -m pytest tests/test_world_model.py -v
+# AGV等级展示
+python3 run_agv_showcase.py
+```
+
+### PyBullet AGV模型生成
+
+```python
+from simulation.agv_model_generator import generate_agv_urdf_detailed, GRADE_CONFIGS
+
+# 生成M级AGV URDF
+urdf_path = generate_agv_urdf_detailed('M', '2轮')
+
+# 查看配置
+print(GRADE_CONFIGS['M'])
+# {'description': '中型AGV (100kg负载)', 'wheel_config': '2轮', ...}
+```
+
+### PyBullet 仿真控制
+
+```python
+import pybullet as p
+from simulation.agv_model_generator import generate_agv_urdf_detailed
+
+# 连接仿真
+client = p.connect(p.DIRECT)
+p.setGravity(0, 0, -9.81)
+
+# 加载AGV
+urdf = generate_agv_urdf_detailed('M', '2轮')
+p.loadURDF('plane.urdf')
+agv_id = p.loadURDF(urdf, basePosition=[0, 0, 0.15])
+
+# 仿真控制
+for i in range(1000):
+    p.stepSimulation()
+
+p.disconnect()
 ```
 
 ## 配置 AGV 等级
