@@ -48,18 +48,17 @@ class MultiAGVDemo(BaseSimulation):
             [0.8, 0.6, 0.2, 1],
         ]
         
+        # 导入AGV模型
+        sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
+        from simulation.agv_model_generator import generate_agv_urdf_detailed
+        
         for i in range(self.num_agvs):
             x = (i % 2) * 3 - 1.5
             y = (i // 2) * 3 - 1.5
             
-            agv_id = p.createMultiBody(
-                baseMass=5,
-                basePosition=[x, y, 0.15],
-                baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.25, 0.18, 0.1]),
-                baseVisualShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.25, 0.18, 0.1], 
-                                                      rgbaColor=colors[i]),
-                physicsClientId=self.client
-            )
+            # 使用新的AGV URDF模型
+            urdf_path = generate_agv_urdf_detailed('M', '2轮')
+            agv_id = p.loadURDF(urdf_path, basePosition=[x, y, 0.15], physicsClientId=self.client)
             
             self.agvs.append({
                 'id': agv_id,
@@ -72,7 +71,7 @@ class MultiAGVDemo(BaseSimulation):
                 'color': colors[i],
                 'task': None,
                 'collision_count': 0,
-                'arrive_cooldown': 0  # 到达冷却时间
+                'arrive_cooldown': 0
             })
             self.last_target_id[i] = -1
         

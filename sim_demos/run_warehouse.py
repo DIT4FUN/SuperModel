@@ -51,6 +51,10 @@ def create_warehouse_scene(client, layout="single_aisle"):
     plane_id = p.loadURDF('plane.urdf', physicsClientId=client)
     objects['plane'] = plane_id
     
+    # 导入AGV模型
+    sys.path.insert(0, os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), 'src'))
+    from simulation.agv_model_generator import generate_agv_urdf_detailed
+    
     # 货架布局参数
     if layout == "single_aisle":
         shelf_configs = [
@@ -150,17 +154,11 @@ def create_warehouse_scene(client, layout="single_aisle"):
     )
     objects['charging_station'] = charging_id
     
-    # 创建AGV
+    # 创建AGV (使用M级5.5寸轮毂电机)
     agvs = []
     for i, (sx, sy) in enumerate(agv_starts):
-        agv_id = p.createMultiBody(
-            baseMass=5.0,
-            basePosition=[sx, sy, 0.15],
-            baseCollisionShapeIndex=p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.3, 0.2, 0.1]),
-            baseVisualShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.3, 0.2, 0.1], 
-                                                  rgbaColor=[0.2, 0.6 + i*0.15, 0.8, 1]),
-            physicsClientId=client
-        )
+        urdf_path = generate_agv_urdf_detailed('M', '2轮')
+        agv_id = p.loadURDF(urdf_path, basePosition=[sx, sy, 0.15], physicsClientId=client)
         agvs.append({
             'id': agv_id,
             'x': sx,
@@ -168,7 +166,7 @@ def create_warehouse_scene(client, layout="single_aisle"):
             'theta': 0,
             'target_x': sx,
             'target_y': sy,
-            'status': 'idle',  # idle, moving, loading, unloading
+            'status': 'idle',
             'task': None,
             'vx': 0,
             'vy': 0
