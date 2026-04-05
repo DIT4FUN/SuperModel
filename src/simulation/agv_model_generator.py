@@ -326,8 +326,42 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </link>
 
   <!-- ============================================================
+       电机驱动器: 中菱 ZLAC8015D (安装在AGV内部)
+       - 一拖二轮毂伺服驱动器
+       - 尺寸: 150×97×31mm
+       ============================================================ -->
+  <link name="motor_driver_link">
+    <inertial>
+      <mass value="0.35"/>  <!-- 驱动器约350g -->
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+    <visual>
+      <!-- ZLAC8015D: 150×97×31mm -->
+      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.15 0.097 0.031"/>
+      </geometry>
+      <material name="driver_color">
+        <color rgba="0.1 0.1 0.3 1"/>  <!-- 深蓝色金属外壳 -->
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.15 0.097 0.031"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="motor_driver_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="motor_driver_link"/>
+    <origin xyz="0 0 {body_height_2}" rpy="0 0 0"/>  <!-- 驱动器安装在车体内部中心 -->
+  </joint>
+
+  <!-- ============================================================
        左驱动轮 (Left Drive Wheel)
        5.5寸轮毂电机 + 聚氨酯轮胎
+       轮子轴平行地面,绕Y轴旋转
        ============================================================ -->
   <link name="left_wheel">
     <inertial>
@@ -336,8 +370,8 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{wheel_ixx}" ixy="0" ixz="0" iyy="{wheel_ixx}" iyz="0" izz="{wheel_ixx}"/>
     </inertial>
     <visual>
-      <!-- 轮毂电机外壳 -->
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <!-- 轮毂电机外壳 - 圆柱轴沿Y轴(轮子滚动方向) -->
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 旋转90°使圆柱轴沿Y -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -345,18 +379,8 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
         <color rgba="0.2 0.2 0.2 1"/>
       </material>
     </visual>
-    <visual>
-      <!-- 轮胎外圈 -->
-      <origin xyz="0 0 0" rpy="0 0 0"/>
-      <geometry>
-        <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
-      </geometry>
-      <material name="tire">
-        <color rgba="0.1 0.1 0.1 1"/>
-      </material>
-    </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 旋转90°使圆柱轴沿Y -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -372,7 +396,8 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{wheel_ixx}" ixy="0" ixz="0" iyy="{wheel_ixx}" iyz="0" izz="{wheel_ixx}"/>
     </inertial>
     <visual>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <!-- 轮胎 - 圆柱轴沿Y轴 -->
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 旋转90° -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -381,7 +406,7 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
       </material>
     </visual>
     <collision>
-      <origin xyz="0 0 0" rpy="0 0 0"/>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 旋转90° -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -521,14 +546,14 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   <joint name="imu_joint" type="fixed">
     <parent link="base_link"/>
     <child link="imu_link"/>
-    <origin xyz="0 0 {body_height_2}" rpy="0 0 0"/>
+    <origin xyz="0 0 {body_height_2}" rpy="0 0 0"/>  <!-- IMU位于AGV中心 -->
   </joint>
 
   <!-- ============================================================
-       前视深度相机: 奥比中光 Astra Pro Plus
-       - 单目结构光, 640x480深度, 1280x960 RGB
-       - 尺寸: 165 x 40 x 30mm (Astra Pro Plus)
-       - C100: 47 x 38 x 22.7mm / C70: 47 x 38 x 28.5mm
+       前视RGB相机: 奥比中光 C100/C70
+       - C100: 1080P, FOV H112°/V80°
+       - C70: 720P, FOV H85°/V47°
+       - 尺寸: 47×38×22.7mm (C100)
        ============================================================ -->
   <link name="camera_link">
     <inertial>
@@ -587,7 +612,7 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   <joint name="lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="lidar_link"/>
-    <origin xyz="0 0 {body_height_plus_03}" rpy="0 0 0"/>
+    <origin xyz="0 0 {lidar_mount_height}" rpy="0 0 0"/>  <!-- 激光雷达安装于车体顶部中央 -->
   </joint>
 
 </robot>
@@ -625,7 +650,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </link>
 
   <!-- ============================================================
-       左前驱动轮
+       左前驱动轮 (轮子轴平行地面,绕Y轴旋转)
        ============================================================ -->
   <link name="left_front_wheel">
     <inertial>
@@ -633,6 +658,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{wheel_ixx}" ixy="0" ixz="0" iyy="{wheel_ixx}" iyz="0" izz="{wheel_ixx}"/>
     </inertial>
     <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 圆柱轴沿Y轴 -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -641,6 +667,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       </material>
     </visual>
     <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -655,6 +682,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{wheel_ixx}" ixy="0" ixz="0" iyy="{wheel_ixx}" iyz="0" izz="{wheel_ixx}"/>
     </inertial>
     <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 圆柱轴沿Y轴 -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -663,6 +691,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       </material>
     </visual>
     <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -677,6 +706,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{wheel_ixx}" ixy="0" ixz="0" iyy="{wheel_ixx}" iyz="0" izz="{wheel_ixx}"/>
     </inertial>
     <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 圆柱轴沿Y轴 -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -685,6 +715,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       </material>
     </visual>
     <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -699,6 +730,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{wheel_ixx}" ixy="0" ixz="0" iyy="{wheel_ixx}" iyz="0" izz="{wheel_ixx}"/>
     </inertial>
     <visual>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>  <!-- 圆柱轴沿Y轴 -->
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -707,6 +739,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
       </material>
     </visual>
     <collision>
+      <origin xyz="0 0 0" rpy="1.5708 0 0"/>
       <geometry>
         <cylinder length="{wheel_width}" radius="{wheel_radius}"/>
       </geometry>
@@ -827,7 +860,7 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
   <joint name="lidar_joint" type="fixed">
     <parent link="base_link"/>
     <child link="lidar_link"/>
-    <origin xyz="0 0 {body_height_plus_03}" rpy="0 0 0"/>
+    <origin xyz="0 0 {lidar_mount_height}" rpy="0 0 0"/>  <!-- 激光雷达安装于车体顶部中央 -->
   </joint>
 
 </robot>
@@ -916,6 +949,9 @@ def generate_agv_urdf_detailed(
         'body_height': config['body_height'],
         'body_height_2': config['body_height'] / 2,
         'body_height_plus_03': config['body_height'] / 2 + 0.03,
+        # 激光雷达安装高度: 车体顶部 + LiDAR高度的一半
+        # LiDAR N10P高度86.5mm, 安装于车体顶部中央
+        'lidar_mount_height': config['body_height'] / 2 + 0.04325,
         # 轮子位于车体下方,接触地面
         # wheel_joint_z (相对于base_link的z偏移): wheel应位于body下方
         # 轮子顶部接触body底部 => wheel_center_z = body_bottom - wheel_radius
