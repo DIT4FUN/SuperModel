@@ -144,13 +144,15 @@ class MultiAGVDemo(BaseSimulation):
         
         if free_targets:
             # 计算到每个目标距离，优先选择远的
-            distances = []
+            best_target = None
+            best_dist = -1
             for t in free_targets:
                 d = math.sqrt((agv['x'] - t['x'])**2 + (agv['y'] - t['y'])**2)
-                distances.append((d, t))
-            distances.sort(reverse=True)  # 距离远的优先
+                if d > best_dist:
+                    best_dist = d
+                    best_target = t
             
-            target = distances[0][1]
+            target = best_target
             agv['tx'] = target['x']
             agv['ty'] = target['y']
             agv['task'] = target
@@ -162,17 +164,17 @@ class MultiAGVDemo(BaseSimulation):
                             (6, 0), (-6, 0), (0, 6), (0, -4)]
             
             # 选择离当前AGV足够远的巡逻点
-            far_patrols = []
+            best_patrol = None
+            best_dist = -1
             for pt in patrol_targets:
                 d = math.sqrt((agv['x'] - pt[0])**2 + (agv['y'] - pt[1])**2)
-                if d > self.min_target_distance:
-                    far_patrols.append((d, pt))
+                if d > best_dist and d > self.min_target_distance:
+                    best_dist = d
+                    best_patrol = pt
             
-            if far_patrols:
-                far_patrols.sort(reverse=True)
-                patrol = far_patrols[0][1]
-                agv['tx'] = patrol[0] + random.uniform(-0.3, 0.3)
-                agv['ty'] = patrol[1] + random.uniform(-0.3, 0.3)
+            if best_patrol:
+                agv['tx'] = best_patrol[0] + random.uniform(-0.3, 0.3)
+                agv['ty'] = best_patrol[1] + random.uniform(-0.3, 0.3)
             else:
                 # 找不到足够远的目标，随机一个方向走
                 angle = random.uniform(0, 2 * math.pi)
