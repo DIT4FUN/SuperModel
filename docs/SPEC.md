@@ -400,3 +400,165 @@ pytest tests/five_grade_pipeline_tests.py -v
 | v1.2 | 2026-04-02 | AGV五级规格表完善，接口文档更新 |
 | v1.4 | 2026-04-03 | GradeAwareSupervisor传感器融合集成测试11项、motor.py语法修复、1183项测试通过 |
 | v1.3 | 2026-04-02 | 扩展边界情况测试(NaN/Inf/饱和)，新增41项鲁棒性测试，总计1135项通过 |
+
+---
+
+## 8. 控制模块扩展接口详细设计
+
+### 8.1 Supervisor 模块接口 (supervisor.py)
+
+#### ControlSupervisor (控制器生命周期管理器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config, grade)` | SupervisorConfig, SupervisorGrade | ControlSupervisor | 按AGV等级初始化 |
+| `register_controller(controller)` | ControllerInterface | bool | 注册控制器 |
+| `unregister_controller(name)` | str | bool | 注销控制器 |
+| `list_controllers()` | - | List[str] | 列出所有控制器 |
+| `get_controller(name)` | str | ControllerInterface | 获取控制器 |
+| `switch_mode(target_mode)` | ControlMode | bool | 切换控制模式 |
+| `trigger_emergency_stop(reason)` | str | None | 触发急停 |
+| `release_emergency_stop()` | bool | 解除急停 |
+| `get_state()` | - | ControlState | 获取状态 |
+| `get_diagnostics()` | - | Dict | 诊断信息 |
+| `step_watchdog()` | - | bool | 看门狗心跳 (XL/XXL) |
+| `step_fault_tolerance(fault_detected)` | bool | None | 故障容错 (XXL) |
+| `get_grade_capabilities()` | - | Dict | 获取等级能力 |
+| `register_with_redundancy(controller, modes, is_primary)` | ... | bool | 冗余注册 (L+) |
+
+#### GradeAwareSupervisor (AGV五级感知监管器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(grade, supervisor_id)` | SupervisorGrade, str | GradeAwareSupervisor | 按AGV等级初始化 |
+| `register_controller(controller, modes, is_primary)` | ControllerInterface, List, bool | bool | 带冗余注册 |
+| `get_active_controller()` | - | ControllerInterface | 获取当前控制器 |
+| `get_standby_controller()` | - | ControllerInterface | 获取备用控制器 |
+| `switch_with_handover()` | - | bool | 无缝切换 (XL/XXL) |
+| `run_diagnostics()` | - | Dict | 运行诊断 |
+| `get_health_score()` | - | float | 健康评分 0-1 |
+
+### 8.2 Sensorimotor 模块接口 (sensorimotor.py)
+
+#### SensorimotorIntegration (传感-运动融合)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config, grade)` | SensorimotorConfig, str | SensorimotorIntegration | 按等级初始化 |
+| `open()` | - | bool | 打开所有传感器 |
+| `close()` | - | None | 关闭所有传感器 |
+| `step(target_force, target_attitude, dt)` | float, Tuple, float | SensorimotorState | 单步融合控制 |
+| `capture_all()` | - | Dict | 捕获所有传感器 |
+| `get_fused_control()` | - | np.ndarray | 获取融合控制量 |
+| `get_control_authority()` | - | Dict | 各模态控制权重 |
+| `reset()` | - | None | 重置状态 |
+| `is_healthy()` | - | bool | 健康检查 |
+
+#### SensorimotorSimulator (仿真器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `simulate_grasp(object_pos, object_force, num_steps, dt)` | Tuple, float, int, float | List[SensorimotorState] | 仿真抓取任务 |
+| `simulate_agv_navigation(trajectory_type, duration_s, dt)` | str, float, float | List[SensorimotorState] | 仿真AGV导航 |
+| `get_integration()` | - | SensorimotorIntegration | 获取融合器 |
+
+### 8.3 Multi-Agent 模块接口 (multi_agent.py)
+
+#### MultiAgentCoordinator (多AGV协调器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `add_agent(agent_id, state)` | str, AgentState | bool | 添加AGV |
+| `remove_agent(agent_id)` | str | bool | 移除AGV |
+| `update_agent_state(agent_id, state)` | str, AgentState | bool | 更新状态 |
+| `get_agent_state(agent_id)` | str | AgentState | 获取状态 |
+| `form_formation(formation_type, leader_id)` | FormationType, str | bool | 编队形成 |
+| `dissolve_formation()` | - | bool | 解散编队 |
+| `plan_collision_free_paths()` | - | List[Dict] | 规划无碰撞路径 |
+| `compute_collision_risk(agent1, agent2)` | str, str | CollisionRisk | 碰撞风险评估 |
+| `coordinate_task(task)` | CoordinationTask | Dict | 协调任务执行 |
+| `get_formation_state()` | - | Dict | 获取编队状态 |
+
+### 8.4 Teleop 模块接口 (teleop.py)
+
+#### TeleoperationController (遥操作控制器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config)` | TeleopConfig | TeleoperationController | 初始化遥操作 |
+| `set_master_state(state)` | MasterState | None | 设置主端状态 |
+| `get_slave_command()` | - | TeleopCommand | 获取从端命令 |
+| `set_slave_state(state)` | SlaveState | None | 设置从端状态 |
+| `get_master_feedback()` | - | Dict | 获取主端反馈 |
+| `switch_authority(level)` | AuthorityLevel | bool | 切换权限 |
+| `engage_shared_control()` | - | bool | 启用共享控制 |
+| `disengage_shared_control()` | - | bool | 退出共享控制 |
+| `set_latency_compensation(enabled)` | bool | None | 设置延迟补偿 |
+| `emergency_stop()` | - | None | 遥操作急停 |
+
+### 8.5 Autotune 模块接口 (autotune.py)
+
+#### AutoTuner (自动调参器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config)` | TunerConfig | AutoTuner | 初始化调参器 |
+| `tune(controller, plant)` | Any, SimulatedPlant | TunerResult | 调参主流程 |
+| `set_tuning_method(method)` | TuningMethod | None | 设置调参方法 |
+| `set_plant(plant)` | SimulatedPlant | None | 设置被控对象模型 |
+| `run_ziegler_nichols()` | - | TunerResult | Z-N调参 |
+| `run_chiikawa()` | - | TunerResult | 千川法调参 |
+| `run_rms_tuning()` | - | TunerResult | RMS自动调参 |
+| `validate_tuning(result)` | TunerResult | bool | 验证调参结果 |
+
+### 8.6 Motor 模块接口 (motor.py)
+
+#### Motor (电机基类)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | bool | 打开电机 |
+| `close()` | - | None | 关闭电机 |
+| `enable()` | - | bool | 使能电机 |
+| `disable()` | - | bool | 禁用电机 |
+| `set_mode(mode)` | MotorControlMode | bool | 设置控制模式 |
+| `set_position(target)` | float | bool | 设置目标位置 |
+| `set_velocity(target)` | float | bool | 设置目标速度 |
+| `set_torque(target)` | float | bool | 设置目标力矩 |
+| `get_state()` | - | MotorState | 获取电机状态 |
+| `get_position()` | - | float | 获取当前位置 |
+| `get_velocity()` | - | float | 获取当前速度 |
+| `reset_encoder()` | - | bool | 重置编码器 |
+
+#### MotorController (多电机控制器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `add_motor(motor)` | Motor | int | 添加电机 |
+| `remove_motor(motor_id)` | bool | 移除电机 |
+| `set_positions(targets)` | List[float] | bool | 批量设置位置 |
+| `set_velocities(targets)` | List[float] | bool | 批量设置速度 |
+| `get_positions()` | - | List[float] | 批量获取位置 |
+| `get_velocities()` | - | List[float] | 批量获取速度 |
+| `stop_all()` | - | None | 停止所有电机 |
+
+### 8.7 Planner 模块接口 (planner.py)
+
+#### TaskPlanner (任务规划器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `plan_task(task)` | Task | List[Task] | 规划任务分解 |
+| `update_task_status(task_id, status)` | str, TaskStatus | bool | 更新任务状态 |
+| `get_executable_tasks()` | - | List[Task] | 获取可执行任务 |
+| `replan(failed_task_id)` | str | List[Task] | 重规划 |
+| `estimate_duration(task)` | Task | float | 估计任务耗时 |
+
+## 9. 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v1.52.0 | 2026-04-05 | 修复sensorimotor抓取阶段测试、pybullet_sim.py兼容性修复、1311项测试通过 |
+| v1.51.0 | 2026-04-03 | 补充AGV五级控制子系统规格表、PyBullet可视化仿真脚本、1277项测试通过 |
+| v1.50.0 | 2026-04-03 | 完成触觉/力觉/IMU传感器模块及测试套件、1277项测试通过 |
+| v1.0 | 2026-04-01 | 初始版本，基础架构完成 |

@@ -479,15 +479,11 @@ class SensorimotorSimulator:
     def _apply_grasp_contact(self, phase: float, object_pos: Tuple[float, float], object_force: float):
         """在 TactileArray 中应用模拟接触"""
         if phase < 0.2:
-            # 接近阶段 - 轻微背景
-            cx, cy = object_pos[0] * phase * 5, object_pos[1] * phase * 5
-            self.virtual_tactile._last_contact_pos = (cx, cy)
+            # 接近阶段 - 无触觉接触,清除残留位置
+            self.virtual_tactile._last_contact_pos = None
         elif phase < 0.4:
             # 接触开始
-            cx, cy = object_pos[0], object_pos[1]
             self.virtual_tactile._last_contact_pos = object_pos
-            h, w = self.virtual_tactile.array_size
-            row_c, col_c = int(cy * h), int(cx * w)
         elif phase < 0.6:
             # 夹取
             self.virtual_tactile._last_contact_pos = object_pos
