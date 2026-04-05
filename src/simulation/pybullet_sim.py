@@ -265,13 +265,13 @@ AGV_URDF_TEMPLATE = """<?xml version="1.0"?>
     <dynamics friction="{friction}" damping="0.1"/>
   </joint>
 
-  <joint name="caster_front_joint" type="ball">
+  <joint name="caster_front_joint" type="continuous">
     <parent link="base_link"/>
     <child link="caster_front"/>
     <origin xyz="{caster_offset_x} 0 -{body_height/2+wheel_radius}" rpy="0 0 0"/>
   </joint>
 
-  <joint name="caster_back_joint" type="ball">
+  <joint name="caster_back_joint" type="continuous">
     <parent link="base_link"/>
     <child link="caster_back"/>
     <origin xyz="-{caster_offset_x} 0 -{body_height/2+wheel_radius}" rpy="0 0 0"/>
@@ -520,29 +520,36 @@ class PyBulletSimulator:
         # 设置仿真参数
         p.setGravity(0, 0, self.config.gravity, physicsClientId=self._client_id)
         p.setTimeStep(self.config.dt, physicsClientId=self._client_id)
-        p.setPhysicsEngine(
-            numSolverIterations=self.config.solver_iterations,
-            physicsClientId=self._client_id,
-        )
+        
+        # 设置求解器迭代次数
+        if hasattr(p, 'setPhysicsEngine'):
+            p.setPhysicsEngine(
+                numSolverIterations=self.config.solver_iterations,
+                physicsClientId=self._client_id,
+            )
 
         # 启用实时仿真 (可选)
         if self.config.real_time:
             p.setRealTimeSimulation(1, physicsClientId=self._client_id)
 
-        # 配置接触力参数
-        p.setPhysicsEngineParameter(
-            contactStiffness=self.config.contact_stiffness,
-            contactDamping=self.config.contact_damping,
-            friction=self.config.lateral_friction,
-            spinningFriction=self.config.spinning_friction,
-            physicsClientId=self._client_id,
-        )
+        # 配置接触力参数 (某些版本不支持)
+        try:
+            p.setPhysicsEngineParameter(
+                contactStiffness=self.config.contact_stiffness,
+                contactDamping=self.config.contact_damping,
+                friction=self.config.lateral_friction,
+                spinningFriction=self.config.spinning_friction,
+                physicsClientId=self._client_id,
+            )
+        except TypeError:
+            pass  # 某些版本不支持这些参数
 
     def load_agv_model(
         self,
         urdf_path: Optional[str] = None,
-        base_position: Tuple[float, float, float] = (0, 0, 0.1),
+        base_position: Optional[Tuple[float, float, float]] = None,
         base_orientation: Tuple[float, float, float, float] = (0, 0, 0, 1),
+        initial_pose: Optional[Tuple[float, float, float]] = None,  # 兼容旧API
     ) -> int:
         """
         加载 AGV 模型
@@ -555,6 +562,13 @@ class PyBulletSimulator:
         Returns:
             AGV body ID
         """
+        # 处理 initial_pose 兼容旧API
+        if initial_pose is not None:
+            if base_position is None:
+                base_position = initial_pose
+        if base_position is None:
+            base_position = (0, 0, 0.1)
+
         if urdf_path is None:
             urdf_path = generate_agv_urdf(self.grade)
             self._temp_urdfs.append(urdf_path)
@@ -745,7 +759,7 @@ class PyBulletSimulator:
                 physicsClientId=self._client_id,
             )
         if self._right_wheel_joint is not None and len(velocities) > 1:
-            p.setJointControl2(
+            p.setJointMotorControl2(
                 self._agv_id,
                 self._right_wheel_joint,
                 p.VELOCITY_CONTROL,
@@ -1006,7 +1020,7 @@ class PyBulletSimulator:
             width, height,
             viewMatrix=view_matrix,
             projectionMatrix=proj_matrix,
-            renderer=p.ER_BULLET_HARDWARE_OPEN,
+            renderer=p.ER_BULLET_HARDWARE_OPENGL,
             physicsClientId=self._client_id,
         )
 
