@@ -2,7 +2,7 @@
 """
 多 AGV 协同仿真
 ================
-多个 AGV 协同完成任务
+多个 AGV 协同完成任务，带碰撞检测和避障
 """
 
 import os
@@ -13,6 +13,7 @@ try:
     from sim_demos.base_sim import BaseSimulation, screenToWorld
 except ImportError:
     from base_sim import BaseSimulation, screenToWorld
+
 import pybullet as p
 import pybullet_data
 import math
@@ -21,7 +22,7 @@ import random
 
 
 class MultiAGVDemo(BaseSimulation):
-    """多 AGV 协同演示"""
+    """多 AGV 协同演示 - 带避障"""
     
     def setup(self):
         super().setup()
@@ -30,6 +31,12 @@ class MultiAGVDemo(BaseSimulation):
         self.agvs = []
         self.targets = []
         self.completed = 0
+        self.collisions = 0
+        
+        # AGV 参数
+        self.agv_radius = 0.35  # AGV 碰撞半径
+        self.safe_distance = 0.8  # 安全距离
+        self.repulsion_gain = 1.5  # 斥力增益
         
         # 创建 AGV
         colors = [
@@ -61,33 +68,68 @@ class MultiAGVDemo(BaseSimulation):
                 'vx': 0,
                 'vy': 0,
                 'color': colors[i],
-                'task': None
+                'task': None,
+                'collision_count': 0
             })
         
         # 创建目标点
         self.createTargets()
         
-        self.camera_distance = 10
+        self.camera_distance = 12
         self.camera_pitch = -60
         print(f"✅ 创建了 {self.num_agvs} 个 AGV")
     
     def createTargets(self):
         """创建任务目标点"""
         target_positions = [
-            (3, 3), (-3, 3), (3, -3), (-3, -3),
-            (5, 0), (-5, 0), (0, 5), (0, -5),
+            (4, 4), (-4, 4), (4, -4), (-4, -4),
+            (6, 0), (-6, 0), (0, 6), (0, -6),
         ]
         
         for i, (tx, ty) in enumerate(target_positions[:8]):
             tid = p.createMultiBody(
                 baseMass=0,
                 basePosition=[tx, ty, 0.05],
-                baseCollisionShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.3, 0.3, 0.05]),
-                baseVisualShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.3, 0.3, 0.05],
+                baseCollisionShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.25, 0.25, 0.05]),
+                baseVisualShapeIndex=p.createVisualShape(p.GEOM_BOX, halfExtents=[0.25, 0.25, 0.05],
                                                       rgbaColor=[1, 0.8, 0, 0.7]),
                 physicsClientId=self.client
             )
             self.targets.append({'id': tid, 'x': tx, 'y': ty, 'taken': False})
+    
+    def compute_repulsion(self, agv, all_agvs):
+        """计算来自其他AGV的斥力"""
+        repulsion = np.array([0.0, 0.0])
+        
+        for other in all_agvs:
+            if other is agv:
+                continue
+            
+            dx = agv['x'] - other['x']
+            dy = agv['y'] - other['y']
+            dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist < self.safe_distance and dist > 0.01:
+                # 势场法斥力
+                force_mag = self.repulsion_gain * (1.0/dist - 1.0/self.safe_distance) / (dist + 0.1)
+                repulsion[0] += force_mag * dx / dist
+                repulsion[1] += force_mag * dy / dist
+        
+        return repulsion
+    
+    def check_collision(self, agv, all_agvs):
+        """检测与其他AGV的碰撞"""
+        for other in all_agvs:
+            if other is agv:
+                continue
+            
+            dx = agv['x'] - other['x']
+            dy = agv['y'] - other['y']
+            dist = math.sqrt(dx*dx + dy*dy)
+            
+            if dist < self.agv_radius * 1.5:  # 碰撞阈值
+                return True, other
+        return False, None
     
     def assignTask(self, agv):
         """分配任务"""
@@ -110,24 +152,52 @@ class MultiAGVDemo(BaseSimulation):
             dy = agv['ty'] - agv['y']
             dist = math.sqrt(dx*dx + dy*dy)
             
-            if dist < 0.2:
-                # 到达目标
+            # 吸引力（朝目标）
+            if dist > 0.1:
+                attraction = np.array([dx/dist * 0.6, dy/dist * 0.6])
+            else:
+                attraction = np.array([0.0, 0.0])
+            
+            # 斥力（避让其他AGV）
+            repulsion = self.compute_repulsion(agv, self.agvs)
+            
+            # 合力
+            force = attraction + repulsion * self.speed
+            
+            # 速度限制
+            speed = np.linalg.norm(force)
+            max_speed = 0.8 * self.speed
+            if speed > max_speed:
+                force = force / speed * max_speed
+            
+            # 平滑速度
+            agv['vx'] = agv['vx'] * 0.85 + force[0] * 0.15
+            agv['vy'] = agv['vy'] * 0.85 + force[1] * 0.15
+            
+            # 更新位置
+            agv['x'] += agv['vx'] * self.dt
+            agv['y'] += agv['vy'] * self.dt
+            
+            # 边界限制
+            agv['x'] = max(-7, min(7, agv['x']))
+            agv['y'] = max(-5, min(7, agv['y']))
+            
+            # 碰撞检测
+            collision, other = self.check_collision(agv, self.agvs)
+            if collision:
+                agv['collision_count'] += 1
+                self.collisions += 1
+                if agv['collision_count'] == 1:
+                    print(f"⚠️ AGV碰撞 @ ({agv['x']:.1f}, {agv['y']:.1f})")
+            
+            # 到达目标
+            if dist < 0.3:
                 if agv['task'] is not None:
                     agv['task']['taken'] = False
                     agv['task'] = None
                     self.completed += 1
-                    print(f"✅ 任务完成! 总计: {self.completed}")
-            else:
-                # 移动向目标
-                speed = 0.8 * self.speed
-                target_vx = (dx / dist) * speed
-                target_vy = (dy / dist) * speed
-                
-                agv['vx'] = agv['vx'] * 0.8 + target_vx * 0.2
-                agv['vy'] = agv['vy'] * 0.8 + target_vy * 0.2
-            
-            agv['x'] += agv['vx'] * self.dt
-            agv['y'] += agv['vy'] * self.dt
+                    if self.completed % 5 == 0:
+                        print(f"✅ 任务完成! 总计: {self.completed}")
             
             # 角度
             if abs(agv['vx']) > 0.01 or abs(agv['vy']) > 0.01:
@@ -143,9 +213,11 @@ class MultiAGVDemo(BaseSimulation):
             )
         
         # 显示状态
-        if int(self.sim_time) % 2 == 0 and self.sim_time % 2 < 0.1:
-            statuses = [f"AGV{i+1}:{'✓' if a['task'] is None else '→'} " for i, a in enumerate(self.agvs)]
-            print(f"t={self.sim_time:.1f}s | {' '.join(statuses)} | 完成:{self.completed}")
+        if int(self.sim_time * 2) % 2 == 0 and self.sim_time % 1 < 0.02:
+            total_collision = sum(a['collision_count'] for a in self.agvs)
+            avoiding = sum(1 for a in self.agvs if np.linalg.norm(self.compute_repulsion(a, self.agvs)) > 0.1)
+            status = f"完成:{self.completed} 碰撞:{total_collision} 避障:{avoiding}"
+            print(f"t={self.sim_time:.1f}s | {status}")
 
 
 def main():
