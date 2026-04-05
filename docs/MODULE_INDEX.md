@@ -190,6 +190,7 @@ docs/
 ├── DESIGN.md           # 架构设计文档
 └── architecture/
 │   ├── SUPER_MODEL_ARCHITECTURE.md    # 系统架构
+│   ├── MODEL_STRUCTURE.md             # 模型内部结构层次图 (新增)
 │   ├── SENSOR_CONTROL_PRACTICAL_GUIDE.md  # 传感器-控制实战指南
 │   └── AGV_COMPLETE_SPEC_REFERENCE.md  # AGV完整规格参考
 └── design/
