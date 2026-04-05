@@ -11,6 +11,10 @@ Usage:
 import sys
 sys.path.insert(0, 'src')
 
+# 设置日志级别以消除 Gymnasium Box 精度警告
+import logging
+logging.getLogger('gymnasium').setLevel(logging.ERROR)
+
 import numpy as np
 import gymnasium as gym
 from gymnasium.envs.registration import register
@@ -25,8 +29,9 @@ print(f"✅ Gymnasium version: {gym.__version__}")
 print("\n📦 检查仿真后端...")
 try:
     import pybullet
-    print(f"   PyBullet: {pybullet.__version__}")
-except:
+    # PyBullet 没有 __version__
+    print(f"   PyBullet: 已安装 (build: {pybullet.__doc__.split()[-1] if pybullet.__doc__ else 'unknown'})")
+except ImportError:
     print("   PyBullet: 未安装")
 
 try:
@@ -167,11 +172,8 @@ def vector_env_demo():
     # 创建多个环境
     print("\n📦 创建 4 个并行环境...")
     
-    # 注意: SuperModelGymEnv 默认不支持多环境
-    # 这里演示如何使用 DummyVecEnv 或 SubprocVecEnv
-    
     try:
-        from gymnasium.vector import DummyVecEnv, SyncVectorEnv
+        from gymnasium.vector import SyncVectorEnv
         
         def make_env():
             def _init():
@@ -182,21 +184,23 @@ def vector_env_demo():
         vec_env = SyncVectorEnv([make_env() for _ in range(4)])
         
         print(f"   向量化环境数量: {vec_env.num_envs}")
+        print(f"   观测空间: {vec_env.observation_space}")
+        print(f"   动作空间: {vec_env.action_space}")
         
         # 运行几步
-        obs = vec_env.reset()
+        obs, info = vec_env.reset(seed=42)
         print(f"   观测形状: {obs.shape}")
         
         for i in range(5):
-            actions = np.array([vec_env.action_space.sample() for _ in range(4)])
-            obs, rewards, dones, infos = vec_env.step(actions)
-            print(f"   Step {i+1}: rewards={rewards}, dones={dones}")
+            actions = vec_env.action_space.sample()
+            obs, rewards, terminations, truncations, infos = vec_env.step(actions)
+            print(f"   Step {i+1}: rewards={rewards[:2]}..., terminations={terminations[:2]}...")
         
         vec_env.close()
         print("\n✅ 向量化环境演示完成!")
         
     except ImportError as e:
-        print(f"⚠️ 向量化环境需要额外依赖: {e}")
+        print(f"⚠️ 向量化环境错误: {e}")
 
 
 def main():
