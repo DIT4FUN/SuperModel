@@ -2,15 +2,12 @@
 """
 SuperModel AGV URDF模型生成器
 =============================
-支持2轮和4轮差速驱动AGV，配置真实的5.5寸轮毂电机参数
+支持2轮和4轮差速驱动AGV，配置真实的硬件参数
 
-5.5寸轮毂电机规格:
-- 直径: 140mm (wheel_radius = 0.07m)
-- 电压: 24V DC
-- 功率: 150W
-- 额定扭矩: 15Nm
-- 转速: 400RPM
-- AGV负载: 60kg
+硬件配置:
+- 电机: 5.5寸轮毂电机 (140mm, 24V/150W/15Nm)
+- 激光雷达: 镭神智能 N10P (360°, 25m, TOF)
+- IMU: ETT10A-PW (6轴, 防水, IP67)
 """
 
 import numpy as np
@@ -44,6 +41,53 @@ TIRE_SPECS = {
     'material': 'polyurethane',
     'color': 'black',
     'load_capacity': 80,    # kg per wheel
+}
+
+
+# ============================================================================
+# 镭神智能 N10P 激光雷达参数
+# ============================================================================
+
+LIDAR_N10P_SPECS = {
+    'model': 'LSLIDAR N10P',
+    'brand': 'Leishen Intelligent (镭神智能)',
+    'principle': 'TOF (Time of Flight)',
+    'scan_angle': 360,          # degrees
+    'max_range': 25,           # meters
+    'accuracy': 1.5,           # cm (±1.5cm)
+    'ranging_frequency': 4500,  # Hz (4.5kHz)
+    'scan_frequency': 10,       # Hz (configurable)
+    'angular_resolution': 0.3,  # degrees
+    'interface': 'UART (3.3V) / Ethernet',
+    'voltage': '9-30V DC',
+    'power': 8,             # W (typical)
+    'operating_temp': '-10°C ~ 60°C',
+    'ip_rating': 'IP65',
+    'dimensions': 'φ60mm × H86.5mm',
+    'weight': 240,           # g
+}
+
+
+# ============================================================================
+# ETT10A-PW IMU 参数
+# ============================================================================
+
+IMU_ETT10A_PW_SPECS = {
+    'model': 'ETT10A-PW',
+    'type': '6-axis IMU (防水型)',
+    'accelerometer': '3-axis MEMS',
+    'gyroscope': '3-axis MEMS',
+    'accel_range': '±16g (可选)',
+    'gyro_range': '±2000°/s (可选)',
+    'interface': 'RS485 / CAN (可选)',
+    'voltage': '9-36V DC',
+    'power': '<1W',
+    'ip_rating': 'IP67',
+    'connector': 'M8 6P 防水接头',
+    'cable_length': '1.2m (屏蔽线)',
+    'operating_temp': '-40°C ~ 85°C',
+    'dimensions': '40 × 40 × 25mm',
+    'weight': 50,           # g (含线缆)
 }
 
 
@@ -327,13 +371,28 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </joint>
 
   <!-- ============================================================
-       IMU传感器
+       IMU传感器: ETT10A-PW (6轴, 防水型)
+       - 3轴加速度计 + 3轴陀螺仪
+       - IP67防水, M8连接器
        ============================================================ -->
   <link name="imu_link">
     <inertial>
-      <mass value="0.01"/>
-      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      <mass value="0.05"/>  <!-- 50g -->
+      <inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="2e-5"/>
     </inertial>
+    <visual>
+      <geometry>
+        <box size="0.04 0.04 0.025"/>  <!-- 40x40x25mm -->
+      </geometry>
+      <material name="imu_color">
+        <color rgba="0.3 0.3 0.3 1"/>  <!-- 深灰色金属外壳 -->
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.04 0.04 0.025"/>
+      </geometry>
+    </collision>
   </link>
 
   <joint name="imu_joint" type="fixed">
@@ -343,7 +402,7 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </joint>
 
   <!-- ============================================================
-       前视深度相机
+       前视深度相机 (可选)
        ============================================================ -->
   <link name="camera_link">
     <inertial>
@@ -367,21 +426,30 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </joint>
 
   <!-- ============================================================
-       激光雷达 (可选)
+       激光雷达: 镭神智能 N10P
+       - 360°扫描, TOF测距, 最大25m
+       - 尺寸: φ60mm × H86.5mm
        ============================================================ -->
   <link name="lidar_link">
     <inertial>
-      <mass value="0.15"/>
-      <inertia ixx="5e-5" ixy="0" ixz="0" iyy="5e-5" iyz="0" izz="5e-5"/>
+      <mass value="0.24"/>  <!-- 240g -->
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
     </inertial>
     <visual>
+      <!-- 镭神N10P 圆柱形外观 -->
+      <origin xyz="0 0 0" rpy="0 0 0"/>
       <geometry>
-        <cylinder radius="0.04" length="0.06"/>
+        <cylinder radius="0.03" length="0.0865"/>  <!-- φ60mm x H86.5mm -->
       </geometry>
       <material name="lidar_color">
-        <color rgba="0.2 0.6 0.2 1"/>
+        <color rgba="0.1 0.4 0.1 1"/>  <!-- 深绿色 -->
       </material>
     </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.03" length="0.0865"/>
+      </collision>
+    </collision>
   </link>
 
   <joint name="lidar_joint" type="fixed">
@@ -549,12 +617,25 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
     <dynamics friction="{friction}" damping="0.05"/>
   </joint>
 
-  <!-- IMU -->
+  <!-- IMU: ETT10A-PW (6轴防水) -->
   <link name="imu_link">
     <inertial>
-      <mass value="0.01"/>
-      <inertia ixx="1e-6" ixy="0" ixz="0" iyy="1e-6" iyz="0" izz="1e-6"/>
+      <mass value="0.05"/>
+      <inertia ixx="2e-5" ixy="0" ixz="0" iyy="2e-5" iyz="0" izz="2e-5"/>
     </inertial>
+    <visual>
+      <geometry>
+        <box size="0.04 0.04 0.025"/>
+      </geometry>
+      <material name="imu_color">
+        <color rgba="0.3 0.3 0.3 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <box size="0.04 0.04 0.025"/>
+      </geometry>
+    </collision>
   </link>
 
   <joint name="imu_joint" type="fixed">
@@ -583,6 +664,33 @@ AGV_4W_URDF_TEMPLATE = """<?xml version="1.0"?>
     <parent link="base_link"/>
     <child link="camera_link"/>
     <origin xyz="{body_length_2_minus} 0 {body_height_minus_01}" rpy="0 0 0"/>
+  </joint>
+
+  <!-- 激光雷达: 镭神智能 N10P -->
+  <link name="lidar_link">
+    <inertial>
+      <mass value="0.24"/>
+      <inertia ixx="1e-4" ixy="0" ixz="0" iyy="1e-4" iyz="0" izz="1e-4"/>
+    </inertial>
+    <visual>
+      <geometry>
+        <cylinder radius="0.03" length="0.0865"/>
+      </geometry>
+      <material name="lidar_color">
+        <color rgba="0.1 0.4 0.1 1"/>
+      </material>
+    </visual>
+    <collision>
+      <geometry>
+        <cylinder radius="0.03" length="0.0865"/>
+      </geometry>
+    </collision>
+  </link>
+
+  <joint name="lidar_joint" type="fixed">
+    <parent link="base_link"/>
+    <child link="lidar_link"/>
+    <origin xyz="0 0 {body_height_plus_03}" rpy="0 0 0"/>
   </joint>
 
 </robot>
