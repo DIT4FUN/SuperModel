@@ -2,7 +2,15 @@
 
 All notable changes to SuperModel will be documented in this file.
 
-## [v1.50.0] - 2026-04-03 05:16
+## [v1.51.0] - 2026-04-05 03:32
+
+### Updated
+- **MODULE_INTERFACE.md**: 补充附录A (AGV五级控制子系统完整规格对照表)
+  - 控制子系统五级规格总表 (S/M/L/XL/XXL)
+  - 感知-控制闭环延迟规格
+  - 触觉/力觉/IMU五级配置对照
+- **测试验证**: sensor_tests.py + fusion_tests.py 共130项测试全部通过
+- **清理**: 删除临时未追踪文件 (run_gui.py, run_vis.py等)
 
 ### Added
 - **触觉传感器模块** `src/sensors/tactile.py`: 电子皮肤触觉阵列完整实现
