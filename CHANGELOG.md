@@ -2,6 +2,34 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.52.0] - 2026-04-05 07:20
+
+### Added
+- **硬件图片资源** `images/`: 新增AGV硬件实拍图片
+  - `ZLAC8015D.avif`: 中菱一拖二轮毂伺服驱动器实物图
+  - `RGB_CAMERA_C100_C70.avif`: 奥比中光C100/C70 RGB相机实物图
+- **硬件规格文档完善** `docs/HARDWARE_SPEC.md`: 补充完整硬件规格表
+  - 镭神N10P激光雷达详细参数
+  - ETT10A-PW防水型IMU规格
+  - ESUN 2.5寸静音万向轮参数
+  - 中菱ZLAC8015D驱动器规格
+  - 奥比中光Astra Pro Plus / C100 / C70相机规格
+  - M级AGV标准传感器配置
+  - 购买链接与接口定义
+- **AGV规格文档** `docs/AGV_SPEC.md`: 完善AGV五级规格总表
+  - 整车规格 / 感知子系统 / 控制子系统 / 计算通信 / 闭环延迟
+  - M级AGV详细参数
+  - 实用集成示例代码
+
+### Updated
+- **版本对齐**: CHANGELOG.md / PROGRESS.md → v1.52.0
+- **README.md**: 测试计数更新至130项核心测试
+
+### Testing
+- **sensor_tests.py + fusion_tests.py: 130项全部通过** ✅
+
+---
+
 ## [v1.51.0] - 2026-04-05 03:32
 
 ### Updated
