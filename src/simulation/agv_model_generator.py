@@ -92,6 +92,29 @@ IMU_ETT10A_PW_SPECS = {
 
 
 # ============================================================================
+# ESUN 2.5寸静音避震万向轮 (从动轮)
+# ============================================================================
+
+# ESUNcaster JQR25310-80A specs
+CASTER_ESUN_25_specS = {
+    'model': 'ESUN JQR25310-80A',
+    'type': '静音避震万向轮',
+    'wheel_diameter_inch': 2.5,     # 寸
+    'wheel_diameter_mm': 63.5,      # mm (2.5 * 25.4)
+    'wheel_radius': 0.03175,        # m
+    'material': '聚氨酯 (PU 80A)',
+    'load_capacity': 135,           # kg per wheel
+    'shock_stroke': 0.010,         # 减震行程 10mm
+    'overall_height': 0.106,        # 总高度 106mm (wheel bottom to mount top)
+    'bracket_height': 0.07425,      # 支架高度 = overall_height - wheel_radius
+    'rotation': '360°',             # 全向旋转
+}
+
+# 简写
+CASTER_ESUN = CASTER_ESUN_25_specS
+
+
+# ============================================================================
 # AGV五级规格参数 (基于5.5寸轮毂电机)
 # ============================================================================
 
@@ -294,7 +317,9 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </link>
 
   <!-- ============================================================
-       从动轮 (Caster Wheels)
+       从动轮 (ESUN 2.5寸静音避震万向轮)
+       - 聚氨酯80A材质,单轮承重135kg
+       - 减震行程10mm,360度旋转
        ============================================================ -->
   <link name="caster_front">
     <inertial>
@@ -302,14 +327,27 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{caster_ixx}" ixy="0" ixz="0" iyy="{caster_ixx}" iyz="0" izz="{caster_ixx}"/>
     </inertial>
     <visual>
+      <!-- 聚氨酯轮子 (黄色) -->
+      <origin xyz="0 0 -{caster_bracket_height}" rpy="0 0 0"/>
       <geometry>
         <sphere radius="{caster_radius}"/>
       </geometry>
       <material name="caster_color">
-        <color rgba="0.4 0.4 0.4 1"/>
+        <color rgba="0.9 0.7 0.2 1"/>  <!-- 聚氨酯黄色 -->
+      </material>
+    </visual>
+    <visual>
+      <!-- 安装支架 -->
+      <origin xyz="0 0 {caster_radius}" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.03 0.03 {caster_bracket_height}"/>
+      </geometry>
+      <material name="caster_bracket">
+        <color rgba="0.3 0.3 0.3 1"/>  <!-- 金属灰 -->
       </material>
     </visual>
     <collision>
+      <origin xyz="0 0 -{caster_bracket_height}" rpy="0 0 0"/>
       <geometry>
         <sphere radius="{caster_radius}"/>
       </geometry>
@@ -322,11 +360,23 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
       <inertia ixx="{caster_ixx}" ixy="0" ixz="0" iyy="{caster_ixx}" iyz="0" izz="{caster_ixx}"/>
     </inertial>
     <visual>
+      <!-- 聚氨酯轮子 (黄色) -->
+      <origin xyz="0 0 -{caster_bracket_height}" rpy="0 0 0"/>
       <geometry>
         <sphere radius="{caster_radius}"/>
       </geometry>
       <material name="caster_color">
-        <color rgba="0.4 0.4 0.4 1"/>
+        <color rgba="0.9 0.7 0.2 1"/>  <!-- 聚氨酯黄色 -->
+      </material>
+    </visual>
+    <visual>
+      <!-- 安装支架 -->
+      <origin xyz="0 0 {caster_radius}" rpy="0 0 0"/>
+      <geometry>
+        <box size="0.03 0.03 {caster_bracket_height}"/>
+      </geometry>
+      <material name="caster_bracket">
+        <color rgba="0.3 0.3 0.3 1"/>  <!-- 金属灰 -->
       </material>
     </visual>
     <collision>
@@ -736,8 +786,10 @@ def generate_agv_urdf_detailed(
     )
     
     # 从动轮参数
-    caster_radius = wheel_radius * 0.3
-    caster_mass = 0.2
+    # ESUN 2.5寸静音避震万向轮参数
+    caster_radius = CASTER_ESUN['wheel_radius']  # 0.03175m (2.5寸/2)
+    caster_mass = 1.0  # 单轮承重135kg的万向轮,质量约1kg
+    caster_bracket_height = CASTER_ESUN['bracket_height']  # 支架高度 0.07425m
     
     # 生成URDF
     if wheel_config == '4轮':
@@ -767,6 +819,7 @@ def generate_agv_urdf_detailed(
         'caster_radius': caster_radius,
         'caster_mass': caster_mass,
         'caster_ixx': get_wheel_inertia(caster_radius, caster_radius, caster_mass),
+        'caster_bracket_height': caster_bracket_height,
         'caster_offset_x': config['body_length'] * 0.35,
         'body_length': config['body_length'],
         'body_length_2': config['body_length'] / 2,
