@@ -448,7 +448,7 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
     <collision>
       <geometry>
         <cylinder radius="0.03" length="0.0865"/>
-      </collision>
+      </geometry>
     </collision>
   </link>
 
