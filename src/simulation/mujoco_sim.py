@@ -92,14 +92,13 @@ AGV_MJCF_TEMPLATE = """
     <compiler angle="radian" meshdir="." autolimits="true"/>
     
     <option timestep="{dt}" gravity="{gravity}"
-            solver="{solver}" iterations="{iterations}" tolerance="{tolerance}"
-            integrate="{integrate}">
+            solver="{solver}" iterations="{iterations}" tolerance="{tolerance}">
         <flag contact="enable" energy="enable"/>
     </option>
     
     <worldbody>
         <!-- 地面 -->
-        <geom type="plane" name="ground" pos="0 0 -0.001" friction="1 0.005 0.0001"
+        <geom type="plane" name="ground" size="10 10 0.1" pos="0 0 -0.001" friction="1 0.005 0.0001"
               rgba="0.5 0.5 0.5 1" conaffinity="1" contype="1"/>
         
         <!-- AGV车体 -->
@@ -116,7 +115,7 @@ AGV_MJCF_TEMPLATE = """
                 <joint name="left_wheel_joint" type="hinge" 
                        axis="0 0 1" damping="0.5" frictionloss="0.1"/>
                 <geom type="cylinder" size="0.08 0.025" 
-                      rgba="0.1 0.1 0.1 1" friction="1.0 0.005 0.""/>
+                      rgba="0.1 0.1 0.1 1" friction="1.0 0.005 0.0001"/>
             </body>
             
             <!-- 右轮 -->
@@ -124,7 +123,7 @@ AGV_MJCF_TEMPLATE = """
                 <joint name="right_wheel_joint" type="hinge"
                        axis="0 0 1" damping="0.5" frictionloss="0.1"/>
                 <geom type="cylinder" size="0.08 0.025"
-                      rgba="0.1 0.1 0.1 1" friction="1.0 0.005 0."/>
+                      rgba="0.1 0.1 0.1 1" friction="1.0 0.005 0.0001"/>
             </body>
             
             <!-- 负载托盘 -->
@@ -157,7 +156,7 @@ AGV_MJCF_TEMPLATE = """
     
     <sensor>
         <!-- IMU传感器 -->
-        <gyrometer site="imu_site" name="gyro"/>
+        <gyro site="imu_site" name="gyro"/>
         <accelerometer site="imu_site" name="accel"/>
         
         <!-- 关节传感器 -->
@@ -168,9 +167,9 @@ AGV_MJCF_TEMPLATE = """
     </sensor>
     
     <keyframe>
-        <!-- 初始状态 -->
-        <key name="home" qpos="0 0 0 1 0 0 0 0 0 0 0" 
-             qvel="0 0 0 0 0 0 0 0 0"/>
+        <!-- 初始状态: chassis_free(7) + wheel1(1) + wheel2(1) = 9 qpos, 8 qvel -->
+        <key name="home" qpos="0 0 0.05 1 0 0 0 0 0" 
+             qvel="0 0 0 0 0 0 0 0"/>
     </keyframe>
 </mujoco>
 """
@@ -233,8 +232,9 @@ class MuJoCoSimulator:
         
         # 设置仿真参数
         self.model.opt.timestep = self.config.dt
-        self.model.opt.integrate = getattr(mujoco.mjtIntegrate, 
-                                           f"integrate_{self.config.integrate.lower()}")
+        # 设置积分器类型
+        integrator_map = {'euler': 0, 'implicit': 1, 'rk4': 2}
+        self.model.opt.integrator = integrator_map.get(self.config.integrate.lower(), 0)
         
         # 传感器映射
         self._init_sensors()
@@ -260,9 +260,18 @@ class MuJoCoSimulator:
     def _init_sensors(self):
         """初始化传感器映射"""
         self._sensor_names = {}
-        for i, name in enumerate(self.model.names):
-            if name:
-                self._sensor_names[name.decode().rstrip('\x00')] = i
+        names_bytes = self.model.names
+        # names is a bytes object, parse null-terminated strings
+        start = 0
+        i = 0
+        while start < len(names_bytes):
+            null_pos = names_bytes.find(b'\x00', start)
+            if null_pos == -1:
+                break
+            name = names_bytes[start:null_pos].decode('utf-8')
+            self._sensor_names[name] = i
+            i += 1
+            start = null_pos + 1
     
     def load_agv_model(self) -> str:
         """加载AGV模型"""
@@ -352,8 +361,14 @@ class MuJoCoSimulator:
     
     def _quat_to_euler(self, quat: np.ndarray) -> np.ndarray:
         """四元数转Euler角"""
+        # 四元数转旋转矩阵
+        mat = np.zeros(9)
+        mujoco.mju_quat2Mat(mat, quat)
+        # 从旋转矩阵提取欧拉角 (ZYX顺序: roll, pitch, yaw)
         euler = np.zeros(3)
-        mujoco.mj_euler(quat, euler)
+        euler[0] = np.arctan2(mat[7], mat[8])  # roll
+        euler[1] = np.arctan2(-mat[6], np.sqrt(mat[7]**2 + mat[8]**2))  # pitch
+        euler[2] = np.arctan2(mat[3], mat[0])  # yaw
         return euler
     
     def get_observation(self) -> Dict[str, np.ndarray]:
