@@ -13,6 +13,7 @@ SuperModel 是一个超模态大模型具身智能系统，专注于 AGV（自�
 - **自主学习**: 强化学习框架支持持续优化
 - **实时控制**: 高性能运动控制（PID、轨迹规划、安全监控）
 - **模块化设计**: 传感器、控制、融合模块解耦，易于扩展
+- **PyBullet仿真**: 支持多AGV协同仿真和避障测试
 
 ## 项目结构
 
@@ -20,17 +21,17 @@ SuperModel 是一个超模态大模型具身智能系统，专注于 AGV（自�
 SuperModel/
 ├── src/
 │   ├── sensors/          # 多模态传感器接口
-│   │   ├── vision.py    # 双目RGBD相机 (RealSense)
-│   │   ├── audio.py     # 双耳麦克风阵列
-│   │   ├── tactile.py   # 电子皮肤触觉阵列
-│   │   ├── force.py     # 六维力矩传感器 (ATI)
-│   │   ├── imu.py        # IMU传感器 (BMI088/MPU9250)
-│   │   ├── encoders.py  # 特征编码器
+│   │   ├── vision.py     # 深度相机 (RealSense/Astra)
+│   │   ├── audio.py      # 双耳麦克风阵列
+│   │   ├── tactile.py    # 电子皮肤触觉阵列
+│   │   ├── force.py      # 六维力矩传感器
+│   │   ├── imu.py        # IMU传感器
+│   │   ├── encoders.py   # 特征编码器
 │   │   └── manager.py    # 传感器管理器
 │   ├── fusion/           # 跨模态融合网络
 │   │   ├── cross_modal_fusion.py  # 注意力融合Transformer
 │   │   └── sensor_fusion.py        # 互补滤波/EKF/多传感器融合
-│   ├── perception/       # 感知与场景理解
+│   ├── perception/        # 感知与场景理解
 │   │   └── scene_understanding.py
 │   ├── learning/         # 自主学习框架
 │   │   ├── world_model.py
@@ -38,40 +39,37 @@ SuperModel/
 │   │   └── autonomous_learning.py
 │   ├── control/          # 动作控制模块
 │   │   ├── motion.py     # 运动控制
-│   │   ├── trajectory.py # 轨迹规划
-│   │   ├── impedance.py  # 阻抗控制
+│   │   ├── trajectory.py  # 轨迹规划
+│   │   ├── impedance.py   # 阻抗控制
 │   │   ├── mpc.py        # 模型预测控制
 │   │   ├── agv.py        # AGV运动学
 │   │   ├── supervisor.py # 控制监管
 │   │   ├── safety_controller.py
 │   │   ├── ros2_interface.py
-│   │   ├── teleop.py     # 遥操作
-│   │   ├── multi_agent.py
-│   │   ├── obstacle_avoidance.py
-│   │   ├── planner.py    # 任务规划
-│   │   ├── skill.py      # 技能库
-│   │   ├── tactile_control.py
-│   │   ├── force_control.py
-│   │   └── imu_control.py
+│   │   └── ...
 │   ├── simulation/       # 仿真环境
-│   │   ├── mujoco_sim.py # MuJoCo仿真
-│   │   ├── gazebo_sim.py # Gazebo/ROS2仿真
-│   │   ├── gym_env.py    # Gymnasium环境
-│   │   └── environment.py
+│   │   ├── pybullet_sim.py      # PyBullet仿真
+│   │   ├── agv_model_generator.py # AGV URDF模型生成
+│   │   ├── mujoco_sim.py       # MuJoCo仿真
+│   │   └── gym_env.py          # Gymnasium环境
 │   └── utils.py          # 工具函数
+├── sim_demos/            # PyBullet仿真演示
+│   ├── run_gui.py        # S形路径避障
+│   ├── run_warehouse.py   # 仓库物流仿真
+│   ├── run_multi_agv.py  # 多AGV协同
+│   ├── run_agv_showcase.py # AGV等级展示
+│   └── base_sim.py       # 仿真基类
 ├── examples/             # 示例脚本
-│   ├── complete_embodied_pipeline_demo.py
-│   ├── agv_five_level_demo.py
-│   ├── sensorimotor_integration_demo.py
-│   └── ...
-├── tests/                # 测试用例 (1277项通过)
+├── tests/               # 测试用例 (685+项通过)
 │   ├── sensor_tests.py
 │   ├── fusion_tests.py
-│   ├── control_tests.py
+│   ├── pybullet_sim_tests.py
 │   └── ...
-├── docs/                 # 设计文档
-│   ├── SPEC.md           # 技术规格
-│   ├── DESIGN.md         # 架构设计
+├── docs/                # 设计文档
+│   ├── HARDWARE_SPEC.md  # 硬件规格说明
+│   ├── AGV_SPEC.md      # AGV技术规格
+│   ├── SPEC.md          # 技术规格
+│   ├── DESIGN.md        # 架构设计
 │   └── MODULE_INDEX.md   # 模块索引
 └── README.md
 ```
@@ -81,221 +79,130 @@ SuperModel/
 ### 安装依赖
 
 ```bash
-pip install numpy
-pip install pytest  # 用于测试
+pip install numpy pybullet pytest
 ```
 
 ### 运行测试
 
 ```bash
-# 运行传感器和融合测试
-python -m pytest tests/sensor_tests.py tests/fusion_tests.py -v
-
 # 运行所有测试
 python -m pytest tests/ -v
 
-# 运行指定测试类
-python -m pytest tests/sensor_tests.py::TestTactileData -v
+# 运行PyBullet仿真测试
+python -m pytest tests/pybullet_sim_tests.py -v
 ```
 
-### 示例代码
+### 运行仿真演示
 
-#### 传感器读取
+```bash
+cd sim_demos
 
-```python
-from sensors.tactile import PressureSensor, TaxelArray, TactileArray
-from sensors.force import SixAxisFTSensor, ForceSensorArray
-from sensors.imu import BMI088, IMUArray
+# S形路径避障仿真
+python run_gui.py
 
-# 触觉传感器
-tactile = TactileArray()
-tactile.add_sensor(PressureSensor("p1"))
-tactile.add_sensor(TaxelArray("taxel1", rows=16, cols=16))
+# 仓库物流仿真
+python run_warehouse.py
 
-# 力觉传感器
-force = ForceSensorArray()
-force.add_sensor(SixAxisFTSensor("ft1", model="mini40"))
+# 多AGV协同仿真
+python run_multi_agv.py
 
-# IMU传感器
-imu = IMUArray()
-imu.add_sensor(BMI088("imu1"))
-
-# 读取数据
-t_data = tactile.read_all(0.0)
-f_data = force.read_all(0.0)
-i_data = imu.read_all(0.0)
-```
-
-#### 传感器融合
-
-```python
-from fusion.sensor_fusion import ComplementaryFilter, ExtendedKalmanFilter, MultiSensorFusion
-
-# 互补滤波（适合IMU）
-fusion = ComplementaryFilter(alpha=0.96)
-state = fusion.update({
-    'accel': imu_data.acceleration,
-    'gyro': imu_data.angular_velocity
-}, dt=0.01)
-
-# 多传感器融合
-msf = MultiSensorFusion()
-msf.add_fusion_method("imu1", ComplementaryFilter(alpha=0.96), weight=1.0)
-results = msf.update({"imu1": {...}}, dt=0.01)
-```
-
-#### 电机控制与PID
-
-```python
-from control.motor import DCMotor, MotorController
-from control.pid import PIDController, PIDAutotuner
-
-# 电机控制
-motor = DCMotor("m1", reduction_ratio=20.0)
-controller = MotorController()
-controller.add_motor(motor)
-motor.enable()
-
-# PID位置控制
-pid = PIDController(kp=1.0, ki=0.1, kd=0.05, output_limit=10.0)
-for _ in range(100):
-    error = target_position - motor.get_state().position
-    control = pid.compute(error, dt=0.01)
-    motor.set_target(control, MotorControlMode.PWM)
-```
-
-#### AGV运动控制
-
-```python
-from control.motion import AGVController, DifferentialDrive, Pose2D, TrajectoryPlanner
-
-# AGV控制器
-agv = AGVController(wheel_separation=0.5, wheel_radius=0.1)
-agv.move_to(1.0, 2.0, 0.0, dt=0.01)
-
-# 轨迹规划
-planner = TrajectoryPlanner()
-trajectory = planner.plan_trajectory(
-    start=Pose2D(0, 0, 0),
-    end=Pose2D(5, 5, 0),
-    max_velocity=1.0,
-    max_acceleration=0.5
-)
-```
-
-#### 安全监控
-
-```python
-from control.safety import SafetyMonitor, EmergencyStopController, SafetyLevel
-
-# 安全监控器
-safety = SafetyMonitor(
-    max_velocity=2.0,
-    force_threshold=100.0,
-    boundary_min=np.array([-10, -10, -np.pi]),
-    boundary_max=np.array([10, 10, np.pi])
-)
-
-# 综合安全检查
-status = safety.check_all(
-    velocity=0.5,
-    position=(1.0, 2.0, 0.1),
-    force_magnitude=10.0,
-    torque_magnitude=0.5,
-    collision_detected=False,
-    sensor_health={"imu1": True, "ft1": True},
-    dt=0.01
-)
-
-if status.level == SafetyLevel.CRITICAL:
-    print(f"安全警告: {status.message}")
-
-# 紧急停止
-estop = EmergencyStopController()
-estop.trigger("manual")
+# AGV等级展示
+python run_agv_showcase.py
 ```
 
 ## AGV五级规格表
 
-| 等级 | 负载能力 | 导航方式 | 定位精度 | 典型场景 | 代表型号 |
-|------|---------|---------|---------|---------|---------|
-| **L1** | ≤500kg | 磁条/二维码 | ±10mm | 仓储拣选 | 潜伏式AGV |
-| **L2** | 500-1500kg | 激光导航 | ±5mm | 产线配送 | 叉式AGV |
-| **L3** | 1500-3000kg | SLAM视觉 | ±3mm | 柔性制造 | 复合AGV |
-| **L4** | 3000-5000kg | 多传感器融合 | ±1mm | 重载车间 | 重载AGV |
-| **L5** | >5000kg | 具身智能超模态 | <±0.5mm | 无人化工厂 | 超级AGV |
+| 等级 | 负载 | 轮子配置 | 电机 | 典型场景 |
+|------|------|----------|------|---------|
+| **S** | 30kg | 2轮差速 | 57步进 | 小型仓库 |
+| **M** | 100kg | 2轮差速 | 5.5寸轮毂150W | 物流分拣 |
+| **L** | 300kg | 4轮差速 | 5.5寸轮毂×2 | 产线配送 |
+| **XL** | 600kg | 4轮差速 | 6.5寸轮毂×2 | 重载车间 |
+| **XXL** | 1200kg | 4轮差速 | 7.5寸轮毂×4 | 港口物流 |
 
-### L5级SuperModel核心规格
+### M级AGV详细规格
 
 | 参数 | 规格 |
 |------|------|
-| **处理器** | NVIDIA Jetson AGX Orin / Tesla T4 |
-| **AI算力** | ≥275 TOPS (INT8) |
-| **传感器** | 深度相机 + 激光雷达 + IMU + 力觉 + 触觉 |
-| **定位精度** | <±0.5mm (融合定位) |
-| **导航速度** | 0-3m/s (自适应) |
-| **负载能力** | 100-5000kg (模块化) |
-| **安全标准** | ISO 3691-4, IEC 61508 SIL2 |
-| **通讯协议** | WiFi 6E, 5G, MQTT |
-| **续航能力** | 8-24h (视配置) |
-| **多模态输入** | 视觉/听觉/触觉/力觉/IMU/位置 |
-| **具身智能** | 超模态大模型 + RL自主学习 |
+| 自重 | 35kg |
+| 负载 | 100kg |
+| 轮子直径 | 140mm (5.5寸) |
+| 驱动电机 | 5.5寸轮毂电机 150W × 2 |
+| 从动轮 | ESUN 2.5寸静音避震万向轮 |
+| 最大速度 | 1.5m/s |
 
-## 传感器规格
+## 硬件配置
 
-### 触觉传感器 (tactile.py)
+### 传感器
 
-| 类型 | 型号 | 量程 | 精度 | 特点 |
-|------|------|------|------|------|
-| 压阻式 | - | 0-1000Pa | 0.01 Pa/bit | 成本低、耐久 |
-| 触感阵列 | 16x16 | 0-1000Pa | <1ms响应 | 高密度、仿生皮肤 |
-| 压电式 | - | 0-1000Hz | 1kHz采样 | 振动检测、纹理识别 |
+| 传感器 | 型号 | 参数 |
+|--------|------|------|
+| 激光雷达 | 镭神 N10P | 360°, 25m, TOF测距 |
+| IMU | ETT10A-PW | 6轴, IP67防水 |
+| RGB相机 | 奥比中光 C100 | 1080P, FOV 112° |
+| 深度相机 | 奥比中光 Astra Pro Plus | 640×480, 0.4-8m |
 
-### 力觉传感器 (force.py)
+### 电机驱动器
 
-| 类型 | 型号 | Fz量程 | Mxy量程 | 噪声 |
-|------|------|--------|--------|------|
-| 六维力 | ATI mini40 | 120N | 2Nm | 0.2% F.S. |
-| 六维力 | ATI Gamma | 200N | 10Nm | 0.2% F.S. |
-| 六维力 | ATI SI-120 | 120N | 12Nm | 0.2% F.S. |
-| 单轴力 | - | 0-100N | - | 0.001% F.S. |
+| 型号 | 类型 | 控制方式 | 输出电流 |
+|------|------|----------|---------|
+| 中菱 ZLAC8015D | 一拖二轮毂伺服 | CANopen/RS485 | 15A/30A峰值 |
 
-### IMU传感器 (imu.py)
+### 从动轮
 
-| 类型 | 型号 | 加速度 | 陀螺仪 | 噪声密度 |
-|------|------|--------|--------|---------|
-| 6轴IMU | BMI088 | ±24g | ±2000°/s | 150μg/√Hz |
-| 9轴IMU | MPU9250 | ±16g | ±2000°/s | 400μg/√Hz |
+| 型号 | 轮径 | 材质 | 承重 |
+|------|------|------|------|
+| ESUN JQR25310-80A | 2.5寸 | 聚氨酯80A | 135kg/轮 |
 
-## 控制模块规格
+## PyBullet仿真
 
-### PID控制器 (control/pid.py)
+### AGV模型生成
 
-- **通用PID**: 位置式/增量式、微分滤波、抗积分饱和、在线调参
-- **二维PID**: XY平面运动控制
-- **自动整定**: Ziegler-Nichols法
+```python
+from simulation.agv_model_generator import generate_agv_urdf_detailed, GRADE_CONFIGS
 
-### 安全监控 (control/safety.py)
+# 生成M级AGV URDF
+urdf_path = generate_agv_urdf_detailed('M', '2轮')
 
-- **速度限制**: 可配置最大速度和加速度
-- **边界检查**: 位置边界保护
-- **力矩限制**: 力/力矩阈值监控
-- **碰撞检测**: 传感器融合碰撞判断
-- **紧急停止**: 软件/硬件急停、恢复锁定
+# 查看配置
+print(GRADE_CONFIGS['M'])
+```
 
-## 通讯协议
+### 仿真控制
 
-- **MQTT**: 发布/订阅式消息传递
-- **WebSocket**: 实时数据传输
-- **REST API**: 配置和状态查询
+```python
+import pybullet as p
+from simulation.agv_model_generator import generate_agv_urdf_detailed
+
+# 连接仿真
+client = p.connect(p.DIRECT)
+p.setGravity(0, 0, -9.81)
+
+# 加载AGV
+urdf = generate_agv_urdf_detailed('M', '2轮')
+agv_id = p.loadURDF(urdf, basePosition=[0, 0, 0.15])
+
+# 仿真控制
+for i in range(1000):
+    p.stepSimulation()
+
+p.disconnect()
+```
+
+## 购买链接
+
+| 组件 | 链接 |
+|------|------|
+| 镭神N10P激光雷达 | https://detail.tmall.com/item.htm?id=661907723595 |
+| ETT10A-PW IMU | https://item.taobao.com/item.htm?id=622844097690 |
+| ESUN 2.5寸万向轮 | https://detail.tmall.com/item.htm?id=591810849491 |
+| 奥比中光 Astra Pro Plus | https://item.taobao.com/item.htm?id=646073233035 |
+| 奥比中光 C100/C70 | https://item.taobao.com/item.htm?id=641692244195 |
+| 中菱 ZLAC8015D 驱动器 | https://item.taobao.com/item.htm?id=677349695836 |
 
 ## 许可证
 
 MIT License
-
-## 贡献者
-
-DIT4FUN Team
 
 ## GitHub
 
