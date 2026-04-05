@@ -92,6 +92,28 @@ IMU_ETT10A_PW_SPECS = {
 
 
 # ============================================================================
+# 奥比中光 Astra Pro Plus 深度相机
+# ============================================================================
+
+ASTRA_PRO_PLUS_SPECS = {
+    'model': 'Astra Pro Plus',
+    'brand': 'Orbbec (奥比中光)',
+    'depth_technology': 'Structured Light (单目结构光)',
+    'depth_resolution': '640 × 480 (VGA)',
+    'rgb_resolution': '1280 × 960',
+    'depth_range': '0.4m - 8m',
+    'depth_fov': '60° H × 49.5° V',
+    'rgb_framerate': '30fps',
+    'depth_framerate': '30fps',
+    'interface': 'USB 2.0',
+    'laser_projection': 'Near-IR (近红外)',
+    'power': '<2.5W',
+    'dimensions': '165 × 40 × 30mm',
+    'weight': 200,           # g
+}
+
+
+# ============================================================================
 # ESUN 2.5寸静音避震万向轮 (从动轮)
 # ============================================================================
 
@@ -452,21 +474,29 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   </joint>
 
   <!-- ============================================================
-       前视深度相机 (可选)
+       前视深度相机: 奥比中光 Astra Pro Plus
+       - 单目结构光, 640x480深度, 1280x960 RGB
+       - 尺寸: 165 x 40 x 30mm
        ============================================================ -->
   <link name="camera_link">
     <inertial>
-      <mass value="0.05"/>
-      <inertia ixx="1e-5" ixy="0" ixz="0" iyy="1e-5" iyz="0" izz="1e-5"/>
+      <mass value="0.2"/>
+      <inertia ixx="2e-4" ixy="0" ixz="0" iyy="2e-4" iyz="0" izz="2e-4"/>
     </inertial>
     <visual>
+      <!-- Astra Pro Plus 尺寸约 165x40x30mm -->
       <geometry>
-        <box size="0.03 0.08 0.03"/>
+        <box size="0.165 0.04 0.03"/>
       </geometry>
       <material name="camera_color">
-        <color rgba="0.1 0.3 0.8 1"/>
+        <color rgba="0.2 0.2 0.2 1"/>  <!-- 深灰色外壳 -->
       </material>
     </visual>
+    <collision>
+      <geometry>
+        <box size="0.165 0.04 0.03"/>
+      </geometry>
+    </collision>
   </link>
 
   <joint name="camera_joint" type="fixed">
