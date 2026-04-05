@@ -359,14 +359,14 @@ AGV_2W_URDF_TEMPLATE = """<?xml version="1.0"?>
   <joint name="caster_front_joint" type="continuous">
     <parent link="base_link"/>
     <child link="caster_front"/>
-    <origin xyz="{caster_offset_x} 0 -{body_height_plus_wheel}" rpy="0 0 0"/>
+    <origin xyz="{caster_offset_x} 0 {body_height_plus_wheel}" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
   </joint>
 
   <joint name="caster_back_joint" type="continuous">
     <parent link="base_link"/>
     <child link="caster_back"/>
-    <origin xyz="-{caster_offset_x} 0 -{body_height_plus_wheel}" rpy="0 0 0"/>
+    <origin xyz="-{caster_offset_x} 0 {body_height_plus_wheel}" rpy="0 0 0"/>
     <axis xyz="0 1 0"/>
   </joint>
 
@@ -776,8 +776,14 @@ def generate_agv_urdf_detailed(
         'body_height': config['body_height'],
         'body_height_2': config['body_height'] / 2,
         'body_height_plus_03': config['body_height'] / 2 + 0.03,
-        'body_height_plus_wheel': config['body_height'] / 2 + wheel_radius,
-        'body_height_plus_wheel_minus': config['body_height'] / 2 + wheel_radius - 0.005,
+        # 轮子位于车体下方,接触地面
+        # wheel_joint_z (相对于base_link的z偏移): wheel应位于body下方
+        # 轮子顶部接触body底部 => wheel_center_z = body_bottom - wheel_radius
+        # body_bottom = 0 (base_link_z), so wheel_center_z = -wheel_radius
+        # Template用负号: wheel_joint_z = -{body_height_plus_wheel_minus}
+        # 所以 body_height_plus_wheel_minus = wheel_radius
+        'body_height_plus_wheel': caster_radius,  # caster位置: sphere底部接触地面
+        'body_height_plus_wheel_minus': wheel_radius,  # 驱动轮位置
         'body_height_minus_01': config['body_height'] / 2 - 0.01,
         'com_x': 0,
         'com_y': 0,
