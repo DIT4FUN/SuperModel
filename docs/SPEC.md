@@ -562,3 +562,124 @@ pytest tests/five_grade_pipeline_tests.py -v
 | v1.51.0 | 2026-04-03 | 补充AGV五级控制子系统规格表、PyBullet可视化仿真脚本、1277项测试通过 |
 | v1.50.0 | 2026-04-03 | 完成触觉/力觉/IMU传感器模块及测试套件、1277项测试通过 |
 | v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
+
+## 10. 仿真环境模块接口详细设计
+
+### 10.1 基础仿真接口 (environment.py)
+
+#### RobotSimulator (机器人仿真器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config, joint_limits_lower, joint_limits_upper)` | SimConfig, np.ndarray, np.ndarray | RobotSimulator | 初始化仿真器 |
+| `reset()` | - | np.ndarray | 重置到初始状态 |
+| `step(control)` | np.ndarray | Tuple | 执行一步仿真 |
+| `get_joint_state()` | - | Tuple[np.ndarray, np.ndarray] | 获取关节状态 |
+| `get_end_effector_pose()` | - | np.ndarray | 获取末端位姿 |
+| `apply_external_force(force, point)` | np.ndarray, np.ndarray | None | 施加外力 |
+| `check_self_collision()` | - | bool | 自碰撞检测 |
+| `check_environment_collision()` | - | bool | 环境碰撞检测 |
+
+#### SensorSimulator (传感器仿真器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `add_sensor(sensor_type, config)` | str, Dict | int | 添加传感器 |
+| `get_sensor_data(sensor_id)` | int | Dict | 获取传感器数据 |
+| `inject_noise(data, noise_level)` | Any, float | Any | 注入噪声 |
+| `inject_delay(data, delay)` | Any, float | Any | 注入延迟 |
+
+#### SceneManager (场景管理器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `load_scene(scene_config)` | Dict | bool | 加载场景 |
+| `add_object(object_config)` | Dict | str | 添加物体 |
+| `remove_object(object_id)` | str | bool | 移除物体 |
+| `get_objects()` | - | List[Dict] | 获取所有物体 |
+
+### 10.2 Gymnasium 环境接口 (gym_env.py)
+
+#### SuperModelGymEnv (Gymnasium RL 环境)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `reset(seed)` | int | Tuple | 重置环境 |
+| `step(action)` | np.ndarray | Tuple | 执行动作 |
+| `render()` | - | np.ndarray | 渲染画面 |
+| `close()` | - | None | 关闭环境 |
+| `get_observation()` | - | np.ndarray | 获取观测 |
+| `compute_reward(state, action, next_state)` | ... | float | 计算奖励 |
+
+#### GymEnvConfig (Gym 环境配置)
+
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `dt` | float | 0.01 | 控制周期 (s) |
+| `sim_dt` | float | 0.001 | 物理步长 (s) |
+| `episode_length` | int | 1000 | 最大episode长度 |
+| `num_joints` | int | 6 | 关节数 |
+| `obs_type` | str | "full" | 观测类型(full/partial/image) |
+| `grade` | str | "M" | AGV等级 |
+
+### 10.3 MuJoCo 仿真接口 (mujoco_sim.py)
+
+#### MuJoCoSimulator (MuJoCo 仿真器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config)` | MuJoCoConfig | MuJoCoSimulator | 初始化 |
+| `load_model(xml_string)` | str | int | 加载模型 |
+| `reset()` | - | np.ndarray | 重置 |
+| `step(ctrl)` | np.ndarray | None | 仿真一步 |
+| `get_state()` | - | Dict | 获取状态 |
+| `set_state(data)` | Dict | None | 设置状态 |
+| `render(mode)` | str | np.ndarray | 渲染 |
+
+### 10.4 PyBullet 仿真接口 (pybullet_sim.py)
+
+#### PyBulletSimulator (PyBullet 仿真器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config, gui)` | PyBulletConfig, bool | PyBulletSimulator | 初始化 |
+| `load_robot(urdf_path, base_pos)` | str, List | int | 加载机器人 |
+| `reset()` | - | List | 重置 |
+| `step(ctrl)` | np.ndarray | List | 仿真一步 |
+| `get_joint_state()` | - | List | 获取关节状态 |
+| `apply_force(force, link)` | np.ndarray, int | None | 施加力 |
+| `check_collision()` | - | bool | 碰撞检测 |
+
+### 10.5 AGV 仿真场景接口 (agv_scenarios.py)
+
+#### AGVSimulator (AGV 仿真器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(config)` | AGVPhysicsConfig | AGVSimulator | 初始化 |
+| `reset()` | - | AGVState | 重置 |
+| `step(velocities, dt)` | np.ndarray, float | AGVState | 步进 |
+| `get_state()` | - | AGVState | 获取状态 |
+| `apply_disturbance(force, torque)` | float, float | None | 施加扰动 |
+| `check_boundary(bounds)` | Tuple | bool | 边界检查 |
+
+#### AGVPurePursuitController (纯追踪控制器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `__init__(lookahead_dist, wheelbase)` | float, float | AGVPurePursuitController | 初始化 |
+| `compute_control(state, path)` | AGVState, List | Tuple[float, float] | 计算控制 |
+| `update_lookahead(dist)` | float | None | 更新前瞻距离 |
+
+## 11. 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v1.55.0 | 2026-04-07 | 完善SPEC.md仿真模块接口设计，1332项测试全通过 |
+| v1.54.0 | 2026-04-07 | 修复sensor_tests.py中15项API不匹配问题，新增RK3588_NPU_DEPLOYMENT.md |
+| v1.53.0 | 2026-04-05 | 触觉/力觉/IMU模块完善，AGV五级规格完整 |
+| v1.52.0 | 2026-04-05 | 修复sensorimotor抓取阶段测试、pybullet_sim.py兼容性修复、1311项测试通过 |
+| v1.51.0 | 2026-04-03 | 补充AGV五级控制子系统规格表、PyBullet可视化仿真脚本、1277项测试通过 |
+| v1.50.0 | 2026-04-03 | 完成触觉/力觉/IMU传感器模块及测试套件、1277项测试通过 |
+| v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
+
