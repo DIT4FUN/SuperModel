@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
-"""Send Feishu progress report via Feishu Open API"""
-import json, urllib.request, urllib.error
+"""Send Feishu v1.56.0 progress report"""
+import json, urllib.request
 
 APP_ID = "cli_a94ec91dc1f8dcd5"
 APP_SECRET = "Htb0eWcTokzIMdpiLaK6Aht0XnNetp7S"
@@ -35,6 +35,7 @@ MESSAGE = """SuperModel项目进度更新 (v1.56.0 - 2026-04-07 08:06)：
 
 🔜 下一步: 真实AGV机器人集成测试、端到端具身智能演示"""
 
+# Get token
 req = urllib.request.Request(
     "https://open.feishu.cn/open-apis/auth/v3/tenant_access_token/internal",
     data=json.dumps({"app_id": APP_ID, "app_secret": APP_SECRET}).encode(),
@@ -42,9 +43,9 @@ req = urllib.request.Request(
     method="POST"
 )
 with urllib.request.urlopen(req) as resp:
-    token_data = json.loads(resp.read())
-    token = token_data["tenant_access_token"]
+    token = json.loads(resp.read())["tenant_access_token"]
 
+# Send message
 msg_req = urllib.request.Request(
     "https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
     data=json.dumps({"receive_id": CHAT_ID, "msg_type": "text", "content": json.dumps({"text": MESSAGE})}).encode(),
