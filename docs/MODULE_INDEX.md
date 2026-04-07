@@ -1,7 +1,7 @@
 # SuperModel 模块索引 / Module Index
 
-> **版本**: v1.52.0
-> **更新**: 2026-04-05 12:48
+> **版本**: v1.54.0
+> **更新**: 2026-04-07 11:33
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 本文档是 SuperModel 项目的完整模块索引，提供所有源代码模块、设计文档和测试用例的快速导航。
@@ -10,17 +10,11 @@
 
 ## 更新日志
 
+- **v1.54.0** (2026-04-07 11:33): 新增PRACTICAL_DEPLOYMENT.md五级部署实战指南(选型→配置→仿真→实机)，MODULE_INDEX测试数更新至1340+项全部通过
 - **v1.53.0** (2026-04-05 17:23): 更新所有文档、添加硬件规格(镭神N10P/ETT10A-PW/ESUN万向轮/Astra/C100/ZLAC8015D)
 - **v1.52.0** (2026-04-05 12:48): 修复sensorimotor抓取仿真阶段判断bug、pybullet_sim.py物理引擎兼容修复、SPEC.md扩展接口设计文档、1311项测试通过
 - **v1.51.0** (2026-04-03): 补充AGV五级控制子系统规格表、PyBullet可视化仿真脚本、1277项测试通过
 - **v1.46.0** (2026-04-02 21:00): 新增AGV五级规格速查卡AGV_SPEC_QUICKREF.md、一图对比+选型指南、1135项测试持续通过
-- **v1.44.0** (2026-04-02): 新增41项边界/鲁棒性测试 (NaN/Inf/饱和/集成融合)，总计1135项测试通过
-- **v1.31.0** (2026-04-01): 新增 AGV五级快速参考卡 AGV_SPEC_QUICKREF.md (一键速查S→XXL规格差异)
-- **v1.30.0** (2026-04-01): 控制模块测试全部完成 (1112项测试通过)
-- **v1.29.0** (2026-04-01): 新增附录E - AGV五级完整规格总表 (七大子系统全覆盖)
-- **v1.23.0** (2026-04-01): 新增附录D - AGV World Model世界模型规格
-- **v1.22.0** (2026-04-01): 新增MODULE_INDEX.md模块索引文档
-- **v1.21.0** (2026-04-01): 全模块完成确认 (触觉/力觉/IMU + 控制 + 测试1019项通过)
 
 ---
 
@@ -173,8 +167,9 @@ src/
 | `control_tests.py` | 174+ | 运动/MPC/阻抗/安全控制器 |
 | `pybullet_sim_tests.py` | 41 | PyBullet仿真 |
 | `ros2_interface_tests.py` | 44+ | ROS2通信 |
-| 其他 | 168+ | 编码器/仿真/场景 |
-| **总计** | **685+** | **全部通过** |
+| `five_grade_integration_tests.py` | 50+ | 五级AGV完整集成 |
+| 其他 | 732+ | 编码器/仿真/场景/边界/鲁棒性 |
+| **总计** | **1340+** | **全部通过** |
 
 ---
 
@@ -182,15 +177,16 @@ src/
 
 ```
 docs/
-├── QUICKSTART.md          # 快速入门指南
-├── HARDWARE_SPEC.md      # 硬件规格说明 (镭神N10P/ETT10A-PW/Astra/C100/ZLAC8015D)
-├── AGV_SPEC.md          # AGV规格说明
-├── SPEC.md              # 技术规格文档
-├── MODULE_INDEX.md     # 模块索引
-├── DESIGN.md           # 架构设计文档
+├── QUICKSTART.md               # 快速入门指南
+├── HARDWARE_SPEC.md           # 硬件规格说明 (镭神N10P/ETT10A-PW/Astra/C100/ZLAC8015D)
+├── AGV_SPEC.md                # AGV规格说明
+├── SPEC.md                   # 技术规格文档
+├── MODULE_INDEX.md           # 模块索引
+├── DESIGN.md                # 架构设计文档
+├── PRACTICAL_DEPLOYMENT.md   # AGV五级部署实战指南 (选型→配置→仿真→实机)
 └── architecture/
 │   ├── SUPER_MODEL_ARCHITECTURE.md    # 系统架构
-│   ├── MODEL_STRUCTURE.md             # 模型内部结构层次图 (新增)
+│   ├── MODEL_STRUCTURE.md             # 模型内部结构层次图
 │   ├── SENSOR_CONTROL_PRACTICAL_GUIDE.md  # 传感器-控制实战指南
 │   └── AGV_COMPLETE_SPEC_REFERENCE.md  # AGV完整规格参考
 └── design/
