@@ -60,17 +60,26 @@ SuperModel/
 │   ├── run_agv_showcase.py # AGV等级展示
 │   └── base_sim.py       # 仿真基类
 ├── examples/             # 示例脚本
-├── tests/               # 测试用例 (685+项通过)
-│   ├── sensor_tests.py
-│   ├── fusion_tests.py
+├── tests/               # 测试用例 (1362+项通过)
+│   ├── sensor_tests.py   # 触觉/力觉/IMU传感器测试
+│   ├── fusion_tests.py   # 跨模态融合测试
+│   ├── control_integration_tests.py  # 控制集成测试
+│   ├── five_grade_integration_tests.py # AGV五级集成测试
 │   ├── pybullet_sim_tests.py
 │   └── ...
 ├── docs/                # 设计文档
 │   ├── HARDWARE_SPEC.md  # 硬件规格说明
 │   ├── AGV_SPEC.md      # AGV技术规格
-│   ├── SPEC.md          # 技术规格
+│   ├── AGV_SPEC_QUICKREF.md  # AGV五级速查卡
+│   ├── SPEC.md          # 技术规格（含模块接口设计）
 │   ├── DESIGN.md        # 架构设计
-│   └── MODULE_INDEX.md   # 模块索引
+│   ├── MODULE_INDEX.md   # 模块索引（v1.61.0, 5334行）
+│   ├── SENSOR_API_GUIDE.md  # 传感器API实用指南
+│   └── design/
+│       ├── MODULE_INTERFACE.md  # 详细接口设计（36章节, 5334行）
+│       ├── AGV_FIVE_LEVEL_CONSOLIDATED_SPEC.md  # 五级规格总表
+│       ├── CONTROL_GRADE_SPEC.md  # 控制等级规格
+│       └── SYSTEM_ARCHITECTURE.md  # 系统架构
 └── README.md
 ```
 
