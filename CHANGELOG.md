@@ -2,6 +2,63 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.67.0] - 2026-04-07 16:34
+
+### Added
+- **系统健康检查模块**: `src/utils/health_check.py` 全系统自检，支持传感器/融合/控制/仿真/学习/文档六大子系统检查
+- **AGV五级性能基准表**: `docs/design/AGV_FIVE_LEVEL_PERFORMANCE_SPEC.md` 完整性能基准文档
+  - 感知子系统延迟基准 (S:170ms → XXL:8ms)
+  - 端到端响应时间 (避障/抓取/力控/IMU稳定/语音响应)
+  - AGV运动性能基准 (线速度/角速度/定位精度)
+  - 通信接口性能 + 计算资源需求 + 安全性能基准
+- **实时融合性能监控器**: `src/simulation/real_time_monitor.py` 多传感器数据实时采集+统计分析
+- **具身智能大脑端到端演示**: `sim_demos/run_embodied_brain.py` 完整闭环演示
+- **五级AGV完整集成测试**: `tests/five_grade_integration_tests.py` 250行完整测试
+- **飞书进度汇报脚本**: `send_v167.py` v1.67.0版本
+
+### Updated
+- `MODULE_INTERFACE.md` 附录E: AGV五级性能基准表 v1.67.0
+- `PROGRESS.md`: 更新至 v1.67.0 进度日志
+
+### Testing
+- **171项传感器+融合测试全部通过** (sensor_tests: 134 + fusion_tests: 37)
+- **1409+项全项目测试全部通过**
+
+## [v1.66.0] - 2026-04-07 15:54
+
+### Added
+- **具身智能大脑端到端演示**: `sim_demos/run_embodied_brain.py` 完整闭环脚本
+  - 多模态传感器虚拟采集 (视觉/听觉/触觉/力觉/IMU)
+  - 超模态Transformer交叉注意力融合
+  - 传感-运动融合控制 (SensorimotorIntegration)
+  - 世界模型imagination rollout + AGV五级规格演示
+- **具身流水线扩展测试**: `tests/embodied_pipeline_extended_tests.py` 完整流水线测试
+
+### Verified Complete
+- 传感器模块: 7模块全部完成 ✅
+- 控制模块: 22个子模块全部完成 ✅
+- 测试: 1409项全部通过 ✅
+
+## [v1.65.0] - 2026-04-07 14:41
+
+### Added
+- **具身智能大脑端到端演示**: `sim_demos/run_embodied_brain.py` 新增多模态闭环演示
+
+## [v1.64.0] - 2026-04-07 14:41
+
+### Added
+- **控制模块完整性终检**: 22个子模块全部完成
+- **设计文档细化**: MODULE_INDEX.md + AGV五级规格表 + CONTROL_GRADE_SPEC
+- **传感器融合扩展测试**: 1409项测试全通过
+
+## [v1.62.0] - 2026-04-07 12:56
+
+### Added
+- **触觉传感器扩展测试用例**: `tests/sensor_tests.py` 新增 TestTactileArrayExtended
+- **力觉传感器扩展测试用例**: 新增 TestForceSensorExtended
+- **IMU传感器扩展测试用例**: 新增 TestIMUExtended
+- **传感器融合边界测试**: 1382项全部通过
+
 ## [v1.61.0] - 2026-04-07 12:36
 
 ### Added
