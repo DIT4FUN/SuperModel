@@ -6,27 +6,21 @@ APP_ID = "cli_a94ec91dc1f8dcd5"
 APP_SECRET = "Htb0eWcTokzIMdpiLaK6Aht0XnNetp7S"
 CHAT_ID = "oc_930bbab59ae0857f8f4781724990fe23"
 
-MESSAGE = """SuperModel项目进度更新 (v1.65.0 - 2026-04-07 15:34)：
+MESSAGE = """SuperModel项目进度更新 (v1.66.0 - 2026-04-07 15:54)：
 
 ✅ 本次完成（学习进度）：
-  - sim_demos/run_embodied_brain.py: 具身智能大脑端到端演示脚本
-    * 多模态传感器虚拟采集 (视觉/听觉/触觉/力觉/IMU)
-    * 超模态Transformer交叉注意力融合
-    * 传感-运动融合控制 (SensorimotorIntegration)
-    * 世界模型imagination rollout
-    * AGV五级规格演示 (S/M/L)
-    * 实时状态可视化
-  - tests/embodied_pipeline_extended_tests.py: 具身流水线扩展测试
-    * 多模态传感器协同采集测试
-    * 跨模态Transformer融合测试
-    * 传感-运动融合控制测试
-    * 世界模型想象rollout测试
-    * AGV五级规格完整性测试
-    * 全流水线压力测试
-  - 测试验证: 134项传感器测试通过 + 37项融合测试通过
-  - GitHub已推送: 32d1662 → ff47316
+  - 全模块完整性终检确认：
+    * 传感器模块终检: tactile.py/force.py/imu.py 全部完成 ✅
+    * 控制模块终检: 22个子模块全部完成 ✅
+    * sensors/ 目录: 触觉(PressureSensor/TaxelArray/Piezoelectric/TactileArray)
+    * sensors/ 目录: 力觉(SixAxisFTSensor/SingleAxisForceSensor/ForceSensorArray)
+    * sensors/ 目录: IMU(BMI088/MPU9250/四元数工具/IMUArray管理器)
+    * 控制模块终检: motor/motion/trajectory/MPC/阻抗/AGV/安全/遥操作/多智能体/supervisor/autotune等
+  - 文档更新: PROGRESS.md 同步至 v1.66.0
+  - 测试验证: sensor_tests.py 134项 + fusion_tests.py 37项 = 171项全部通过
+  - GitHub已推送: ff47316 → 2839346
 
-📊 SuperModel整体状态 (v1.65.0)：
+📊 SuperModel整体状态 (v1.66.0)：
   传感器层: vision + audio + tactile + force + imu + encoders + manager (7模块)
   融合层: cross_modal_fusion + sensor_fusion (EKF/互补滤波/Madgwick)
   认知层: scene_understanding + world_model + dreamer_agent + 自监督 + 自主学习
