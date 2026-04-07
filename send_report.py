@@ -6,23 +6,27 @@ APP_ID = "cli_a94ec91dc1f8dcd5"
 APP_SECRET = "Htb0eWcTokzIMdpiLaK6Aht0XnNetp7S"
 CHAT_ID = "oc_930bbab59ae0857f8f4781724990fe23"
 
-MESSAGE = """SuperModel项目进度更新 (v1.64.0 - 2026-04-07 14:41)：
+MESSAGE = """SuperModel项目进度更新 (v1.65.0 - 2026-04-07 15:34)：
 
 ✅ 本次完成（学习进度）：
-  - 模块完整性审查确认：
-    * 触觉传感器模块 (tactile.py): 电子皮肤触觉阵列 + 接触检测 + 滑移检测 + 抓取质量评估 + AGV五级规格 ✅
-    * 力觉传感器模块 (force.py): 六维力矩传感器 + Wrench变换 + 碰撞仿真 + 摩擦力仿真 + 表面接触弹簧阻尼模型 ✅
-    * IMU传感器模块 (imu.py): Madgwick/互补滤波姿态估计 + AGV运动仿真 + 人类步行仿真 + AGV五级规格 ✅
-    * 控制模块 (control/): 22个子模块全部完成 ✅
-  - 设计文档细化:
-    * MODULE_INDEX.md 更新至 v1.64.0
-    * 详细模块接口设计: docs/design/MODULE_INTERFACE.md (5334行) ✅
-    * AGV五级规格总表: docs/design/AGV_FIVE_LEVEL_CONSOLIDATED_SPEC.md (948行) ✅
-    * 控制子系统五级规格: docs/design/CONTROL_GRADE_SPEC.md ✅
-  - 测试验证: 1409项全通过 (sensor_tests.py 134项 + fusion_tests.py 37项 + 全套 1409项)
-  - GitHub已推送: d69127b → ???
+  - sim_demos/run_embodied_brain.py: 具身智能大脑端到端演示脚本
+    * 多模态传感器虚拟采集 (视觉/听觉/触觉/力觉/IMU)
+    * 超模态Transformer交叉注意力融合
+    * 传感-运动融合控制 (SensorimotorIntegration)
+    * 世界模型imagination rollout
+    * AGV五级规格演示 (S/M/L)
+    * 实时状态可视化
+  - tests/embodied_pipeline_extended_tests.py: 具身流水线扩展测试
+    * 多模态传感器协同采集测试
+    * 跨模态Transformer融合测试
+    * 传感-运动融合控制测试
+    * 世界模型想象rollout测试
+    * AGV五级规格完整性测试
+    * 全流水线压力测试
+  - 测试验证: 134项传感器测试通过 + 37项融合测试通过
+  - GitHub已推送: 32d1662 → ff47316
 
-📊 SuperModel整体状态 (v1.64.0)：
+📊 SuperModel整体状态 (v1.65.0)：
   传感器层: vision + audio + tactile + force + imu + encoders + manager (7模块)
   融合层: cross_modal_fusion + sensor_fusion (EKF/互补滤波/Madgwick)
   认知层: scene_understanding + world_model + dreamer_agent + 自监督 + 自主学习
