@@ -54,7 +54,7 @@ with urllib.request.urlopen(req) as resp:
     token = token_data["tenant_access_token"]
 
 msg_req = urllib.request.Request(
-    "https://open.feishu.cn/open-apis/im/v1/messages",
+    f"https://open.feishu.cn/open-apis/im/v1/messages?receive_id_type=chat_id",
     data=json.dumps({
         "receive_id": CHAT_ID,
         "msg_type": "text",
