@@ -230,7 +230,10 @@ class ModalityEncoder(nn.Module):
             nn.Dropout(0.1)
         )
         
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x):
+        # 自动转换 numpy -> tensor (支持仿真测试)
+        if isinstance(x, np.ndarray):
+            x = torch.from_numpy(x)
         return self.proj(x)
 
 
@@ -248,12 +251,12 @@ class CrossModalFusion(nn.Module):
         super().__init__()
         self.config = config
         
-        # 模态特定编码器
-        self.vision_encoder = ModalityEncoder('vision', 512, config.hidden_dim)
-        self.audio_encoder = ModalityEncoder('audio', 128, config.hidden_dim)
-        self.tactile_encoder = ModalityEncoder('tactile', 64, config.hidden_dim)
-        self.force_encoder = ModalityEncoder('force', 32, config.hidden_dim)
-        self.imu_encoder = ModalityEncoder('imu', 64, config.hidden_dim)
+        # 模态特定编码器 (使用FusionConfig中的维度参数)
+        self.vision_encoder = ModalityEncoder('vision', config.vision_dim, config.hidden_dim)
+        self.audio_encoder = ModalityEncoder('audio', config.audio_dim, config.hidden_dim)
+        self.tactile_encoder = ModalityEncoder('tactile', config.tactile_dim, config.hidden_dim)
+        self.force_encoder = ModalityEncoder('force', config.force_dim, config.hidden_dim)
+        self.imu_encoder = ModalityEncoder('imu', config.imu_dim, config.hidden_dim)
         self.language_encoder = LanguageEncoder(
             vocab_size=config.vocab_size,
             embed_dim=config.language_dim,
