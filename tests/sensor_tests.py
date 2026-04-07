@@ -1132,3 +1132,197 @@ class TestSensorDataIntegrity(unittest.TestCase):
             self.assertIn("accel_range", spec)
             self.assertIn("gyro_range", spec)
             self.assertGreater(spec["gyro_range"], 0)
+
+
+class TestTactileArrayExtended(unittest.TestCase):
+    """触觉传感器扩展测试"""
+
+    def test_tactile_pressure_processor(self):
+        """测试压力处理器"""
+        from src.sensors.tactile import PressureProcessor
+        processor = PressureProcessor(filter_window=3)
+        pressure = np.random.rand(16, 16).astype(np.float32)
+        filtered = processor.filter(pressure)
+        self.assertEqual(filtered.shape, pressure.shape)
+        self.assertTrue(np.all(filtered >= 0))
+
+    def test_tactile_baseline_compensation(self):
+        """测试基线补偿"""
+        from src.sensors.tactile import PressureProcessor
+        processor = PressureProcessor()
+        pressure = np.random.rand(8, 8).astype(np.float32) * 0.5 + 0.1
+        compensated = processor.compensate_baseline(pressure, set_baseline=True)
+        self.assertEqual(compensated.shape, pressure.shape)
+
+    def test_tactile_centroid_computation(self):
+        """测试压力质心计算"""
+        from src.sensors.tactile import PressureProcessor
+        processor = PressureProcessor()
+        # 创建高斯分布压力
+        h, w = 16, 16
+        center = (8, 8)
+        xx, yy = np.meshgrid(np.arange(w), np.arange(h))
+        pressure = np.exp(-((xx - center[0])**2 + (yy - center[1])**2) / 10.0)
+        cy, cx = processor.compute_centroid(pressure)
+        self.assertTrue(5 < cy < 11)
+        self.assertTrue(5 < cx < 11)
+
+    def test_virtual_tactile_contact_simulation(self):
+        """测试虚拟触觉接触模拟"""
+        from src.sensors.tactile import VirtualTactileSensor
+        sensor = VirtualTactileSensor(array_size=(8, 8))
+        sensor.open()
+        frame = sensor.simulate_contact((0.5, 0.5), contact_radius=0.2, contact_force=5.0)
+        self.assertEqual(frame.pressure_map.shape, (8, 8))
+        self.assertTrue(np.max(frame.pressure_map) > 0)
+        sensor.close()
+
+    def test_virtual_tactile_sliding(self):
+        """测试虚拟触觉滑模拟"""
+        from src.sensors.tactile import VirtualTactileSensor
+        sensor = VirtualTactileSensor(array_size=(8, 8))
+        sensor.open()
+        frames = sensor.simulate_sliding(direction=(0.1, 0.0), speed=0.05, duration_frames=10)
+        self.assertEqual(len(frames), 10)
+        for f in frames:
+            self.assertEqual(f.pressure_map.shape, (8, 8))
+        sensor.close()
+
+
+class TestForceSensorExtended(unittest.TestCase):
+    """力觉传感器扩展测试"""
+
+    def test_wrench_transform(self):
+        """测试力旋量坐标变换"""
+        from src.sensors.force import Wrench
+        wrench = Wrench(force=np.array([1.0, 0.0, 0.0]), torque=np.array([0.0, 0.0, 0.0]))
+        R = np.eye(3)
+        t = np.array([0.1, 0.0, 0.0])
+        transformed = wrench.transform(R, t)
+        self.assertEqual(transformed.force[0], 1.0)
+
+    def test_wrench_processor_filter(self):
+        """测试力旋量处理器滤波"""
+        from src.sensors.force import WrenchProcessor
+        processor = WrenchProcessor(filter_alpha=0.3)
+        wrench = np.array([1.0, 2.0, 3.0, 0.1, 0.2, 0.3])
+        filtered = processor.filter(wrench)
+        self.assertEqual(len(filtered), 6)
+
+    def test_wrench_direction(self):
+        """测试力方向计算"""
+        from src.sensors.force import WrenchProcessor
+        processor = WrenchProcessor()
+        wrench = np.array([1.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        direction = processor.compute_force_direction(wrench)
+        np.testing.assert_array_almost_equal(direction, [1.0, 0.0, 0.0])
+
+    def test_virtual_force_contact(self):
+        """测试虚拟力觉接触"""
+        from src.sensors.force import VirtualForceSensor
+        sensor = VirtualForceSensor()
+        sensor.open()
+        wrench = sensor.simulate_contact((10.0, 0.0, 0.0), (0.0, 0.0, 0.0))
+        self.assertEqual(len(wrench.force), 3)
+        self.assertTrue(wrench.magnitude > 0)
+        sensor.close()
+
+    def test_virtual_force_payload(self):
+        """测试虚拟力觉负载模拟"""
+        from src.sensors.force import VirtualForceSensor
+        sensor = VirtualForceSensor()
+        sensor.open()
+        wrench = sensor.simulate_payload(mass=5.0, com_offset=(0.1, 0.0, 0.0))
+        self.assertLess(wrench.force[2], -40.0)  # Should be negative around -5*9.81
+        sensor.close()
+
+    def test_virtual_force_collision(self):
+        """测试虚拟力觉碰撞"""
+        from src.sensors.force import VirtualForceSensor
+        sensor = VirtualForceSensor()
+        sensor.open()
+        frames = sensor.simulate_collision(direction=(1.0, 0.0, 0.0), peak_force=50.0, duration_ms=50.0)
+        self.assertTrue(len(frames) >= 4)
+        for f in frames:
+            self.assertEqual(len(f.force), 3)
+        sensor.close()
+
+
+class TestIMUExtended(unittest.TestCase):
+    """IMU传感器扩展测试"""
+
+    def test_pose_identity(self):
+        """测试单位位姿"""
+        from src.sensors.imu import Pose
+        pose = Pose.identity()
+        np.testing.assert_array_almost_equal(pose.position, [0, 0, 0])
+        np.testing.assert_array_almost_equal(pose.orientation, [1, 0, 0, 0])
+
+    def test_pose_to_euler(self):
+        """测试位姿转欧拉角"""
+        from src.sensors.imu import Pose
+        pose = Pose(position=np.zeros(3), orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+        euler = pose.to_euler()
+        np.testing.assert_array_almost_equal(euler, [0, 0, 0])
+
+    def test_pose_from_euler(self):
+        """测试欧拉角转位姿"""
+        from src.sensors.imu import Pose
+        pose = Pose.from_euler(np.zeros(3), np.array([0.0, 0.0, 0.0]))
+        self.assertIsNotNone(pose.orientation)
+
+    def test_pose_estimator_reset(self):
+        """测试姿态估计器重置"""
+        from src.sensors.imu import PoseEstimator
+        estimator = PoseEstimator(algorithm='madgwick')
+        estimator.update(np.array([0, 0, -9.81]), np.array([0.1, 0.1, 0.1]), None, dt=0.01)
+        estimator.reset()
+        self.assertEqual(estimator.quaternion[0], 1.0)
+
+    def test_virtual_imu_static(self):
+        """测试虚拟IMU静止状态"""
+        from src.sensors.imu import VirtualIMUSensor
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        frame = sensor.simulate_static((0.0, 0.0, 0.0))
+        self.assertEqual(len(frame.accel), 3)
+        self.assertTrue(frame.accel_magnitude > 9.0)
+        sensor.close()
+
+    def test_virtual_imu_motion(self):
+        """测试虚拟IMU运动状态"""
+        from src.sensors.imu import VirtualIMUSensor
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        frame = sensor.simulate_motion((1.0, 0.0, 0.0), (0.0, 0.0, 0.1), dt=0.01)
+        self.assertEqual(len(frame.accel), 3)
+        self.assertEqual(len(frame.gyro), 3)
+        sensor.close()
+
+    def test_virtual_imu_trajectory(self):
+        """测试虚拟IMU轨迹"""
+        from src.sensors.imu import VirtualIMUSensor
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        frames = sensor.simulate_trajectory("circle", duration_s=0.1, dt=0.01)
+        self.assertTrue(len(frames) >= 9)
+        sensor.close()
+
+    def test_virtual_imu_agv_motion(self):
+        """测试虚拟IMU AGV运动"""
+        from src.sensors.imu import VirtualIMUSensor
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            frame = sensor.simulate_agv_motion((0.5, 0.0), 0.0, grade=grade)
+            self.assertEqual(len(frame.accel), 3)
+        sensor.close()
+
+    def test_virtual_imu_human_walking(self):
+        """测试虚拟IMU人类步行"""
+        from src.sensors.imu import VirtualIMUSensor
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        frames = sensor.simulate_human_walking(step_frequency=1.5, duration_s=0.5, dt=0.01)
+        self.assertTrue(len(frames) >= 49)
+        sensor.close()
