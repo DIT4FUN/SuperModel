@@ -1,7 +1,7 @@
 # SuperModel 模块索引 / Module Index
 
-> **版本**: v1.55.0
-> **更新**: 2026-04-07 11:53
+> **版本**: v1.61.0
+> **更新**: 2026-04-07 12:36
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 本文档是 SuperModel 项目的完整模块索引，提供所有源代码模块、设计文档和测试用例的快速导航。
@@ -10,7 +10,7 @@
 
 ## 更新日志
 
-- **v1.55.0** (2026-04-07 11:53): MuJoCo仿真API兼容修复(mj_contactForce→(6,1)数组)+运动测试稳定性增强，1362项测试全通过
+- **v1.61.0** (2026-04-07 12:36): 新增控制集成测试(control_integration_tests.py, 27项) + 传感器融合仿真演示(run_sensor_fusion.py, S/M/L三级) + 触觉/力觉/IMU流水线测试
 - **v1.53.0** (2026-04-05 17:23): 更新所有文档、添加硬件规格(镭神N10P/ETT10A-PW/ESUN万向轮/Astra/C100/ZLAC8015D)
 - **v1.52.0** (2026-04-05 12:48): 修复sensorimotor抓取仿真阶段判断bug、pybullet_sim.py物理引擎兼容修复、SPEC.md扩展接口设计文档、1311项测试通过
 - **v1.51.0** (2026-04-03): 补充AGV五级控制子系统规格表、PyBullet可视化仿真脚本、1277项测试通过
@@ -163,13 +163,14 @@ src/
 | 文件 | 测试数 | 覆盖范围 |
 |------|--------|---------|
 | `sensor_tests.py` | 114+ | 触觉/力觉/IMU/Vision/Audio |
-| `fusion_tests.py` | 185+ | 跨模态融合网络 |
+| `fusion_tests.py` | 37+ | 跨模态融合网络 |
+| `control_integration_tests.py` | 27 | 传感器-融合-控制-执行器完整闭环 |
 | `control_tests.py` | 174+ | 运动/MPC/阻抗/安全控制器 |
 | `pybullet_sim_tests.py` | 41 | PyBullet仿真 |
 | `ros2_interface_tests.py` | 44+ | ROS2通信 |
 | `five_grade_integration_tests.py` | 50+ | 五级AGV完整集成 |
 | 其他 | 732+ | 编码器/仿真/场景/边界/鲁棒性 |
-| **总计** | **1340+** | **全部通过** |
+| **总计** | **1362+** | **全部通过** |
 
 ---
 

@@ -2,6 +2,12 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.61.0] - 2026-04-07 12:36
+
+### Added
+- **控制集成测试**: `tests/control_integration_tests.py` 新增27项，覆盖触觉/力觉/IMU伺服控制与AGV运动学
+- **传感器融合仿真**: `sim_demos/run_sensor_fusion.py` 新增S/M/L三级AGV完整传感器融合控制仿真演示
+
 ## [v1.59.0] - 2026-04-07 11:53
 
 ### Bug Fixes
