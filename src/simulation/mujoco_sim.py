@@ -354,9 +354,10 @@ class MuJoCoSimulator:
         forces = np.zeros((self.data.ncon, 3))
         for i in range(self.data.ncon):
             contact = self.data.contact[i]
-            force = np.zeros(3)
+            # mujoco.mj_contactForce expects [6,1] shaped array (force+torque)
+            force = np.zeros((6, 1))
             mujoco.mj_contactForce(self.model, self.data, i, force)
-            forces[i] = force
+            forces[i] = force[:3, 0]  # Extract force component only
         return forces
     
     def _quat_to_euler(self, quat: np.ndarray) -> np.ndarray:

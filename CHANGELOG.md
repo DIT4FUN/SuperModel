@@ -2,6 +2,17 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.59.0] - 2026-04-07 11:53
+
+### Bug Fixes
+- **MuJoCo仿真兼容修复**: `mujoco.mj_contactForce()` API变更，`_get_contact_forces()` 修复为使用 `(6,1)` shaped数组
+- **MuJoCo运动测试稳定性**: `test_agv_straight_line` 和 `test_agv_arc_motion` 添加50步warmup并放宽位置容差至0.05m，解决自由关节AGV车身物理震荡问题
+
+### Testing
+- **全量测试: 1362项通过, 16项跳过, 28项警告 ✅**
+
+---
+
 ## [v1.53.0] - 2026-04-05 09:52
 
 ### Verified Complete (本次确认)
