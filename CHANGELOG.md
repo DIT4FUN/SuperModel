@@ -2,6 +2,21 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.69.0] - 2026-04-08 15:20
+
+### 新增
+- 新增飞书汇报脚本 send_report_v168.py (v1.68.0版本报告)
+- 触觉/力觉/IMU模块终验通过
+- AGV五级规格体系完整落地
+
+### 测试
+- sensor_tests.py: 134项全部通过
+- fusion_tests.py: 37项全部通过
+- 全项目测试: 1423+项全部通过
+
+### GitHub
+- 提交: 66daac5
+
 ## [v1.68.0] - 2026-04-08 14:20
 
 ### Fixed
