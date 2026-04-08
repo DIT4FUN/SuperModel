@@ -140,6 +140,21 @@ python run_agv_showcase.py
 | 从动轮 | ESUN 2.5寸静音避震万向轮 |
 | 最大速度 | 1.5m/s |
 
+### 具身智能传感器综合展示
+
+```bash
+cd examples
+
+# 运行M级AGV完整展示
+python embodied_sensor_showcase.py --grade M
+
+# 运行所有等级测试
+python embodied_sensor_showcase.py --all-grades
+
+# 运行特定等级
+python embodied_sensor_showcase.py --grade L --duration 5
+```
+
 ## 硬件配置
 
 ### 传感器
@@ -208,6 +223,18 @@ p.disconnect()
 | 奥比中光 Astra Pro Plus | https://item.taobao.com/item.htm?id=646073233035 |
 | 奥比中光 C100/C70 | https://item.taobao.com/item.htm?id=641692244195 |
 | 中菱 ZLAC8015D 驱动器 | https://item.taobao.com/item.htm?id=677349695836 |
+
+## 示例脚本
+
+| 脚本 | 描述 |
+|------|------|
+| `examples/embodied_sensor_showcase.py` | 触觉+力觉+IMU→融合→AGV控制 完整闭环展示 |
+| `examples/agv_five_level_demo.py` | AGV五级规格对比演示 |
+| `examples/multimodal_sensor_fusion_demo.py` | 多模态传感器融合演示 |
+| `sim_demos/run_sensor_fusion.py` | 传感器融合控制仿真 (PyBullet) |
+| `sim_demos/run_agv_showcase.py` | AGV等级展示 |
+| `sim_demos/run_warehouse.py` | 仓库物流仿真 |
+| `sim_demos/run_multi_agv.py` | 多AGV协同仿真 |
 
 ## 许可证
 
