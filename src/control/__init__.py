@@ -22,7 +22,13 @@ from .motion import MotionController, JointTrajectory, TwistCommand, AdaptivePID
 from .trajectory import (
     TrajectoryGenerator, RRTPlanner, ScurveGenerator,
     JointWaypoint, CartesianWaypoint, TrajectoryConfig,
-    PlanningAlgorithm, get_trajectory_spec
+    PlanningAlgorithm, get_trajectory_spec,
+    VelocityProfiler, VelocityProfile,
+)
+from .trajectory_planning import (
+    TrajectoryPlanner, TrajectoryPoint, Trajectory,
+    Waypoint, PurePursuitTracker, StanleyTracker,
+    PIDTrajectoryTracker, RRTStarPlanner, MinimumSnapTrajectory,
 )
 from .skill import SkillLibrary, Skill, SkillRegistry
 from .planner import TaskPlanner, Task, TaskStatus
@@ -46,7 +52,8 @@ from .mpc import (
 from .agv import (
     AGVMotionController, TrajectoryTracker, AGVSpec, AGVPose, AGVTwist,
     DriveType, AGVGrade,
-    DifferentialKinematics, MecanumKinematics, get_agv_spec
+    DifferentialKinematics, MecanumKinematics, get_agv_spec,
+    PurePursuitTracker, StanleyTracker, PIDTrajectoryTracker
 )
 from .multi_agent import (
     MultiAgentCoordinator, FormationType, CoordinationState,
@@ -98,12 +105,18 @@ from .sensorimotor import (
     SensorimotorSimulator,
     AGV_SENSORIMOTOR_GRADES, get_sensorimotor_spec
 )
+from .trajectory_planning import (
+    TrajectoryPlanner, TrajectoryPoint, Trajectory,
+    Waypoint, PurePursuitTracker, StanleyTracker,
+    PIDTrajectoryTracker, RRTStarPlanner, MinimumSnapTrajectory,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
     'TrajectoryGenerator', 'RRTPlanner', 'ScurveGenerator',
     'JointWaypoint', 'CartesianWaypoint', 'TrajectoryConfig',
     'PlanningAlgorithm', 'get_trajectory_spec',
+    'VelocityProfiler', 'VelocityProfile',
     'SkillLibrary', 'Skill', 'SkillRegistry',
     'TaskPlanner', 'Task', 'TaskStatus',
     'ImpedanceController',
@@ -120,6 +133,7 @@ __all__ = [
     'AGVMotionController', 'TrajectoryTracker', 'AGVSpec', 'AGVPose', 'AGVTwist',
     'DriveType', 'AGVGrade',
     'DifferentialKinematics', 'MecanumKinematics', 'get_agv_spec',
+    'PurePursuitTracker', 'StanleyTracker', 'PIDTrajectoryTracker',
     'MultiAgentCoordinator', 'FormationType', 'CoordinationState',
     'AgentState', 'FormationSlot', 'CoordinationTask', 'CollisionRisk',
     'get_coordination_spec',

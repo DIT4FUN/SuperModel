@@ -13,17 +13,19 @@ import math
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 from control.planner import (
-    VelocityProfiler,
-    VelocityProfile,
-    TrajectoryPlanner,
-    Waypoint,
-    TrajectoryPoint,
-    Trajectory,
-    PurePursuitTracker,
-    StanleyTracker,
-    PIDTrajectoryTracker,
-    RRTStarPlanner,
-    MinimumSnapTrajectory,
+    TaskPlanner, Task, TaskStatus, TaskPriority,
+    HierarchicalPlanner, PlannerGrade, PlannerSpec,
+)
+from control.trajectory import (
+    VelocityProfiler, VelocityProfile,
+)
+from control.agv import (
+    AGVMotionController, AGVPose,
+)
+from control.trajectory_planning import (
+    TrajectoryPlanner, TrajectoryPoint, Trajectory,
+    Waypoint, PurePursuitTracker, StanleyTracker,
+    PIDTrajectoryTracker, RRTStarPlanner, MinimumSnapTrajectory,
 )
 
 
@@ -52,7 +54,7 @@ class TestVelocityProfiler(unittest.TestCase):
         t_pts, v_pts = self.profiler.plan(distance=0.1, v0=0.0, v1=0.0)
         self.assertEqual(len(t_pts), len(v_pts))
         # 短距离：只有加速和减速
-        self.assertGreater(v_pts[0], 0)
+        self.assertGreaterEqual(v_pts[0], 0)  # starts at v0=0
 
     def test_trapezoidal_plan_with_initial_velocity(self):
         """测试梯形速度规划 - 有初始速度"""

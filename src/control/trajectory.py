@@ -25,6 +25,145 @@ class PlanningAlgorithm(Enum):
     INF_PLANNER = "informed_rrt_star"
 
 
+class VelocityProfile(Enum):
+    """速度曲线类型"""
+    TRAPEZOIDAL = "trapezoidal"
+    S_CURVE = "s_curve"
+    QUINTIC = "quintic"
+    MINIMUM_JERK = "minimum_jerk"
+
+
+class VelocityProfiler:
+    """速度规划器: 梯形/S曲线速度规划"""
+
+    def __init__(
+        self,
+        max_v: float = 1.0,
+        max_a: float = 0.5,
+        max_j: float = 2.0,
+        profile_type: VelocityProfile = VelocityProfile.TRAPEZOIDAL
+    ):
+        self.max_v = max_v
+        self.max_a = max_a
+        self.max_j = max_j
+        self.profile_type = profile_type
+
+    def plan(
+        self,
+        distance: float,
+        v0: float = 0.0,
+        v1: float = 0.0
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        if self.profile_type == VelocityProfile.TRAPEZOIDAL:
+            return self._trapezoidal(distance, v0, v1)
+        else:
+            return self._s_curve(distance, v0, v1)
+
+    def _trapezoidal(self, distance: float, v0: float, v1: float) -> Tuple[np.ndarray, np.ndarray]:
+        v0 = min(v0, self.max_v)
+        v1 = min(v1, self.max_v)
+        dt_accel = abs(self.max_v - v0) / self.max_a if self.max_a > 0 else 0
+        dt_decel = abs(self.max_v - v1) / self.max_a if self.max_a > 0 else 0
+        d_accel = (v0 + self.max_v) * 0.5 * dt_accel
+        d_decel = (v1 + self.max_v) * 0.5 * dt_decel
+        d_cruise = max(0, distance - d_accel - d_decel)
+        dt_cruise = d_cruise / self.max_v if self.max_v > 0 else 0
+        t_accel = np.linspace(0, dt_accel, max(2, int(dt_accel * 50) + 1))
+        v_accel = np.clip(v0 + self.max_a * t_accel, 0, self.max_v)
+        t_cruise = np.linspace(dt_accel, dt_accel + dt_cruise, max(2, int(dt_cruise * 50) + 1))
+        v_cruise = np.full_like(t_cruise, self.max_v)
+        t_decel_start = dt_accel + dt_cruise
+        t_decel = np.linspace(t_decel_start, t_decel_start + dt_decel, max(2, int(dt_decel * 50) + 1))
+        v_decel = np.clip(self.max_v - self.max_a * (t_decel - t_decel_start), v1, self.max_v)
+        t_pts = np.concatenate([t_accel, t_cruise[1:], t_decel[1:]])
+        v_pts = np.concatenate([v_accel, v_cruise[1:], v_decel[1:]])
+        return t_pts, v_pts
+
+    def _s_curve(self, distance: float, v0: float, v1: float) -> Tuple[np.ndarray, np.ndarray]:
+        v0 = min(v0, self.max_v)
+        v1 = min(v1, self.max_v)
+        Ta = (self.max_v - v0) / self.max_a if self.max_a > 0 else 0
+        Tb = (self.max_v - v1) / self.max_a if self.max_a > 0 else 0
+        Tj = self.max_a / self.max_j if self.max_j > 0 else 0
+        d_accel = v0 * Ta + 0.5 * self.max_a * Ta * Ta
+        d_decel = v1 * Tb + 0.5 * self.max_a * Tb * Tb
+        d_jerk = 2 * (0.5 * self.max_a * Tj * Tj)
+        d_cruise = max(0, distance - d_accel - d_decel - d_jerk)
+        dt_cruise = d_cruise / self.max_v if self.max_v > 0 else 0
+        total_time = 2 * Tj + Ta + 2 * Tj + Tb + dt_cruise
+        t_pts = np.linspace(0, total_time, max(10, int(total_time * 50)))
+        v_pts = np.zeros_like(t_pts)
+        for i, t in enumerate(t_pts):
+            if t < Tj:
+                v = v0 + 0.5 * self.max_j * t * t
+            elif t < Tj + Ta:
+                v = v0 + self.max_a * (t - Tj)
+            elif t < 2 * Tj + Ta:
+                v = self.max_v - 0.5 * self.max_j * (t - Tj - Ta) ** 2
+            elif t < 2 * Tj + Ta + dt_cruise:
+                v = self.max_v
+            elif t < 2 * Tj + Ta + dt_cruise + Tj:
+                v = self.max_v - 0.5 * self.max_j * (t - 2 * Tj - Ta - dt_cruise) ** 2
+            elif t < 2 * Tj + Ta + dt_cruise + Tj + Tb:
+                v = self.max_v - self.max_a * (t - 3 * Tj - Ta - dt_cruise)
+            else:
+                v = max(v1, self.max_v - 0.5 * self.max_j * (t - 3 * Tj - Ta - dt_cruise - Tj - Tb) ** 2)
+            v_pts[i] = min(v, self.max_v)
+        return t_pts, v_pts
+
+
+class MinimumSnapTrajectory:
+    """最小Snap轨迹生成器"""
+
+    def __init__(
+        self,
+        waypoints: List[np.ndarray],
+        times: Optional[List[float]] = None,
+        order: int = 5
+    ):
+        self.waypoints = waypoints
+        self.times = times
+        self.order = order
+        self._coefficients = None
+        self._total_duration = 0.0
+        if waypoints and times:
+            self._total_duration = times[-1]
+            self._plan()
+
+    def _plan(self):
+        n = len(self.waypoints)
+        if n < 2 or not self.times:
+            return
+        self._coefficients = []
+        for i in range(n - 1):
+            p0 = self.waypoints[i]
+            p1 = self.waypoints[i + 1]
+            t0 = self.times[i]
+            t1 = self.times[i + 1]
+            dt = t1 - t0
+            coeffs = np.zeros((len(p0), self.order + 1))
+            for d in range(len(p0)):
+                coeffs[d, 0] = p0[d]
+                coeffs[d, 1] = (p1[d] - p0[d]) / dt
+            self._coefficients.append(coeffs)
+
+    def evaluate(self, t: float) -> Tuple[np.ndarray, np.ndarray, np.ndarray]:
+        if not self._coefficients or not self.times:
+            return np.zeros(3), np.zeros(3), np.zeros(3)
+        seg_idx = min(max(0, int(t / max(self._total_duration / (len(self.times) - 1), 1))), len(self._coefficients) - 1)
+        dt = t - self.times[seg_idx] if seg_idx < len(self.times) else 0
+        coeffs = self._coefficients[seg_idx]
+        powers = np.array([dt ** k for k in range(self.order + 1)])
+        position = coeffs @ powers
+        vel_coeffs = coeffs[:, 1:] * np.arange(1, self.order + 1)
+        vel_powers = np.array([dt ** k for k in range(self.order)])
+        velocity = vel_coeffs @ vel_powers
+        return position, velocity, np.zeros_like(position)
+
+    def get_duration(self) -> float:
+        return self._total_duration
+
+
 @dataclass
 class JointWaypoint:
     """关节路点"""

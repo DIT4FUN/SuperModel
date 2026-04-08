@@ -678,3 +678,360 @@ class TrajectoryTracker:
         self._current_idx = 0
         self._last_error = 0.0
         self._agv = AGVMotionController(self.spec)
+
+
+class PurePursuitTracker:
+    """
+    Pure Pursuit 轨迹跟踪控制器
+
+    经典的几何跟踪算法:
+    - 在参考轨迹上找到前看点 (lookahead point)
+    - 计算转向角使AGV朝向前看点
+    - 速度控制使用恒定或自适应速率
+
+    适用于: 差速驱动、全向移动、麦克纳姆轮
+    """
+
+    def __init__(
+        self,
+        spec: AGVSpec,
+        look_ahead_dist: float = 0.5,
+        look_ahead_time: float = 1.0,
+        k_gain: float = 2.0,
+        min_look_ahead: float = 0.1,
+        max_look_ahead: float = 2.0,
+        linear_velocity: float = 0.3
+    ):
+        self.spec = spec
+        self.look_ahead_dist = look_ahead_dist
+        self.look_ahead_time = look_ahead_time
+        self.k_gain = k_gain
+        self.min_look_ahead = min_look_ahead
+        self.max_look_ahead = max_look_ahead
+        self.linear_velocity = linear_velocity
+
+        self._agv = AGVMotionController(spec)
+        self._trajectory: List[AGVPose] = []
+        self._current_idx = 0
+
+    def set_trajectory(self, trajectory: List[AGVPose]):
+        self._trajectory = trajectory
+        self._current_idx = 0
+
+    def set_pose(self, pose: AGVPose):
+        self._agv.update_pose(pose)
+
+    @property
+    def pose(self) -> AGVPose:
+        return self._agv.pose
+
+    def _find_look_ahead_point(self) -> Tuple[int, AGVPose]:
+        """找到前看轨迹点"""
+        current = self.pose
+        current_pos = np.array([current.x, current.y])
+
+        # 自适应前看距离 (速度越快前看越远)
+        v = current.vx if hasattr(current, 'vx') else self.linear_velocity
+        lad = min(self.max_look_ahead, max(
+            self.min_look_ahead,
+            self.look_ahead_dist + v * self.look_ahead_time
+        ))
+
+        best_idx = self._current_idx
+        best_dist = float('inf')
+
+        for i in range(self._current_idx, len(self._trajectory)):
+            pt = self._trajectory[i]
+            pt_pos = np.array([pt.x, pt.y])
+            dist = np.linalg.norm(pt_pos - current_pos)
+
+            if dist >= lad:
+                if dist < best_dist:
+                    best_dist = dist
+                    best_idx = i
+                if i > self._current_idx:
+                    break
+
+        return best_idx, self._trajectory[best_idx]
+
+    def compute_control(self) -> Tuple[float, float]:
+        """
+        计算控制量
+
+        Returns:
+            (linear_velocity, angular_velocity)
+        """
+        if not self._trajectory:
+            return 0.0, 0.0
+
+        current = self.pose
+        current_pos = np.array([current.x, current.y])
+        current_yaw = current.theta if hasattr(current, 'theta') else 0.0
+
+        # 找前看点
+        la_idx, la_point = self._find_look_ahead_point()
+        la_pos = np.array([la_point.x, la_point.y])
+
+        # 向量 from current to lookahead
+        dx = la_pos[0] - current_pos[0]
+        dy = la_pos[1] - current_pos[1]
+
+        # 在机器人坐标系下表示
+        cos_yaw = np.cos(-current_yaw)
+        sin_yaw = np.sin(-current_yaw)
+        x_local = dx * cos_yaw - dy * sin_yaw
+        y_local = dx * sin_yaw + dy * cos_yaw
+
+        # 到前看点的距离
+        d = np.sqrt(dx ** 2 + dy ** 2) + 1e-6
+
+        # Pure Pursuit 转向角
+        alpha = np.arctan2(y_local, x_local)
+        L = self.spec.wheel_base if hasattr(self.spec, 'wheel_base') else 0.5
+        omega = 2 * self.k_gain * np.sin(alpha) / d
+
+        # 速度
+        v = self.linear_velocity
+
+        # 跟踪索引更新
+        if la_idx > self._current_idx:
+            self._current_idx = la_idx
+
+        return float(v), float(omega)
+
+    def reset(self):
+        """重置"""
+        self._current_idx = 0
+
+
+class StanleyTracker:
+    """
+    Stanley 轨迹跟踪控制器
+
+    基于横向误差的前轮转向控制:
+    - 考虑横向误差和航向误差
+    - 收敛速度快于 Pure Pursuit
+    - 适合阿克曼模型车辆
+
+    适用于: 差速驱动、四轮转向车辆
+    """
+
+    def __init__(
+        self,
+        spec: AGVSpec,
+        k_gain: float = 2.5,
+        k_soft: float = 1.0,
+        max_steering: float = 1.0
+    ):
+        self.spec = spec
+        self.k_gain = k_gain
+        self.k_soft = k_soft
+        self.max_steering = max_steering
+
+        self._agv = AGVMotionController(spec)
+        self._trajectory: List[AGVPose] = []
+        self._current_idx = 0
+        self._last_cross_track_error = 0.0
+
+    def set_trajectory(self, trajectory: List[AGVPose]):
+        self._trajectory = trajectory
+        self._current_idx = 0
+
+    def set_pose(self, pose: AGVPose):
+        self._agv.update_pose(pose)
+
+    @property
+    def pose(self) -> AGVPose:
+        return self._agv.pose
+
+    def compute_control(self) -> Tuple[float, float]:
+        """
+        计算控制量
+
+        Returns:
+            (linear_velocity, steering_angle)
+        """
+        if not self._trajectory:
+            return 0.0, 0.0
+
+        current = self.pose
+        current_pos = np.array([current.x, current.y])
+        current_yaw = current.theta if hasattr(current, 'theta') else 0.0
+
+        # 找到最近轨迹点
+        min_dist = float('inf')
+        nearest_idx = self._current_idx
+        for i in range(self._current_idx, min(self._current_idx + 50, len(self._trajectory))):
+            pt = self._trajectory[i]
+            d = np.linalg.norm(np.array([pt.x, pt.y]) - current_pos)
+            if d < min_dist:
+                min_dist = d
+                nearest_idx = i
+
+        if nearest_idx > self._current_idx:
+            self._current_idx = nearest_idx
+
+        # 最近点信息
+        nearest = self._trajectory[nearest_idx]
+        nearest_yaw = nearest.theta if hasattr(nearest, 'theta') else 0.0
+
+        # 横向误差 (cross-track error)
+        dx = current_pos[0] - nearest.x
+        dy = current_pos[1] - nearest.y
+        # 横向误差 = 沿轨迹切线方向的误差
+        path_yaw = nearest_yaw
+        cross_track_error = -dx * np.sin(path_yaw) + dy * np.cos(path_yaw)
+
+        # 航向误差
+        heading_error = nearest_yaw - current_yaw
+        # 归一化到 [-pi, pi]
+        heading_error = np.arctan2(np.sin(heading_error), np.cos(heading_error))
+
+        # Stanley 控制率
+        # delta = heading_error + arctan(k * e / (k_soft + v))
+        v = current.vx if hasattr(current, 'vx') and current.vx != 0 else 0.1
+        steering = heading_error + np.arctan2(
+            self.k_gain * cross_track_error,
+            self.k_soft + abs(v)
+        )
+
+        # 限制
+        steering = np.clip(steering, -self.max_steering, self.max_steering)
+
+        self._last_cross_track_error = cross_track_error
+
+        return float(abs(v)), float(steering)
+
+    def reset(self):
+        self._current_idx = 0
+        self._last_cross_track_error = 0.0
+
+
+class PIDTrajectoryTracker:
+    """
+    PID 轨迹跟踪控制器
+
+    基于 PID 的轨迹跟踪:
+    - 位置环 PID 控制
+    - 航向角 PID 控制
+    - 可叠加前馈项
+
+    适用于: 差速驱动、简单场景
+    """
+
+    def __init__(
+        self,
+        spec: AGVSpec,
+        kp_pos: float = 3.0,
+        ki_pos: float = 0.0,
+        kd_pos: float = 0.5,
+        kp_theta: float = 2.0,
+        ki_theta: float = 0.0,
+        kd_theta: float = 0.2
+    ):
+        self.spec = spec
+        self.kp_pos = kp_pos
+        self.ki_pos = ki_pos
+        self.kd_pos = kd_pos
+        self.kp_theta = kp_theta
+        self.ki_theta = ki_theta
+        self.kd_theta = kd_theta
+
+        self._agv = AGVMotionController(spec)
+        self._trajectory: List[AGVPose] = []
+        self._current_idx = 0
+
+        # PID 状态
+        self._pos_integral = 0.0
+        self._pos_prev_error = 0.0
+        self._theta_integral = 0.0
+        self._theta_prev_error = 0.0
+        self._last_time = None
+
+    def set_trajectory(self, trajectory: List[AGVPose]):
+        self._trajectory = trajectory
+        self._current_idx = 0
+        self._reset_pid()
+
+    def set_pose(self, pose: AGVPose):
+        self._agv.update_pose(pose)
+
+    @property
+    def pose(self) -> AGVPose:
+        return self._agv.pose
+
+    def _reset_pid(self):
+        self._pos_integral = 0.0
+        self._pos_prev_error = 0.0
+        self._theta_integral = 0.0
+        self._theta_prev_error = 0.0
+        self._last_time = None
+
+    def compute_control(self, dt: float = 0.01) -> Tuple[float, float]:
+        """
+        计算控制量
+
+        Args:
+            dt: 控制周期 (s)
+
+        Returns:
+            (linear_velocity, angular_velocity)
+        """
+        if not self._trajectory:
+            return 0.0, 0.0
+
+        import time
+        if self._last_time is None:
+            self._last_time = time.time()
+        actual_dt = time.time() - self._last_time
+        self._last_time = time.time()
+        dt = max(actual_dt, 0.001)
+
+        current = self.pose
+        current_pos = np.array([current.x, current.y])
+        current_yaw = current.theta if hasattr(current, 'theta') else 0.0
+
+        # 找到最近轨迹点
+        min_dist = float('inf')
+        nearest_idx = self._current_idx
+        for i in range(self._current_idx, len(self._trajectory)):
+            pt = self._trajectory[i]
+            d = np.linalg.norm(np.array([pt.x, pt.y]) - current_pos)
+            if d < min_dist:
+                min_dist = d
+                nearest_idx = i
+
+        if nearest_idx < len(self._trajectory) - 1:
+            self._current_idx = nearest_idx + 1
+
+        # 目标点
+        target = self._trajectory[self._current_idx] if self._current_idx < len(self._trajectory) else self._trajectory[-1]
+        target_pos = np.array([target.x, target.y])
+        target_yaw = target.theta if hasattr(target, 'theta') else 0.0
+
+        # 位置误差
+        pos_error = np.linalg.norm(target_pos - current_pos)
+
+        # PID 位置控制
+        self._pos_integral += pos_error * dt
+        self._pos_integral = np.clip(self._pos_integral, -10, 10)
+        pos_derivative = (pos_error - self._pos_prev_error) / dt if dt > 0 else 0.0
+        v = self.kp_pos * pos_error + self.ki_pos * self._pos_integral + self.kd_pos * pos_derivative
+        v = np.clip(v, 0, 1.0)
+        self._pos_prev_error = pos_error
+
+        # 航向误差
+        theta_error = target_yaw - current_yaw
+        theta_error = np.arctan2(np.sin(theta_error), np.cos(theta_error))
+
+        self._theta_integral += theta_error * dt
+        self._theta_integral = np.clip(self._theta_integral, -5, 5)
+        theta_derivative = (theta_error - self._theta_prev_error) / dt if dt > 0 else 0.0
+        omega = self.kp_theta * theta_error + self.ki_theta * self._theta_integral + self.kd_theta * theta_derivative
+        self._theta_prev_error = theta_error
+
+        return float(v), float(omega)
+
+    def reset(self):
+        self._current_idx = 0
+        self._reset_pid()
