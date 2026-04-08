@@ -87,6 +87,12 @@ from .motor import (
     DCMotor, BLDCmotor, ServoMotor, StepperMotor,
     PIDController as MotorPIDController, MotorController
 )
+from .obstacle_avoidance import (
+    ObstacleAvoider, DynamicWindowApproach, ArtificialPotentialField,
+    VectorFieldHistogram, AvoidanceConfig, DWAConfig, APFConfig, VFHConfig,
+    Obstacle, VelocityCommand, TrajectorySample,
+    AvoidanceStrategy, get_obstacle_avoidance_spec
+)
 from .sensorimotor import (
     SensorimotorIntegration, SensorimotorConfig, SensorimotorState,
     SensorimotorSimulator,
@@ -143,4 +149,9 @@ __all__ = [
     'SensorimotorIntegration', 'SensorimotorConfig', 'SensorimotorState',
     'SensorimotorSimulator',
     'AGV_SENSORIMOTOR_GRADES', 'get_sensorimotor_spec',
+    # obstacle_avoidance
+    'ObstacleAvoider', 'DynamicWindowApproach', 'ArtificialPotentialField',
+    'VectorFieldHistogram', 'AvoidanceConfig', 'DWAConfig', 'APFConfig', 'VFHConfig',
+    'Obstacle', 'VelocityCommand', 'TrajectorySample',
+    'AvoidanceStrategy', 'get_obstacle_avoidance_spec',
 ]

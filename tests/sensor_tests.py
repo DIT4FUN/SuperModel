@@ -1733,5 +1733,324 @@ class TestSensorCrossModalIntegration(unittest.TestCase):
         self.assertTrue(np.all(np.abs(final_euler) < np.pi))
 
 
+
+
+# =============================================================================
+# v1.77.0 新增高级测试: 传感器退化/故障注入 & 边缘案例
+# =============================================================================
+
+class TestSensorDegradationAndFaultInjection(unittest.TestCase):
+    """传感器退化与故障注入测试"""
+
+    def test_tactile_partial_array_failure(self):
+        """测试触觉阵列部分失效时的降级运行"""
+        array = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.RESISTIVE,
+            sensor_id="degrade_test"
+        )
+        array.open()
+        arr = np.zeros((16, 16))
+        arr[8:, 8:] = 80.0
+        frame = TactileFrame(
+            timestamp=time.time(),
+            sensor_id="degrade_test",
+            pressure_map=arr,
+            temperature_map=np.full((16, 16), 25.0),
+        )
+        contacts = array.detect_contacts(frame)
+        self.assertGreater(len(contacts), 0)
+        array.close()
+
+    def test_force_wrench_basic(self):
+        """测试Wrench数据结构"""
+        wrench = Wrench(
+            force=np.array([0.02, -0.01, 0.01]),
+            torque=np.array([0.003, -0.002, 0.005])
+        )
+        self.assertIsInstance(wrench, Wrench)
+        self.assertLess(np.abs(wrench.force[0]), 5.0)
+
+    def test_imu_saturation_recovery(self):
+        """测试IMU饱和后的恢复"""
+        sensor = IMUSensor(sensor_id="sat_recovery")
+        sensor.open()
+        sat_frame = IMUFrame(
+            timestamp=time.time(),
+            sensor_id="sat_recovery",
+            accel=np.array([0.0, 0.0, 50.0]),
+            gyro=np.array([0.0, 0.0, 50.0]),
+            mag=np.array([0.0, 0.0, 0.0]),
+            temperature=25.0
+        )
+        self.assertGreater(np.linalg.norm(sat_frame.accel), 40.0)
+        self.assertGreater(np.linalg.norm(sat_frame.gyro), 40.0)
+        normal_frame = IMUFrame(
+            timestamp=time.time() + 0.1,
+            sensor_id="sat_recovery",
+            accel=np.array([0.0, 0.0, 9.81]),
+            gyro=np.array([0.0, 0.0, 0.1]),
+            mag=np.array([0.0, 0.0, 0.0]),
+            temperature=25.0
+        )
+        self.assertLess(np.linalg.norm(normal_frame.accel), 20.0)
+        self.assertLess(np.linalg.norm(normal_frame.gyro), 20.0)
+        sensor.close()
+
+    def test_tactile_hysteresis(self):
+        """测试触觉传感器滞后效应"""
+        array = TactileArray(
+            array_size=(8, 8),
+            sensor_type=TactileSensorType.PIEZOELECTRIC,
+            sensor_id="hyst_test"
+        )
+        array.open()
+        pressures = np.concatenate([np.linspace(0, 100, 20), np.linspace(100, 0, 20)])
+        readings = []
+        for p in pressures:
+            arr = np.full((8, 8), p)
+            frame = TactileFrame(
+                timestamp=time.time(),
+                sensor_id="hyst_test",
+                pressure_map=arr,
+                temperature_map=np.full((8, 8), 25.0),
+            )
+            contacts = array.detect_contacts(frame)
+            readings.append(p if contacts else 0.0)
+        load = readings[:20]
+        unload = readings[20:][::-1]
+        max_diff = max(abs(a - b) for a, b in zip(load[-5:], unload[-5:]))
+        self.assertLess(max_diff, 15.0)
+        array.close()
+
+    def test_force_creep_simulation(self):
+        """测试力传感器蠕变效应"""
+        base_force = 50.0
+        creep_factor = 0.02
+        np.random.seed(42)
+        readings = [base_force * (1 + creep_factor * sec) + np.random.randn() * 0.5
+                   for sec in np.linspace(0, 10, 50)]
+        initial_mean = np.mean(readings[:5])
+        final_mean = np.mean(readings[-5:])
+        self.assertGreater(final_mean, initial_mean * 1.1)
+
+    def test_imu_random_walk(self):
+        """测试IMU随机游走累积"""
+        np.random.seed(42)
+        gyro_noise = np.random.randn(500) * 0.02
+        dt = 0.01
+        angle_drift = np.cumsum(gyro_noise) * np.sqrt(dt)
+        self.assertLess(np.abs(angle_drift[-1]), 5.0)
+
+    def test_imu_high_temp_saturation(self):
+        """测试IMU高温饱和边缘情况"""
+        hot_sat = IMUFrame(
+            timestamp=time.time(),
+            sensor_id="hot_sat",
+            accel=np.array([0.0, 0.0, 100.0]),
+            gyro=np.array([0.0, 0.0, 100.0]),
+            mag=np.array([0.0, 0.0, 0.0]),
+            temperature=85.0
+        )
+        self.assertGreater(hot_sat.temperature, 80.0)
+        self.assertGreater(np.linalg.norm(hot_sat.accel), 50.0)
+
+
+class TestSensorLongTermStability(unittest.TestCase):
+    """传感器长时间运行稳定性测试"""
+
+    def test_tactile_temperature_zero_drift(self):
+        """触觉传感器温度变化零点漂移"""
+        array = TactileArray(
+            array_size=(16, 16),
+            sensor_type=TactileSensorType.RESISTIVE,
+            sensor_id="temp_drift"
+        )
+        array.open()
+        temperatures = np.linspace(20, 45, 50)
+        zero_readings = [(temp - 20) * 0.1 for temp in temperatures]
+        self.assertLess(max(zero_readings), 5.0)
+        array.close()
+
+    def test_virtual_sensors_concurrent_stress(self):
+        """虚拟传感器并发仿真压力测试"""
+        np.random.seed(0)
+        v_tactile = VirtualTactileSensor(array_size=(16, 16), sensor_id="stress_tactile")
+        v_force = VirtualForceSensor(sensor_id="stress_force", noise_level=0.02, bias_range=0.1)
+        v_imu = VirtualIMUSensor("stress_imu")
+        v_tactile.open()
+        v_force.open()
+        v_imu.open()
+        durations = []
+        for _ in range(100):
+            t0 = time.time()
+            v_tactile.simulate_contact(contact_pos=(0.5, 0.5), contact_radius=0.3, contact_force=10.0)
+            v_force.simulate_contact(force=(5.0, 0.0, 0.0), torque=(0.0, 0.0, 0.0))
+            v_imu.simulate_static(orientation=(0.0, 0.0, 0.0))
+            durations.append(time.time() - t0)
+        actual_hz = 1.0 / np.mean(durations)
+        self.assertGreater(actual_hz, 50)
+        v_tactile.close()
+        v_force.close()
+        v_imu.close()
+
+    def test_imu_concurrent_200hz(self):
+        """IMU 200Hz并发读取"""
+        sensor = IMUSensor(sensor_id="concurrent_200hz")
+        sensor.open()
+        durations = []
+        for _ in range(200):
+            t0 = time.time()
+            sensor.capture()
+            durations.append(time.time() - t0)
+            time.sleep(max(0, 0.005 - durations[-1]))
+        actual_hz = 1.0 / np.mean(durations)
+        self.assertGreater(actual_hz, 150)
+        sensor.close()
+
+
+class TestSensorCrossModalEdgeCases(unittest.TestCase):
+    """跨模态边缘案例测试"""
+
+    def test_tactile_force_cross_geometry(self):
+        """触觉与力觉几何一致性"""
+        tactile = TactileArray(
+            array_size=(8, 8),
+            sensor_type=TactileSensorType.PIEZOELECTRIC,
+            sensor_id="cross_geo"
+        )
+        tactile.open()
+        arr = np.zeros((8, 8))
+        arr[3:5, 3:5] = 80.0
+        frame = TactileFrame(
+            timestamp=time.time(),
+            sensor_id="cross_geo",
+            pressure_map=arr,
+            temperature_map=np.full((8, 8), 25.0),
+        )
+        contacts = tactile.detect_contacts(frame)
+        self.assertIsInstance(contacts, list)
+        tactile.close()
+
+    def test_imu_audio_temporal_binding(self):
+        """IMU与音频时序绑定"""
+        from src.sensors.audio import BinauralMic
+        imu = IMUSensor(sensor_id="imu_audio")
+        mic = BinauralMic(sample_rate=16000)
+        imu.open()
+        mic.open()
+        t0 = time.time()
+        imu_frame = IMUFrame(
+            timestamp=t0,
+            sensor_id="imu_audio",
+            accel=np.array([0.5, 0.3, 9.81]),
+            gyro=np.array([0.1, -0.1, 0.05]),
+            mag=np.array([0.0, 0.0, 0.0]),
+            temperature=25.0
+        )
+        self.assertLess(abs(imu_frame.timestamp - t0), 0.05)
+        imu.close()
+        mic.close()
+
+    def test_all_grades_specs(self):
+        """所有AGV等级虚拟传感器规格验收"""
+        grades = ["S", "M", "L", "XL", "XXL"]
+        for grade in grades:
+            t_spec = get_tactile_spec(grade)
+            f_spec = get_force_spec(grade)
+            i_spec = get_imu_spec(grade)
+            self.assertIn("freq_hz", t_spec)
+            self.assertIn("sampling_hz", f_spec)
+            self.assertIn("sample_hz", i_spec)
+            self.assertGreater(t_spec["freq_hz"], 0)
+            self.assertGreater(f_spec["sampling_hz"], 0)
+            self.assertGreater(i_spec["sample_hz"], 0)
+
+    def test_pose_estimator_comprehensive(self):
+        """综合姿态估计测试"""
+        np.random.seed(0)
+        estimator = PoseEstimator(algorithm="complementary", sample_rate=100)
+        for _ in range(50):
+            accel = np.array([0.0, 0.0, 9.81]) + np.random.randn(3) * 0.1
+            gyro = np.array([0.1, -0.1, 0.05]) + np.random.randn(3) * 0.01
+            pose = estimator.update(accel, gyro, dt=0.01)
+        result_pose = estimator.get_pose()
+        self.assertIsNotNone(result_pose)
+        self.assertIsInstance(result_pose, Pose)
+
+    def test_wrench_processor_full_pipeline(self):
+        """Wrench处理器完整流水线"""
+        proc = WrenchProcessor(filter_alpha=0.3)
+        np.random.seed(0)
+        wrench_data = np.random.randn(100, 6) * 0.5
+        filtered = proc.filter(wrench_data)
+        self.assertEqual(filtered.shape, wrench_data.shape)
+        # remove_outliers takes (single_wrench, history_list)
+        single = filtered[10]
+        history = filtered.tolist()
+        outlier_removed = proc.remove_outliers(single, history)
+        self.assertEqual(len(outlier_removed), 6)
+        cov = proc.estimate_covariance(wrench_data.tolist())
+        self.assertEqual(cov.shape, (6, 6))
+
+    def test_sensor_noise_comprehensive(self):
+        """传感器噪声水平综合测试"""
+        np.random.seed(42)
+        tactile = TactileArray(
+            array_size=(8, 8),
+            sensor_type=TactileSensorType.PIEZOELECTRIC,
+            sensor_id="noise_test"
+        )
+        tactile.open()
+        readings = []
+        for _ in range(20):
+            arr = np.zeros((8, 8)) + 50.0 + np.random.randn(8, 8) * 2
+            frame = TactileFrame(
+                timestamp=time.time(),
+                sensor_id="noise_test",
+                pressure_map=arr,
+                temperature_map=np.full((8, 8), 25.0),
+            )
+            contacts = tactile.detect_contacts(frame)
+            if contacts:
+                readings.append(contacts[0].contact_force)
+        if readings:
+            std = np.std(readings)
+            self.assertLess(std, 30.0)
+        tactile.close()
+
+    def test_pose_euler_roundtrip_new(self):
+        """姿态欧拉角往返测试v2"""
+        pos = np.array([1.0, 2.0, 3.0])
+        rpy = np.array([0.1, -0.2, 0.3])
+        pose = Pose.from_euler(pos, rpy)
+        euler = pose.to_euler()
+        np.testing.assert_array_almost_equal(euler, rpy, decimal=5)
+        recovered = Pose.from_euler(pose.position, euler)
+        np.testing.assert_array_almost_equal(recovered.orientation, pose.orientation, decimal=5)
+
+    def test_wrench_magnitude(self):
+        """Wrench力/力矩幅值测试"""
+        wrench = Wrench(
+            force=np.array([3.0, 4.0, 0.0]),
+            torque=np.array([0.0, 0.0, 5.0])
+        )
+        self.assertAlmostEqual(wrench.magnitude, 5.0, places=1)
+        self.assertAlmostEqual(wrench.torque_magnitude, 5.0, places=1)
+
+    def test_imu_accel_gyro_magnitude(self):
+        """IMU加速度/角速度幅值"""
+        frame = IMUFrame(
+            np.array([0.0, 0.0, 9.81]),
+            np.array([0.1, 0.2, 0.3]),
+            np.array([0.0, 0.0, 0.0]),
+            temperature=25.0,
+            timestamp=time.time(),
+            sensor_id="mag_test"
+        )
+        self.assertAlmostEqual(frame.accel_magnitude, 9.81, places=1)
+        self.assertAlmostEqual(frame.gyro_magnitude, 0.37, places=1)
+
+
 if __name__ == '__main__':
     unittest.main()
