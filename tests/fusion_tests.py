@@ -1144,5 +1144,145 @@ class TestSensorCalibrationFusion(unittest.TestCase):
         self.assertNotEqual(configs[0].hidden_dim, configs[2].hidden_dim)
 
 
+class TestFusionEdgeCases(unittest.TestCase):
+    """跨模态融合边缘用例测试"""
+
+    def test_tactile_imu_force_grades_fusion(self):
+        """触觉+IMU+力觉五级AGV规格融合验证"""
+        from src.sensors.tactile import get_tactile_spec
+        from src.sensors.force import get_force_spec
+        from src.sensors.imu import get_imu_spec
+        
+        grades = ["S", "M", "L", "XL", "XXL"]
+        for grade in grades:
+            t_spec = get_tactile_spec(grade)
+            f_spec = get_force_spec(grade)
+            i_spec = get_imu_spec(grade)
+            
+            t_size = t_spec["array"]
+            tactile = TactileArray(array_size=t_size, sensor_id=f"t_{grade}")
+            force = ForceTorqueSensor(sensor_id=f"f_{grade}")
+            imu = IMUSensor(sensor_type=IMUSensorType.BMI088, sensor_id=f"i_{grade}")
+            
+            tactile.open()
+            force.open()
+            imu.open()
+            
+            t_frame = tactile.capture()
+            wrench = force.capture()
+            i_frame = imu.capture()
+            
+            self.assertEqual(t_frame.pressure_map.shape, (t_size[0], t_size[1]))
+            self.assertEqual(wrench.force.shape, (3,))
+            self.assertEqual(i_frame.accel.shape, (3,))
+            
+            tactile.close()
+            force.close()
+            imu.close()
+
+    def test_fusion_forward_batched(self):
+        """融合前向传播批处理测试"""
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 5帧时序数据
+        for _ in range(5):
+            multimodal = MultimodalInput(
+                vision=np.random.randn(2, 512).astype(np.float32),
+                audio=np.random.randn(2, 128).astype(np.float32),
+                tactile=np.random.randn(2, 64).astype(np.float32),
+                force=np.random.randn(2, 32).astype(np.float32),
+                imu=np.random.randn(2, 64).astype(np.float32)
+            )
+            result = fusion.forward(multimodal)
+            self.assertEqual(result.shape[0], 2)  # batch size
+            self.assertEqual(result.shape[1], 256)  # hidden_dim
+
+    def test_fusion_with_missing_modalities(self):
+        """部分模态缺失时的融合"""
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        
+        config = FusionConfig(
+            vision_dim=512, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 只有触觉和IMU
+        multimodal = MultimodalInput(
+            vision=None,
+            audio=None,
+            tactile=np.random.randn(2, 64).astype(np.float32),
+            force=None,
+            imu=np.random.randn(2, 64).astype(np.float32)
+        )
+        result = fusion.forward(multimodal)
+        self.assertEqual(result.shape[1], 256)
+
+    def test_fusion_high_sample_rate(self):
+        """高频采样融合测试 (50帧连续)"""
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        
+        config = FusionConfig(
+            vision_dim=512, audio_dim=128, tactile_dim=64,
+            force_dim=32, imu_dim=64, hidden_dim=256
+        )
+        fusion = CrossModalFusion(config)
+        
+        for _ in range(50):
+            multimodal = MultimodalInput(
+                vision=np.random.randn(1, 512).astype(np.float32),
+                audio=np.random.randn(1, 128).astype(np.float32),
+                tactile=np.random.randn(1, 64).astype(np.float32),
+                force=np.random.randn(1, 32).astype(np.float32),
+                imu=np.random.randn(1, 64).astype(np.float32)
+            )
+            result = fusion.forward(multimodal)
+            self.assertEqual(result.shape, (1, 256))
+
+    def test_fusion_five_grade_hidden_dim(self):
+        """五级AGV隐藏层维度测试"""
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        
+        grades_dims = {"S": 64, "M": 128, "L": 256, "XL": 512, "XXL": 1024}
+        
+        for grade, hidden in grades_dims.items():
+            config = FusionConfig(
+                vision_dim=512, audio_dim=128, tactile_dim=64,
+                force_dim=32, imu_dim=64, hidden_dim=hidden
+            )
+            fusion = CrossModalFusion(config)
+            
+            multimodal = MultimodalInput(
+                vision=np.random.randn(1, 512).astype(np.float32),
+                audio=np.random.randn(1, 128).astype(np.float32),
+                tactile=np.random.randn(1, 64).astype(np.float32),
+                force=np.random.randn(1, 32).astype(np.float32),
+                imu=np.random.randn(1, 64).astype(np.float32)
+            )
+            result = fusion.forward(multimodal)
+            self.assertEqual(result.shape[1], hidden)
+
+    def test_sensor_manager_multi_sensor_fusion(self):
+        """多传感器管理器融合测试"""
+        from src.sensors.manager import SensorManager, SensorManagerConfig
+        
+        config = SensorManagerConfig(grade="M")
+        manager = SensorManager(config=config)
+        manager.open_all()
+        
+        readings = manager.capture_all()
+        
+        # Should have the configured sensors
+        self.assertIsNotNone(readings)
+        
+        manager.close_all()
+
+
 if __name__ == '__main__':
     unittest.main()
