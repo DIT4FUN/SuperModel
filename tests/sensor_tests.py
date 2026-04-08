@@ -2299,8 +2299,8 @@ class TestForceAdvanced(unittest.TestCase):
         )
         
         self.assertIsInstance(wrench, Wrench)
-        # Z方向力应为负 (接触力方向向上)
-        self.assertNotEqual(wrench.force[2], 0.0)  # force should be non-zero
+        # Z方向力应有显著值 (接触力 = stiffness * penetration_depth ≈ 2N)
+        self.assertGreater(abs(wrench.force[2]), 0.5)  # force magnitude should be significant
         sensor.close()
 
     def test_virtual_force_friction(self):
