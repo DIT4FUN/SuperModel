@@ -492,13 +492,20 @@ def create_multimodal_input(
     imu: Optional[np.ndarray] = None,
     language: Optional[np.ndarray] = None
 ) -> MultimodalInput:
-    """创建多模态输入"""
+    """创建多模态输入 (支持批量和非批量numpy数组)"""
+    def _to_tensor(arr: np.ndarray) -> torch.Tensor:
+        t = torch.from_numpy(arr).float()
+        # 自动添加batch维度: (N,) -> (1, N)
+        if t.dim() == 1:
+            t = t.unsqueeze(0)
+        return t
+
     return MultimodalInput(
-        vision=torch.from_numpy(vision).float() if vision is not None else None,
-        audio=torch.from_numpy(audio).float() if audio is not None else None,
-        tactile=torch.from_numpy(tactile).float() if tactile is not None else None,
-        force=torch.from_numpy(force).float() if force is not None else None,
-        imu=torch.from_numpy(imu).float() if imu is not None else None,
+        vision=_to_tensor(vision) if vision is not None else None,
+        audio=_to_tensor(audio) if audio is not None else None,
+        tactile=_to_tensor(tactile) if tactile is not None else None,
+        force=_to_tensor(force) if force is not None else None,
+        imu=_to_tensor(imu) if imu is not None else None,
         language=torch.from_numpy(language).long() if language is not None else None
     )
 

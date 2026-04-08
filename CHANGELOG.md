@@ -3,6 +3,30 @@
 All notable changes to SuperModel will be documented in this file.
 
 
+## [v1.88.0] - 2026-04-09 02:43
+### Added
+- +96项全流水线集成测试 (tests/full_pipeline_integration_tests.py): 传感器同步/融合/控制/端到端/AGV五级
+- +TestSensorSynchronizedCapture: 三传感器(触觉+IMU+力觉)同步采集与数据完整性验证
+- +TestFusionIntegration: FusionConfig/MultimodalInput/跨模态融合前向传播验证
+- +TestTactileServoIntegration: 触觉伺服闭环/滑移检测反应控制
+- +TestForceControlIntegration: 力觉导纳控制/碰撞检测/负载估计集成
+- +TestIMUControlIntegration: 姿态稳定闭环/多算法姿态估计
+- +TestFullPipelineEndToEnd: 端到端抓取与AGV导航流水线
+- +TestAGVFiveGradeCompleteness: AGV五级规格完整性验证
+- +TestPressureProcessorIntegration/WrenchProcessorIntegration/PoseEstimatorMultiAlgorithm
+
+### Fixed
+- create_multimodal_input: 自动添加batch维度 (1D numpy → (1,N) torch tensor)
+- FusionConfig: 支持force_dim/imu_dim/tactile_dim显式配置
+- CrossModalFusion: 修复3模态(触觉+力觉+IMU)同时激活时的跨模态注意力维度问题
+
+### Changed
+- VirtualTactileSensor: 用于simulate_contact/sliding场景
+- TactileArray: 用于capture()场景
+- VirtualForceSensor: 用于simulate_contact/simulate_payload场景
+- VirtualIMUSensor: 用于simulate_agv_motion场景
+
+
 ## [v1.82.0] - 2026-04-09 00:20
 ### Added
 - +20项传感器边缘场景测试 (TestSensorEdgeCasesV2): 边界条件/饱和/极端姿态/多接触/噪声一致性
