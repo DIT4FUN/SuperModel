@@ -439,3 +439,406 @@ class EmergencyStopController:
 - 重载车间 → XL级 (RK3588集群 + 多目LiDAR + ADIS16470)
 - 无人化工厂 → XXL级 (集群+GPU + 超模态感知 + 具身智能)
 ```
+
+---
+
+## 附录G: 详细模块接口设计规范 (v1.91.0)
+
+### G.1 触觉传感器模块 (tactile.py) 完整接口
+
+#### 核心类
+
+```python
+# --- 数据结构 ---
+class TactileSensorType(Enum):
+    RESISTIVE   # 电阻式 - I2C@0x18
+    CAPACITIVE  # 电容式 - SPI@50MHz  
+    PIEZOELECTRIC  # 压电式 - USB HID
+    OPTICAL     # 光学式 - USB3.0
+
+class TactileFrame:
+    pressure_map: np.ndarray          # H×W, float32, 归一化 0-1
+    temperature_map: np.ndarray       # H×W, float32, 摄氏度
+    proximity: np.ndarray             # H×W, float32, 米
+    slip_signal: np.ndarray           # H×W, float32, 0-1
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+
+class TactileContact:
+    center: Tuple[int, int]          # (row, col)
+    area: int                         # 像素数
+    peak_pressure: float
+    mean_pressure: float
+    centroid: Tuple[float, float]     # (row, col)
+    contact_force: float              # N
+    slip_probability: float           # 0-1
+    temperature: float                # 摄氏度
+
+class TactileCalibration:
+    pressure_min/max: float
+    temperature_range: Tuple[float, float]
+    force_scale: float                # N 满量程
+    offset_map: np.ndarray            # 偏置校正
+
+class TactileArray:
+    # 生命周期
+    def open() -> bool
+    def close()
+    
+    # 数据采集
+    def capture() -> TactileFrame
+    def detect_contacts(frame=None) -> List[TactileContact]
+    def get_slip_signal(frame=None) -> np.ndarray
+    
+    # 质量评估
+    def estimate_grip_quality(frame=None) -> Dict[str, float]
+    
+    # 标定
+    def calibrate(zero_pressure=None, known_weights=None)
+    
+    # 虚拟传感器
+class VirtualTactileSensor:
+    def simulate_contact(pos, radius, force, noise) -> TactileFrame
+    def simulate_sliding(direction, speed, frames) -> List[TactileFrame]
+    def simulate_multi_contact(contacts) -> TactileFrame
+    def simulate_slip_detection(normal_force, friction, velocity) -> Dict
+```
+
+#### 接口调用时序
+
+```
+TactileArray 生命周期:
+  open() → capture() × N → detect_contacts() → estimate_grip_quality() → close()
+
+物理层:
+  仿真: generate_pressure_map() → apply_sensor_nonlinearity() → add_noise()
+  硬件: I2C_read()/SPI_read() → raw2calibrated() → validate_range()
+```
+
+#### AGV五级触觉规格
+
+| 等级 | 阵列 | 分辨率 | 压力范围 | 采样率 | 温度感知 |
+|------|------|--------|---------|--------|---------|
+| S | 8×8 | 12bit | 0-500kPa | 50Hz | ✗ |
+| M | 16×16 | 12bit | 0-1000kPa | 100Hz | ✓ |
+| L | 24×24 | 14bit | 0-2000kPa | 200Hz | ✓ |
+| XL | 32×32 | 14bit | 0-5000kPa | 500Hz | ✓ |
+| XXL | 48×48 | 16bit | 0-10000kPa | 1000Hz | ✓ |
+
+### G.2 力觉传感器模块 (force.py) 完整接口
+
+#### 核心类
+
+```python
+class ForceSensorType(Enum):
+    SIX_AXIS       # 六维力矩 - ATI风格
+    THREE_AXIS     # 三维力
+    JOINT_TORQUE   # 关节力矩 - CAN/EtherCAT
+    FINGER_TIP     # 手指尖力 - SPI/USB
+
+class Wrench:
+    force: np.ndarray      # 3, N
+    torque: np.ndarray     # 3, N·m
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+    
+    @property def magnitude() -> float      # ||F||
+    @property def torque_magnitude() -> float  # ||T||
+    def to_vector() -> np.ndarray           # [Fx,Fy,Fz,Tx,Ty,Tz]
+    def transform(R, t) -> Wrench            # 坐标变换
+
+class ForceCalibration:
+    bias: np.ndarray        # 6维偏置
+    scale: np.ndarray       # 6维比例因子
+    rotation_matrix: np.ndarray  # 3x3 旋转
+    translation_offset: np.ndarray  # 3 平移
+    force_range: Tuple[float, float]
+    torque_range: Tuple[float, float]
+    temp_coefficient: np.ndarray  # 温漂补偿
+
+class ContactState:
+    is_contact: bool
+    contact_force: float
+    contact_point: np.ndarray    # 3D
+    normal_vector: np.ndarray     # 3D
+    slip_probability: float
+
+class ForceTorqueSensor:
+    def open() -> bool
+    def close()
+    def capture() -> Wrench        # 6维力旋量
+    def get_wrench() -> Wrench    # 最新数据
+    def detect_contact(threshold=2.0) -> ContactState
+    def estimate_payload() -> float  # kg
+    def set_tool_center(mass, com)  # 重力补偿
+    def calibrate_bias(samples=100)   # 零点校准
+
+class WrenchProcessor:
+    def filter(wrench) -> np.ndarray    # 指数移动平均
+    def remove_outliers(wrench, history) -> np.ndarray
+    def estimate_covariance(history) -> np.ndarray  # 6×6协方差
+    def compute_force_direction(wrench) -> np.ndarray  # 归一化方向
+    def compute_equivalent_wrench_at(wrench, translation) -> np.ndarray  # 等效变换
+
+class VirtualForceSensor:
+    def simulate_contact(force, torque, add_noise=True) -> Wrench
+    def simulate_payload(mass, com_offset, gravity=9.81) -> Wrench
+    def simulate_collision(direction, peak_force, duration_ms, decay) -> List[Wrench]
+    def simulate_surface_contact(normal, point, penetration, stiffness, damping) -> Wrench
+    def simulate_friction_contact(normal_force, velocity, coeff, mass) -> Wrench
+```
+
+#### 接口调用时序
+
+```
+ForceTorqueSensor 生命周期:
+  open() → set_tool_center() → calibrate_bias() → capture() × N → close()
+
+重力补偿:
+  set_tool_center(mass, com)
+    → 更新 calibration.bias = -torque_compensation
+    → 下次 capture() 自动应用偏置补偿
+
+接触检测:
+  capture() → detect_contact(threshold=2.0N)
+    → Wrench.magnitude > threshold → ContactState(is_contact=True)
+```
+
+### G.3 IMU传感器模块 (imu.py) 完整接口
+
+#### 核心类
+
+```python
+class IMUSensorType(Enum):
+    BMI088        # SPI@20MHz / I2C@400kHz, 高性能6轴
+    MPU6050       # I2C@100kHz, 消费级6轴
+    MPU9250       # I2C@400kHz, 9轴(含磁力计)
+    ADIS16470     # SPI@40MHz, 工业级
+    VIRTUAL       # 仿真/融合输出
+
+class IMUFrame:
+    accel: np.ndarray          # 3, m/s²
+    gyro: np.ndarray            # 3, rad/s
+    mag: np.ndarray             # 3, μT (可选)
+    temperature: float          # 摄氏度
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+    
+    @property def accel_magnitude() -> float
+    @property def gyro_magnitude() -> float
+
+class Pose:
+    position: np.ndarray   # 3, m
+    orientation: np.ndarray  # 4, 四元数 [qw,qx,qy,qz]
+    
+    def to_euler() -> np.ndarray   # [roll, pitch, yaw] rad
+    def to_matrix() -> np.ndarray   # 4×4变换矩阵
+    @classmethod def identity() -> Pose
+    @classmethod def from_euler(position, rpy) -> Pose
+
+class IMUCalibration:
+    accel_bias: np.ndarray   # 3
+    gyro_bias: np.ndarray    # 3
+    accel_scale: np.ndarray  # 3
+    gyro_scale: np.ndarray   # 3
+    mag_hard_iron: np.ndarray  # 3
+    mag_soft_iron: np.ndarray  # 3×3
+
+class IMUSensor:
+    def open() -> bool
+    def close()
+    def capture() -> IMUFrame
+    def self_test() -> bool
+    def calibrate_gyro_bias(samples=500, duration_sec=5.0)
+    def calibrate_accel(known_orientation="level")
+
+class PoseEstimator:
+    def __init__(algorithm="madgwick", sample_rate=200.0, beta=0.1)
+    def update(accel, gyro, mag=None, dt=None) -> Pose
+    def get_pose() -> Pose
+    def get_euler() -> np.ndarray
+    def get_rotation_matrix() -> np.ndarray
+    def integrate_velocity(accel, dt, remove_gravity=True)
+    def reset()
+
+class VirtualIMUSensor:
+    def open() -> bool
+    def close()
+    def simulate_static(orientation) -> IMUFrame
+    def simulate_motion(linear_accel, angular_vel, dt) -> IMUFrame
+    def simulate_trajectory(type, duration_s, dt) -> List[IMUFrame]
+    def simulate_agv_motion(v_linear, omega, dt, grade) -> IMUFrame
+    def simulate_human_walking(freq, speed, duration_s, dt) -> List[IMUFrame]
+```
+
+#### 姿态估计算法
+
+```
+Madgwick AHRS (默认):
+  输入: accel[3], gyro[3], mag[3] (可选), dt
+  输出: quaternion[4]
+  原理: 梯度下降法融合加速度计和陀螺仪
+  参数: beta=0.1 (收敛速度/精度权衡)
+  
+互补滤波:
+  输入: accel[3], gyro[3], dt
+  输出: quaternion[4]
+  原理: alpha*gyro积分 + (1-alpha)*accel估算, alpha=0.98
+  
+卡尔曼滤波:
+  输入: accel[3], gyro[3], dt
+  输出: quaternion[4]
+  原理: gyro积分预测 + accel修正
+```
+
+### G.4 控制模块 (control/) 接口概览
+
+```
+control/
+├── motor.py          MotorController: 多电机统一管理
+│   ├── add_motor(motor) / remove_motor(id)
+│   ├── set_all_targets(targets, mode)
+│   ├── step_all(dt) -> Dict[str, MotorState]
+│   └── emergency_stop()
+│
+├── motion.py         MotionController: 运动学/动力学控制
+│   ├── forward(wheel_velocities) -> Twist2D
+│   ├── inverse(twist) -> np.ndarray
+│   ├── integrate(pose, twist, dt) -> Pose2D
+│   └── step(target_twist, dt) -> wheel_velocities
+│
+├── trajectory.py     轨迹规划: RRT / 样条 / S曲线
+│   ├── plan(start, goal, algo) -> Trajectory
+│   ├── smooth(trajectory) -> Trajectory
+│   └── track(trajectory, state) -> wheel_commands
+│
+├── safety_controller.py  安全监控
+│   ├── check_all(velocity, position, force, collision, sensors, dt)
+│   ├── emergency_stop(reason)
+│   └── is_safe() -> bool
+│
+├── agv.py           AGV专用控制
+│   ├── AGVMotionController: 运动学/轨迹跟踪
+│   ├── PurePursuitTracker / StanleyTracker / PIDTracker
+│   └── get_agv_spec(grade) -> dict
+│
+├── supervisor.py    控制器监管 (生命周期/模式切换/故障恢复)
+│   ├── GradeAwareSupervisor: 五级感知控制器
+│   ├── SupervisorGrade: S/M/L/XL/XXL
+│   └── get_supervisor_spec(grade)
+│
+├── embodied_control.py  具身智能控制 (最新)
+│   ├── EmbodiedController: 感知-决策-控制闭环
+│   ├── EmbodiedState: 具身状态 (触觉+力觉+IMU+视觉)
+│   ├── EmbodiedCommand: 具身命令
+│   ├── EmbodiedTaskExecutor: 任务执行器
+│   └── EmbodiedGrade: S/M/L/XL/XXL 五级规格
+│
+├── mpc.py           模型预测控制
+│   ├── JointSpaceMPC / CartesianMPC
+│   └── get_mpc_spec(grade)
+│
+├── ros2_interface.py  ROS2 Humble 接口
+│   ├── JointTrajectoryInterface
+│   ├── TopicInterface / ServiceInterface / ActionInterface
+│   └── ParameterInterface / ComponentInterface
+│
+└── obstacle_avoidance.py  避障算法
+    ├── DynamicWindowApproach (DWA)
+    ├── ArtificialPotentialField (APF)
+    ├── VectorFieldHistogram (VFH)
+    └── AvoidanceStrategy: STOP/HOLD/逃逸/减速
+```
+
+### G.5 具身智能控制模块 (embodied_control.py) 接口规范
+
+```python
+class EmbodiedState:
+    """具身状态 - 融合所有感知模态"""
+    tactile_contacts: List[TactileContact]  # 触觉接触
+    wrench: Wrench                          # 六维力旋量
+    imu_frame: IMUFrame                     # IMU数据
+    pose: Pose                              # 姿态
+    twist: Twist                            # 速度
+    vision_features: np.ndarray            # 视觉特征
+    audio_state: Dict                       # 听觉状态
+    timestamp: float
+    grade: EmbodiedGrade                    # 五级等级
+
+class EmbodiedCommand:
+    """具身命令"""
+    target_velocity: Twist           # 目标速度
+    target_wrench: Wrench           # 目标力 (力控时)
+    control_mode: ControlMode        # 速度/位置/力/阻抗/混合
+    safety_level: SafetyLevel
+    skill_id: Optional[str]          # 技能ID
+
+class EmbodiedController:
+    """具身智能控制器 - 感知-决策-控制闭环"""
+    
+    def __init__(grade: EmbodiedGrade, config: EmbodiedControlParams)
+    
+    # 生命周期
+    def open() -> bool
+    def close()
+    
+    # 主循环
+    def step(state: EmbodiedState, dt: float) -> EmbodiedCommand
+    
+    # 传感器融合
+    def fuse_tactile_force(contacts, wrench) -> ContactQuality
+    def fuse_imu_vision(imu, vision) -> PoseEstimate
+    def predict_object_pose(tactile, vision) -> Pose
+    
+    # 任务执行
+    def execute_grasp(target_pose, approach) -> GraspResult
+    def execute_place(target_pose) -> PlaceResult
+    def execute_push(direction, force) -> PushResult
+    def execute_adjust(feedback) -> AdjustResult
+    
+    # 安全
+    def check_safety(state) -> SafetyCheckResult
+    def emergency_stop()
+
+class EmbodiedControlParams:
+    """具身控制参数"""
+    fusion_algorithm: str           # "ekf" / "attention" / "late_fusion"
+    control_frequency: int          # Hz
+    tactile_threshold: float        # N
+    force_threshold: float          # N
+    imu_stability_window: int       # 帧数
+    vision_confidence_threshold: float
+    learning_rate: float           # 在线学习率
+    grade: EmbodiedGrade
+
+# 五级具身规格
+AGV_EMBODIED_GRADES = {
+    'S':  {'fusion': 'simple', 'freq': 50,  'grades': 3},
+    'M':  {'fusion': 'ekf',   'freq': 100, 'grades': 6},
+    'L':  {'fusion': 'attention', 'freq': 200, 'grades': 10},
+    'XL': {'fusion': 'transformer', 'freq': 500, 'grades': 15},
+    'XXL': {'fusion': 'foundation', 'freq': 1000, 'grades': 20},
+}
+```
+
+### G.6 五级具身智能系统配置速查
+
+```
+EmbodiedGrade 定义:
+  S  - 基础触觉+力觉反馈, 3级感知
+  M  - 六维力矩+IMU融合, 6级感知  
+  L  - 触觉+力觉+IMU+视觉协同, 10级感知
+  XL - 超模态感知融合 + 在线学习, 15级感知
+  XXL - 具身智能大脑 + 自主学习框架, 20级感知
+
+每级核心差异:
+  S:  触觉接触检测 → 抓取力限制
+  M:  + IMU姿态稳定 + 力矩反馈
+  L:  + 视觉引导抓取 + 多传感器协同
+  XL: + 跨模态注意力融合 + 在线自适应
+  XXL: + DreamerAgent自主学习 + 世界模型预测
+```
+
