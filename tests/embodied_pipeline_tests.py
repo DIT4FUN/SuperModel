@@ -159,7 +159,7 @@ class TestCrossModalFusionPipeline(unittest.TestCase):
         """测试带语言模态的融合"""
         config = FusionConfig(
             vision_dim=512, audio_dim=128, tactile_dim=64,
-            force_dim=32, imu_dim=64, language_dim=768,
+            force_dim=32, imu_dim=64, lang_dim=768,
             hidden_dim=256, num_heads=4, num_layers=2
         )
         fusion = CrossModalFusion(config)

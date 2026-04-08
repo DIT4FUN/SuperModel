@@ -163,9 +163,9 @@ class TestFusionIntegration:
         )
 
         fused = fusion(mm_input)
-        # fused is a torch Tensor, shape depends on hidden_dim
-        assert isinstance(fused, torch.Tensor)
-        assert fused.dim() >= 1
+        # fused is a numpy ndarray, shape depends on hidden_dim
+        assert isinstance(fused, np.ndarray)
+        assert fused.ndim >= 1
 
     @pytest.mark.parametrize("grade", GRADES)
     def test_fusion_with_real_sensor_data(self, grade):
@@ -209,7 +209,7 @@ class TestFusionIntegration:
             imu=i_feat
         )
         fused = fusion(mm_input)
-        assert isinstance(fused, torch.Tensor)
+        assert isinstance(fused, np.ndarray)
 
         tactile.close()
         force.close()
@@ -482,7 +482,7 @@ class TestFullPipelineEndToEnd:
                 imu=i_input
             )
             fused = fusion(mm_input)
-            assert isinstance(fused, torch.Tensor)
+            assert isinstance(fused, np.ndarray)
 
             ctrl = tactile_ctrl.compute_control_signal(
                 target_force=10.0,

@@ -346,7 +346,7 @@ class FusionBenchmark:
         from src.fusion.cross_modal_fusion import CrossModalFusion, MultimodalInput
         
         cfg = self._get_fusion_config()
-        fusion = CrossModalFusion(cfg).to(self.config.device)
+        fusion = CrossModalFusion(cfg)
         
         batch_size = {"S": 2, "M": 4, "L": 8, "XL": 16, "XXL": 32}.get(self.grade, 4)
         

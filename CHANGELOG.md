@@ -3,6 +3,25 @@
 All notable changes to SuperModel will be documented in this file.
 
 
+## [v1.94.0] - 2026-04-09 05:31
+### Fixed
+- 修复21项集成测试失败 (CrossModalFusion返回np.ndarray与torch断言不匹配)
+  - full_pipeline_integration_tests.py: `isinstance(fused, torch.Tensor)` → `isinstance(fused, np.ndarray)` (3处, 13个参数化测试)
+  - integration_pipeline_tests.py: `torch.isnan(fused)` → `np.isnan(fused)` + `unified()`张量转换 (3处)
+  - integration_tests.py: `torch.isnan(fused)` → `np.isnan(fused)` (2处)
+  - embodied_pipeline_tests.py: `FusionConfig(language_dim=...)` → `lang_dim=...` (参数名修正)
+  - evaluation/benchmark.py: 移除`CrossModalFusion.to(device)`调用 (numpy实现不支持)
+
+### Verified
+- 全部1740项测试通过, 38项跳过, 28项警告
+- sensor_tests.py: 270项全部通过 ✓
+- fusion_tests.py: 73项全部通过 ✓
+- integration_pipeline_tests.py: 19项全部通过 ✓
+- full_pipeline_integration_tests.py: 96项全部通过 ✓
+- embodied_pipeline_tests.py: 全部通过 ✓
+- evaluation_tests.py: 全部通过 ✓
+
+
 ## [v1.92.0] - 2026-04-09 04:28
 ### Added
 - 附录H: AGV五级规格总表 (v1.92.0 新增) - DESIGN.md 新增完整六子系统规格总表

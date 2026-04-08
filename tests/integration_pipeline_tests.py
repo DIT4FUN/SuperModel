@@ -131,7 +131,7 @@ class TestSensorFusionControlPipeline(unittest.TestCase):
 
             fused = fusion(mmi)
             self.assertEqual(fused.shape[1], 256)
-            self.assertFalse(torch.isnan(fused).any())
+            self.assertFalse(np.isnan(fused).any())
 
         manager.close_all()
 
@@ -205,7 +205,7 @@ class TestSensorFusionControlPipeline(unittest.TestCase):
         )
 
         fused = fusion(mmi)
-        state, action, world = unified(fused)
+        state, action, world = unified(torch.from_numpy(fused).float())
 
         self.assertEqual(state.shape, (2, 128))
         self.assertEqual(action.shape, (2, 128))
@@ -521,7 +521,7 @@ class TestSensorFusionControl闭环(unittest.TestCase):
                 imu=torch.from_numpy(imu_feat_arr)
             )
             fused = fusion(mmi)
-            state, action, world = unified(fused)
+            state, action, world = unified(torch.from_numpy(fused).float())
 
             # 控制阶段
             # 基于触觉力觉生成抓取力命令
