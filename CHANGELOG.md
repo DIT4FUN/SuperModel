@@ -3,6 +3,20 @@
 All notable changes to SuperModel will be documented in this file.
 
 
+## [v1.82.0] - 2026-04-09 00:20
+### Added
+- +20项传感器边缘场景测试 (TestSensorEdgeCasesV2): 边界条件/饱和/极端姿态/多接触/噪声一致性
+- +9项融合边缘场景测试 (TestFusionEdgeCasesV2): 极小dt/协方差/EKF边界/多传感器融合
+- +25项测试覆盖: 触觉重叠接触/力觉饱和/IMU极端姿态/人类步行/力旋量变换
+- AGV五级详细规格表 (附录E): 整车/感知/控制/计算通信/感知→控制闭环延迟
+
+### Fixed
+- WrenchProcessor.compute_equivalent_wrench_at 测试索引修正 (Tz在index 5, 非index 3)
+- ExtendedKalmanFilter参数名修正 (state_dim/measurement_dim)
+- ComplementaryFilter调用修正 (dict参数)
+- MultiSensorFusion API修正 (add_fusion_method + update)
+- VirtualForceSensor零力测试修正 (偏置范围内检查)
+
 ## [v1.81.0] - 2026-04-09 00:00
 
 ### 新增功能

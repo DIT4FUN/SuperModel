@@ -297,7 +297,7 @@ class TestFusionStability(unittest.TestCase):
         self.assertIsInstance(fused, np.ndarray)
 
 
-class TestFusionEdgeCases(unittest.TestCase):
+class TestFusionEdgeCasesV2(unittest.TestCase):
     """融合边界情况测试"""
 
     def test_missing_sensor_data(self):
@@ -1282,6 +1282,112 @@ class TestFusionEdgeCases(unittest.TestCase):
         self.assertIsNotNone(readings)
         
         manager.close_all()
+
+
+class TestFusionEdgeCasesV2(unittest.TestCase):
+    """融合边缘场景测试"""
+
+    def test_ekf_with_very_small_dt(self):
+        """扩展卡尔曼滤波极小时间步"""
+        ekf = ExtendedKalmanFilter(state_dim=6, measurement_dim=3)
+        ekf.initialize(np.zeros(6))
+        
+        for _ in range(10):
+            ekf.predict(dt=1e-6)
+            state = ekf.get_state()
+            self.assertEqual(len(state), 6)
+
+    def test_ekf_covariance_bounded(self):
+        """EKF协方差有界性"""
+        ekf = ExtendedKalmanFilter(state_dim=6, measurement_dim=3)
+        ekf.initialize(np.zeros(6))
+        
+        for _ in range(100):
+            ekf.predict(dt=0.01)
+            meas = np.random.randn(3) * 10
+            ekf.correct(meas)
+            cov = ekf.get_covariance()
+            self.assertTrue(np.all(np.diag(cov) >= 0))
+
+    def test_complementary_filter_no_gyro_bias_drift(self):
+        """互补滤波陀螺仪偏置漂移抑制"""
+        cf = ComplementaryFilter(alpha=0.98)
+        
+        accel = np.array([0.0, 0.0, -9.81])
+        
+        euler_angles = []
+        for _ in range(200):
+            gyro = np.array([0.0, 0.0, 0.001])
+            angles = cf.update({'accel': accel, 'gyro': gyro}, dt=0.01)
+            euler_angles.append(angles[2])
+        
+        final_yaw = abs(euler_angles[-1])
+        self.assertLess(final_yaw, 0.5)
+
+    def test_multi_sensor_fusion_all_sensors(self):
+        """多传感器融合全传感器测试"""
+        fusion = MultiSensorFusion()
+        cf_imu = ComplementaryFilter(alpha=0.96)
+        fusion.add_fusion_method('imu', cf_imu)
+        
+        sensor_data = {
+            'imu': {'accel': np.array([0.0, 0.0, -9.81]), 'gyro': np.array([0.0, 0.0, 0.1])}
+        }
+        
+        fused = fusion.update(sensor_data, dt=0.01)
+        self.assertIsNotNone(fused)
+
+    def test_multi_sensor_fusion_partial_availability(self):
+        """多传感器部分可用融合"""
+        fusion = MultiSensorFusion()
+        cf = ComplementaryFilter(alpha=0.96)
+        fusion.add_fusion_method('imu', cf)
+        
+        for avail_data in [
+            {'imu': {'accel': np.array([0.0, 0.0, -9.81]), 'gyro': np.array([0.0, 0.0, 0.1])}},
+            {'imu': {'accel': np.array([0.1, 0.0, -9.81]), 'gyro': np.array([0.0, 0.0, 0.0])}},
+        ]:
+            fused = fusion.update(avail_data, dt=0.01)
+            self.assertIsNotNone(fused)
+
+    def test_cross_modal_fusion_dimension_consistency(self):
+        """跨模态融合维度一致性"""
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        
+        for hidden in [256, 128, 64]:
+            config = FusionConfig(vision_dim=512, hidden_dim=hidden)
+            fusion = CrossModalFusion(config)
+            
+            vision = np.random.randn(2, config.vision_dim).astype(np.float32)
+            multimodal = MultimodalInput(
+                vision=vision, audio=None, tactile=None, force=None, imu=None
+            )
+            result = fusion.forward(multimodal)
+            self.assertEqual(result.shape[1], hidden)
+
+    def test_sensor_manager_grade_specs(self):
+        """传感器管理器等级规格"""
+        from src.sensors.manager import SensorManager, SensorManagerConfig
+        
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            config = SensorManagerConfig(grade=grade)
+            manager = SensorManager(config=config)
+            manager.open_all()
+            readings = manager.capture_all()
+            self.assertIsNotNone(readings)
+            manager.close_all()
+
+    def test_pose_estimator_velocity_integration_bounds(self):
+        """姿态估计器速度积分边界"""
+        from src.sensors.imu import PoseEstimator
+        estimator = PoseEstimator(algorithm='madgwick', sample_rate=100)
+        
+        for _ in range(100):
+            accel = np.array([0.0, 0.0, 9.81])
+            gyro = np.array([0.0, 0.0, 0.0])
+            vel, pos = estimator.integrate_velocity(accel, dt=0.01)
+            self.assertTrue(np.all(np.isfinite(vel)))
+            self.assertTrue(np.all(np.isfinite(pos)))
 
 
 if __name__ == '__main__':

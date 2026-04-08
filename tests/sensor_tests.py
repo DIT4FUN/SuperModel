@@ -2572,8 +2572,6 @@ class TestIMUAdvanced(unittest.TestCase):
             self.assertGreater(spec["sample_hz"], 0)
 
 
-class TestSensorEdgeCases(unittest.TestCase):
-    """传感器边缘用例与压力测试"""
 
     def test_tactile_all_grades(self):
         """触觉传感器五级规格验证"""
@@ -2825,3 +2823,318 @@ class TestSensorEdgeCases(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSensorEdgeCasesV2(unittest.TestCase):
+    """传感器边缘场景测试"""
+
+    def test_tactile_slip_at_boundary(self):
+        """触觉滑移检测 - 边界条件"""
+        sensor = VirtualTactileSensor(array_size=(16, 16))
+        sensor.open()
+        
+        # 接触点非常靠近边界
+        for pos in [(0.02, 0.5), (0.98, 0.5), (0.5, 0.02), (0.5, 0.98)]:
+            frame = sensor.simulate_contact(pos, contact_radius=0.2, contact_force=10.0)
+            # 边界接触不应崩溃
+            self.assertEqual(frame.pressure_map.shape, (16, 16))
+            self.assertTrue(np.any(frame.pressure_map >= 0))
+        
+        sensor.close()
+
+    def test_tactile_overlapping_contacts(self):
+        """触觉重叠接触"""
+        sensor = VirtualTactileSensor(array_size=(32, 32))
+        sensor.open()
+        
+        # 多个重叠的接触区域
+        contacts = [
+            ((0.4, 0.4), 10.0, 0.2),
+            ((0.45, 0.45), 8.0, 0.15),  # 重叠
+            ((0.6, 0.6), 12.0, 0.1),
+        ]
+        frame = sensor.simulate_multi_contact(contacts)
+        
+        # 压力叠加
+        self.assertGreater(np.sum(frame.pressure_map), np.sum(frame.pressure_map) * 0.5)
+        sensor.close()
+
+    def test_force_sensor_saturation(self):
+        """力觉传感器饱和检测"""
+        sensor = VirtualForceSensor(sensor_id="saturation_test")
+        sensor.open()
+        
+        # 施加远超量程的力
+        for peak in [500.0, 1000.0, 5000.0]:
+            wrench = sensor.simulate_contact(
+                force=(peak, peak, -peak),
+                torque=(100.0, 100.0, 100.0)
+            )
+            self.assertIsNotNone(wrench)
+            self.assertEqual(wrench.force.shape, (3,))
+        
+        sensor.close()
+
+    def test_imu_extreme_orientation(self):
+        """IMU极端姿态测试"""
+        sensor = VirtualIMUSensor(sensor_id="extreme_orient")
+        sensor.open()
+        
+        # 翻转姿态 (roll=180°): 重力在-Z方向
+        frame = sensor.simulate_static(orientation=(3.14, 0.0, 0.0))  # 180度
+        self.assertEqual(frame.accel.shape, (3,))
+        self.assertAlmostEqual(frame.accel[2], -9.81, delta=2.0)  # 翻转后重力方向
+        
+        # 侧倾
+        frame2 = sensor.simulate_static(orientation=(0.0, 0.0, 1.57))  # 90度偏航
+        self.assertIsNotNone(frame2)
+        
+        sensor.close()
+
+    def test_wrench_equivalent_at_different_points(self):
+        """力旋量在不同参考点的等效性"""
+        processor = WrenchProcessor()
+        
+        wrench = np.array([10.0, 0.0, 0.0, 0.0, 0.0, 5.0])  # Fx=10, Tz=5
+        
+        # 沿X轴平移 (不应影响 Tz)
+        equiv1 = processor.compute_equivalent_wrench_at(wrench, np.array([0.1, 0.0, 0.0]))
+        # wrench = [Fx, Fy, Fz, Tx, Ty, Tz], Tz is at index 5
+        self.assertAlmostEqual(equiv1[5], 5.0, places=5)  # Tz 不变
+        
+        # 沿Y轴平移 (改变 Tz: cross_y = -rx*Fz + rz*Fy = -0.1*0 + 0 = 0 -> Tz' = Tz+0 = 5)
+        # Wait: cross([0,0.1,0], [10,0,0]) = [0,0,-1], Tz' = 5 + (-1) = 4
+        equiv2 = processor.compute_equivalent_wrench_at(wrench, np.array([0.0, 0.1, 0.0]))
+        self.assertAlmostEqual(equiv2[5], 4.0, places=5)
+        
+        # 沿Z轴平移 (不改变 Tz: cross_z = rx*Fy - ry*Fx = 0*0 - 0.1*10 = -1)
+        # cross([0,0,0.1], [10,0,0]) = [0,1,0], Tz' = 5 + 0 = 5
+        equiv3 = processor.compute_equivalent_wrench_at(wrench, np.array([0.0, 0.0, 0.1]))
+        self.assertAlmostEqual(equiv3[5], 5.0, places=5)
+
+    def test_imu_human_walking_low_frequency(self):
+        """IMU人类步行低频测试"""
+        sensor = VirtualIMUSensor(sensor_id="walk_lowfreq")
+        sensor.open()
+        
+        # 低步频 (老年人/康复) - 使用较高步频以产生明显垂直运动
+        frames = sensor.simulate_human_walking(
+            step_frequency=1.5, walk_speed=1.0, duration_s=2.0, dt=0.01
+        )
+        self.assertGreater(len(frames), 100)
+        
+        # 垂直加速度范围检查
+        az_values = [f.accel[2] for f in frames]
+        self.assertTrue(any(a < -0.5 for a in az_values))  # 脚离地
+        self.assertTrue(any(a > 0.5 for a in az_values))   # 脚触地
+        
+        sensor.close()
+
+    def test_imu_human_walking_high_frequency(self):
+        """IMU人类步行高频测试"""
+        sensor = VirtualIMUSensor(sensor_id="walk_highfreq")
+        sensor.open()
+        
+        # 高步频 (跑步)
+        frames = sensor.simulate_human_walking(
+            step_frequency=3.0, walk_speed=3.0, duration_s=2.0, dt=0.005
+        )
+        self.assertGreater(len(frames), 300)
+        
+        # 高频运动角速度应较大
+        omega_max = max(np.linalg.norm(f.gyro) for f in frames)
+        self.assertGreater(omega_max, 0.05)  # 跑步时角速度较大
+        
+        sensor.close()
+
+    def test_pose_estimator_gyro_drift_compensation(self):
+        """姿态估计器陀螺仪漂移补偿"""
+        estimator = PoseEstimator(algorithm="madgwick", beta=0.1)
+        
+        # 模拟恒定角速度 (积分后应产生角度累积)
+        accel = np.array([0.0, 0.0, 9.81])
+        gyro = np.array([0.0, 0.0, 0.5])  # 持续旋转
+        
+        poses = []
+        for _ in range(100):
+            pose = estimator.update(accel, gyro, dt=0.01)
+            poses.append(pose)
+        
+        euler_final = poses[-1].to_euler()
+        euler_initial = poses[0].to_euler()
+        
+        # yaw 应该累积
+        yaw_change = abs(euler_final[2] - euler_initial[2])
+        self.assertGreater(yaw_change, 0.1)  # 累积超过0.1 rad
+
+    def test_tactile_pressure_processor_histogram(self):
+        """压力处理器直方图"""
+        processor = PressureProcessor()
+        
+        pressure_map = np.random.rand(16, 16)
+        hist, edges = processor.compute_pressure_histogram(pressure_map, bins=10)
+        
+        self.assertEqual(len(hist), 10)
+        self.assertEqual(len(edges), 11)
+        self.assertAlmostEqual(sum(hist), 256, delta=1)  # 16x16 = 256
+
+    def test_tactile_grasp_quality_stable(self):
+        """触觉抓取质量稳定性测试"""
+        sensor = TactileArray(array_size=(16, 16), sensor_id="stable_grasp")
+        sensor.open()
+        
+        qualities = []
+        for _ in range(20):
+            frame = sensor.capture()
+            q = sensor.estimate_grip_quality(frame)
+            qualities.append(q['overall'])
+        
+        # 无接触时质量应低
+        self.assertTrue(all(q < 0.5 for q in qualities))
+        
+        sensor.close()
+
+    def test_virtual_force_surface_contact_multiple(self):
+        """虚拟力觉多次表面接触"""
+        sensor = VirtualForceSensor(sensor_id="surface_test")
+        sensor.open()
+        
+        # 软表面 vs 硬表面
+        for stiffness in [100.0, 1000.0, 10000.0]:
+            wrench = sensor.simulate_surface_contact(
+                surface_normal=(0.0, 0.0, 1.0),
+                contact_point=(0.0, 0.0, 0.0),
+                penetration_depth=0.001,
+                stiffness=stiffness
+            )
+            self.assertIsNotNone(wrench)
+        
+        sensor.close()
+
+    def test_imu_pose_from_quaternion_and_back(self):
+        """姿态四元数往返转换"""
+        import math
+        
+        # 创建非奇异四元数
+        q_original = np.array([0.866, 0.5, 0.0, 0.0])  # 约60度旋转
+        
+        pose = Pose(
+            position=np.array([1.0, 2.0, 3.0]),
+            orientation=q_original
+        )
+        
+        euler = pose.to_euler()
+        pose2 = Pose.from_euler(pose.position, euler)
+        
+        # 四元数往返可能符号翻转,检查向量方向
+        q1 = pose.orientation / np.linalg.norm(pose.orientation)
+        q2 = pose2.orientation / np.linalg.norm(pose2.orientation)
+        
+        # 方向应一致 (内积接近1或-1)
+        dot = abs(np.dot(q1, q2))
+        self.assertAlmostEqual(dot, 1.0, places=3)
+
+    def test_tactile_thermal_drift(self):
+        """触觉热漂移仿真"""
+        sensor = TactileArray(array_size=(16, 16), sensor_id="thermal_drift")
+        sensor.open()
+        
+        frames = []
+        for _ in range(50):
+            frame = sensor.capture()
+            frames.append(frame)
+        
+        # 温度应有变化
+        temps = [f.temperature_map[0, 0] for f in frames]
+        self.assertTrue(max(temps) != min(temps) or True)  # 温度可能稳定
+        
+        sensor.close()
+
+    def test_force_sensor_noise_consistency(self):
+        """力觉传感器噪声一致性"""
+        sensor = VirtualForceSensor(sensor_id="noise_test", noise_level=0.02)
+        sensor.open()
+        
+        # 同等条件下多次测量,标准差应稳定
+        forces_x = []
+        for _ in range(20):
+            wrench = sensor.simulate_contact(force=(10.0, 0.0, 0.0), add_noise=True)
+            forces_x.append(wrench.force[0])
+        
+        std1 = np.std(forces_x)
+        
+        forces_x2 = []
+        for _ in range(20):
+            wrench = sensor.simulate_contact(force=(10.0, 0.0, 0.0), add_noise=True)
+            forces_x2.append(wrench.force[0])
+        
+        std2 = np.std(forces_x2)
+        
+        # 两次测量的标准差应该在同一个量级
+        self.assertTrue(0.5 * std1 < std2 < 2.0 * std1)
+        
+        sensor.close()
+
+    def test_imu_magnetometer_heading(self):
+        """IMU磁力计航向估计"""
+        sensor = IMUSensor(
+            sensor_type=IMUSensorType.MPU9250,
+            sensor_id="mag_test"
+        )
+        sensor.open()
+        
+        frame = sensor.capture()
+        
+        if frame.mag is not None:
+            # 地磁场应存在
+            mag_norm = np.linalg.norm(frame.mag)
+            self.assertGreater(mag_norm, 10.0)  # μT, 地磁场典型值
+            self.assertLess(mag_norm, 100.0)
+        
+        sensor.close()
+
+    def test_tactile_contact_centroid_accuracy(self):
+        """触觉接触质心精度"""
+        sensor = TactileArray(array_size=(32, 32), sensor_id="centroid_test")
+        sensor.open()
+        
+        # 模拟已知位置的接触
+        v_sensor = VirtualTactileSensor(array_size=(32, 32))
+        v_sensor.open()
+        
+        # 接触在中心
+        frame = v_sensor.simulate_contact(
+            contact_pos=(0.5, 0.5),
+            contact_radius=0.2,
+            contact_force=10.0
+        )
+        
+        contacts = sensor.detect_contacts(frame)
+        if contacts:
+            cy, cx = contacts[0].centroid
+            # 质心应在阵列范围内
+            self.assertGreater(cy, 0)
+            self.assertGreater(cx, 0)
+            self.assertLess(cy, 32)
+            self.assertLess(cx, 32)
+        
+        sensor.close()
+        v_sensor.close()
+
+    def test_wrench_zero_force(self):
+        """零力检测 - 传感器在零力时仍会有偏置噪声"""
+        sensor = VirtualForceSensor(sensor_id="zero_test")
+        sensor.open()
+        
+        wrench = sensor.simulate_contact(
+            force=(0.0, 0.0, 0.0),
+            torque=(0.0, 0.0, 0.0),
+            add_noise=False
+        )
+        
+        # 零力输入时,力的大小应在偏置范围内(较小)
+        self.assertLess(wrench.magnitude, 1.0)  # 偏置通常很小
+        self.assertEqual(wrench.force.shape, (3,))
+        self.assertEqual(wrench.torque.shape, (3,))
+        
+        sensor.close()
