@@ -7,7 +7,7 @@ SuperModel 系统健康检查模块 v1.67.0
 
 使用方法:
     cd ~/.openclaw/workspace/projects/SuperModel
-    python3 -c "from src.utils.health_check import run_all_checks; import sys, numpy as np; sys.exit(run_all_checks())"
+    python3 -c "from src.utils_pkg.health_check import run_all_checks; import sys, numpy as np; sys.exit(run_all_checks())"
 """
 
 import sys

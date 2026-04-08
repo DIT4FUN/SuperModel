@@ -2,6 +2,22 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.68.0] - 2026-04-08 14:20
+
+### Fixed
+- **工具包命名冲突**: 重命名 `src/utils/` → `src/utils_pkg/` 解决与 `src/utils.py` 模块的命名冲突
+  - 原 `src/utils/` 包（含 health_check.py）重命名为 `src/utils_pkg/`
+  - 更新 `src/__init__.py` 导入路径: `from . import utils` → `from . import utils_pkg`
+  - 更新 `src/utils_pkg/health_check.py` 文档字符串中的导入路径
+  - 修复前: utils_tests.py 导入 `validate_vector` 等函数时因包/模块命名冲突而失败
+  - 修复后: 1423 项测试全部通过
+
+### Testing
+- **1423 项全项目测试全部通过** (1423 passed, 38 skipped)
+- utils_tests.py: 25 项全部通过
+- sensor_tests.py: 134 项全部通过
+- fusion_tests.py: 37 项全部通过
+
 ## [v1.67.0] - 2026-04-07 16:34
 
 ### Added

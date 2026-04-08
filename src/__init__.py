@@ -45,7 +45,7 @@ from .learning import (
     get_learning_spec
 )
 
-from . import utils
+from . import utils_pkg
 
 __all__ = [
     # 版本
@@ -74,5 +74,5 @@ __all__ = [
     'get_learning_spec',
 
     # 工具
-    'utils'
+    'utils_pkg'
 ]
