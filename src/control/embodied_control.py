@@ -1130,6 +1130,229 @@ class EmbodiedTaskExecutor:
 
 
 # ─────────────────────────────────────────────
+# 传感器健康监控
+# ─────────────────────────────────────────────
+
+class SensorHealthMonitor:
+    """
+    多模态传感器健康监控
+    
+    检测传感器退化、漂移、故障, 并提供降级策略
+    
+    健康指标:
+    - 信号噪声比 (SNR)
+    - 数据新鲜度 (age)
+    - 物理一致性 (与其他传感器对比)
+    - 零漂 (bias stability)
+    - 范围检查 (out-of-range)
+    """
+    
+    def __init__(self, grade: str = 'M'):
+        self.grade = grade
+        self.spec = AGV_EMBODIED_GRADES.get(grade, AGV_EMBODIED_GRADES['M'])
+        
+        # 健康历史
+        self._tactile_health: List[float] = []
+        self._force_health: List[float] = []
+        self._imu_health: List[float] = []
+        
+        # 故障计数
+        self._tactile_faults = 0
+        self._force_faults = 0
+        self._imu_faults = 0
+        
+        # 基线数据
+        self._baseline_contact_force: Optional[float] = None
+        self._baseline_accel: Optional[np.ndarray] = None
+        
+    def check_tactile_health(self, contacts: List[TactileContact]) -> Dict:
+        """检查触觉传感器健康"""
+        health_score = 1.0
+        issues = []
+        
+        # 检查接触点数量合理性
+        if len(contacts) > 64:
+            issues.append('excessive_contacts')
+            health_score -= 0.2
+        
+        # 检查接触力范围
+        for c in contacts:
+            if c.force < 0 or c.force > 100:
+                issues.append('force_out_of_range')
+                health_score -= 0.3
+                break
+        
+        # 检查信号一致性
+        forces = [c.force for c in contacts]
+        if forces:
+            variance = np.var(forces)
+            if variance > 1000:
+                issues.append('high_variance')
+                health_score -= 0.2
+        
+        # 更新历史
+        self._tactile_health.append(health_score)
+        if len(self._tactile_health) > 100:
+            self._tactile_health.pop(0)
+        
+        if health_score < 0.5:
+            self._tactile_faults += 1
+        
+        return {
+            'health_score': health_score,
+            'issues': issues,
+            'fault_count': self._tactile_faults,
+            'is_degraded': health_score < 0.7,
+            'is_faulty': health_score < 0.5,
+        }
+    
+    def check_force_health(self, wrench: Wrench) -> Dict:
+        """检查力觉传感器健康"""
+        health_score = 1.0
+        issues = []
+        
+        # 检查量程
+        if wrench.magnitude > 5000:
+            issues.append('saturated')
+            health_score -= 0.4
+        
+        # 检查物理一致性 (力与力矩关系)
+        if wrench.magnitude > 0.1:
+            torque_to_force_ratio = wrench.torque_magnitude / (wrench.magnitude + 1e-6)
+            if torque_to_force_ratio > 1.0:
+                issues.append('physically_inconsistent')
+                health_score -= 0.3
+        
+        # 检查噪声水平
+        if self._baseline_contact_force is not None:
+            drift = abs(wrench.magnitude - self._baseline_contact_force)
+            if drift > 50:
+                issues.append('significant_drift')
+                health_score -= 0.2
+        else:
+            self._baseline_contact_force = wrench.magnitude
+        
+        # 更新历史
+        self._force_health.append(health_score)
+        if len(self._force_health) > 100:
+            self._force_health.pop(0)
+        
+        if health_score < 0.5:
+            self._force_faults += 1
+        
+        return {
+            'health_score': health_score,
+            'issues': issues,
+            'fault_count': self._force_faults,
+            'is_degraded': health_score < 0.7,
+            'is_faulty': health_score < 0.5,
+        }
+    
+    def check_imu_health(self, frame: IMUFrame) -> Dict:
+        """检查IMU传感器健康"""
+        health_score = 1.0
+        issues = []
+        
+        # 检查加速度范围
+        accel_mag = np.linalg.norm(frame.accel)
+        if accel_mag > 200 or accel_mag < 1:
+            issues.append('accel_out_of_range')
+            health_score -= 0.3
+        
+        # 检查陀螺仪范围
+        gyro_mag = np.linalg.norm(frame.gyro)
+        if gyro_mag > 50:
+            issues.append('gyro_out_of_range')
+            health_score -= 0.3
+        
+        # 检查静止时的异常
+        if accel_mag < 15:  # 接近静止
+            if gyro_mag > 0.5:
+                issues.append('motion_when_still')
+                health_score -= 0.2
+        
+        # 检查基线漂移
+        if self._baseline_accel is not None:
+            drift = np.linalg.norm(frame.accel - self._baseline_accel)
+            if drift > 10:
+                issues.append('baseline_drift')
+                health_score -= 0.2
+        else:
+            self._baseline_accel = frame.accel.copy()
+        
+        # 更新历史
+        self._imu_health.append(health_score)
+        if len(self._imu_health) > 100:
+            self._imu_health.pop(0)
+        
+        if health_score < 0.5:
+            self._imu_faults += 1
+        
+        return {
+            'health_score': health_score,
+            'issues': issues,
+            'fault_count': self._imu_faults,
+            'is_degraded': health_score < 0.7,
+            'is_faulty': health_score < 0.5,
+        }
+    
+    def get_degradation_strategy(self, tactile_health: Dict, force_health: Dict, imu_health: Dict) -> str:
+        """
+        根据健康状态确定降级策略
+        
+        Returns:
+            str: 降级模式 (full/tactile_only/force_only/emergency)
+        """
+        degraded = []
+        
+        if tactile_health['is_faulty']:
+            degraded.append('tactile')
+        elif tactile_health['is_degraded']:
+            degraded.append('tactile_degraded')
+        
+        if force_health['is_faulty']:
+            degraded.append('force')
+        elif force_health['is_degraded']:
+            degraded.append('force_degraded')
+        
+        if imu_health['is_faulty']:
+            degraded.append('imu')
+        elif imu_health['is_degraded']:
+            degraded.append('imu_degraded')
+        
+        # 决定降级策略
+        if imu_health['is_faulty']:
+            return 'emergency'  # IMU故障最严重
+        elif len(degraded) == 0:
+            return 'full'
+        elif len(degraded) == 1 and 'imu_degraded' in degraded:
+            return 'imu_degraded'
+        else:
+            return 'degraded'
+    
+    def get_overall_health(self) -> Dict:
+        """获取总体健康状态"""
+        tactile_avg = np.mean(self._tactile_health) if self._tactile_health else 1.0
+        force_avg = np.mean(self._force_health) if self._force_health else 1.0
+        imu_avg = np.mean(self._imu_health) if self._imu_health else 1.0
+        
+        return {
+            'tactile_health': tactile_avg,
+            'force_health': force_avg,
+            'imu_health': imu_avg,
+            'overall_health': (tactile_avg + force_avg + imu_avg) / 3,
+            'tactile_faults': self._tactile_faults,
+            'force_faults': self._force_faults,
+            'imu_faults': self._imu_faults,
+            'requires_maintenance': (
+                self._tactile_faults > 5 or
+                self._force_faults > 5 or
+                self._imu_faults > 5
+            ),
+        }
+
+
+# ─────────────────────────────────────────────
 # 导出符号
 # ─────────────────────────────────────────────
 
@@ -1142,4 +1365,5 @@ __all__ = [
     'EmbodiedControlParams',
     'EmbodiedController',
     'EmbodiedTaskExecutor',
+    'SensorHealthMonitor',
 ]

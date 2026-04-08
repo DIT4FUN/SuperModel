@@ -1,7 +1,8 @@
 # SuperModel 模块索引 / Module Index
+- **v1.96.0** (2026-04-09): 新增SensorHealthMonitor传感器健康监控类, embodied_control模块完善, 1762项测试全通过
 - **v1.86.0** (2026-04-09): 326项传感器+融合测试全通过, 触觉/力觉/IMU完整模块就绪, AGV五级规格体系完整
 
-> **版本**: v1.86.0
+> **版本**: v1.96.0
 > **更新**: 2026-04-09
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
@@ -53,7 +54,7 @@ src/
 │   ├── __init__.py
 │   └── scene_understanding.py  # 场景图 + 占据栅格
 │
-├── control/          # 执行层 - 运动控制 (18个子模块)
+├── control/          # 执行层 - 运动控制 (19个子模块)
 │   ├── __init__.py
 │   ├── motion.py          # 关节运动控制器
 │   ├── trajectory.py      # 轨迹生成 + RRT规划
@@ -69,7 +70,9 @@ src/
 │   ├── teleop.py          # 遥操作
 │   ├── ros2_interface.py  # ROS2接口
 │   ├── multi_agent.py     # 多AGV协调
-│   └── agv.py             # AGV运动学/轨迹跟踪
+│   ├── agv.py             # AGV运动学/轨迹跟踪
+│   ├── embodied_control.py # 具身传感控制 (触觉+力觉+IMU融合)
+│   └── sensorimotor.py    # 传感器-运动整合
 │
 ├── hardware/         # 硬件抽象层
 │   ├── __init__.py

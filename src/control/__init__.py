@@ -114,6 +114,7 @@ from .embodied_control import (
     EmbodiedController, EmbodiedState, EmbodiedCommand,
     EmbodiedControlParams, EmbodiedTaskExecutor,
     EmbodiedGrade, AGV_EMBODIED_GRADES, get_embodied_spec,
+    SensorHealthMonitor,
 )
 
 __all__ = [
@@ -177,4 +178,5 @@ __all__ = [
     'EmbodiedController', 'EmbodiedState', 'EmbodiedCommand',
     'EmbodiedControlParams', 'EmbodiedTaskExecutor',
     'EmbodiedGrade', 'AGV_EMBODIED_GRADES', 'get_embodied_spec',
+    'SensorHealthMonitor',
 ]
