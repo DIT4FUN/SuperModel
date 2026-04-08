@@ -110,6 +110,11 @@ from .trajectory_planning import (
     Waypoint, PurePursuitTracker, StanleyTracker,
     PIDTrajectoryTracker, RRTStarPlanner, MinimumSnapTrajectory,
 )
+from .embodied_control import (
+    EmbodiedController, EmbodiedState, EmbodiedCommand,
+    EmbodiedControlParams, EmbodiedTaskExecutor,
+    EmbodiedGrade, AGV_EMBODIED_GRADES, get_embodied_spec,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -168,4 +173,8 @@ __all__ = [
     'VectorFieldHistogram', 'AvoidanceConfig', 'DWAConfig', 'APFConfig', 'VFHConfig',
     'Obstacle', 'VelocityCommand', 'TrajectorySample',
     'AvoidanceStrategy', 'get_obstacle_avoidance_spec',
+    # embodied_control
+    'EmbodiedController', 'EmbodiedState', 'EmbodiedCommand',
+    'EmbodiedControlParams', 'EmbodiedTaskExecutor',
+    'EmbodiedGrade', 'AGV_EMBODIED_GRADES', 'get_embodied_spec',
 ]
