@@ -971,3 +971,178 @@ class TestCrossModalAttentionExtended(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+
+class TestFusionAdvanced(unittest.TestCase):
+    """跨模态融合高级测试"""
+
+    def test_fusion_config_defaults(self):
+        """融合配置默认参数"""
+        fc = FusionConfig()
+        self.assertEqual(fc.vision_dim, 512)
+        self.assertEqual(fc.audio_dim, 128)
+        self.assertGreater(fc.hidden_dim, 0)
+        self.assertGreater(fc.num_heads, 0)
+
+    def test_multimodal_input_creation(self):
+        """多模态输入创建"""
+        multimodal = MultimodalInput(
+            vision=np.random.randn(4, 128).astype(np.float32),
+            audio=np.random.randn(4, 64).astype(np.float32),
+            tactile=np.random.randn(4, 32).astype(np.float32),
+            force=np.random.randn(4, 16).astype(np.float32),
+            imu=np.random.randn(4, 16).astype(np.float32)
+        )
+        self.assertEqual(multimodal.vision.shape[0], 4)
+        self.assertEqual(multimodal.tactile.shape[0], 4)
+
+    def test_fusion_forward_with_correct_dims(self):
+        """融合前向传播(正确维度)"""
+        fc = FusionConfig(vision_dim=512, audio_dim=128, tactile_dim=32, force_dim=16, imu_dim=16)
+        fusion = CrossModalFusion(fc)
+        
+        multimodal = MultimodalInput(
+            vision=np.random.randn(2, 512).astype(np.float32),
+            audio=np.random.randn(2, 128).astype(np.float32),
+            tactile=np.random.randn(2, 32).astype(np.float32),
+            force=np.random.randn(2, 16).astype(np.float32),
+            imu=np.random.randn(2, 16).astype(np.float32)
+        )
+        
+        output = fusion.forward(multimodal)
+        self.assertEqual(output.shape[0], 2)
+        self.assertEqual(output.shape[1], fc.hidden_dim)
+
+    def test_sensor_fusion_complementary_filter(self):
+        """互补滤波器测试"""
+        cf = ComplementaryFilter()
+        
+        # 更新 accel
+        measurements = {"accel": np.random.randn(3).astype(np.float32) * 0.1}
+        result = cf.update(measurements, dt=0.01)
+        self.assertIsNotNone(result)
+        
+        state = cf.get_state()
+        self.assertIsNotNone(state)
+
+    def test_sensor_fusion_complementary_filter_multi_modality(self):
+        """互补滤波器多模态"""
+        cf = ComplementaryFilter()
+        
+        for modality in ["accel", "gyro", "mag"]:
+            measurements = {modality: np.random.randn(3).astype(np.float32) * 0.1}
+            result = cf.update(measurements, dt=0.01)
+            self.assertIsNotNone(result)
+
+    def test_ekf_initialization(self):
+        """扩展卡尔曼滤波器初始化"""
+        ekf = ExtendedKalmanFilter(state_dim=6, measurement_dim=3)
+        
+        self.assertEqual(ekf._state.shape[0], 6)
+        cov = ekf.get_covariance()
+        self.assertEqual(cov.shape, (6, 6))
+        
+        # 初始化状态
+        ekf.initialize(state=np.zeros(6), P=np.eye(6)*0.1)
+        self.assertEqual(ekf._state.shape[0], 6)
+
+    def test_ekf_predict_correct(self):
+        """EKF预测更新"""
+        ekf = ExtendedKalmanFilter(state_dim=6, measurement_dim=3)
+        ekf.initialize(state=np.zeros(6), P=np.eye(6)*0.1)
+        
+        # 预测步骤
+        ekf.predict(dt=0.01)
+        
+        # 更新步骤
+        observation = np.random.randn(3).astype(np.float32)
+        ekf.correct(measurement=observation)
+        
+        self.assertEqual(ekf._state.shape[0], 6)
+
+    def test_multi_sensor_fusion_update(self):
+        """多传感器融合更新"""
+        msf = MultiSensorFusion()
+        
+        sensor_data = {
+            "imu": {"accel": np.random.randn(3).astype(np.float32)},
+            "vision": {"pose": np.random.randn(6).astype(np.float32)}
+        }
+        
+        result = msf.update(sensor_data, dt=0.01)
+        self.assertIsInstance(result, dict)
+
+    def test_multi_sensor_fusion_state(self):
+        """多传感器融合状态获取"""
+        msf = MultiSensorFusion()
+        
+        # 初始状态
+        state = msf.get_fused_state()
+        self.assertIsNotNone(state)
+
+
+class TestSensorCalibrationFusion(unittest.TestCase):
+    """传感器标定与融合集成测试"""
+
+    def test_imu_force_tactile_coordinate(self):
+        """多传感器坐标对齐"""
+        # IMU: 传感器坐标系
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        imu_frame = imu.capture()
+        
+        # 力传感器: 腕部坐标系
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        force.open()
+        force_wrench = force.capture()
+        
+        # 触觉: 末端执行器坐标系
+        tactile = TactileArray(array_size=(8, 8))
+        tactile.open()
+        tactile_frame = tactile.capture()
+        
+        # 验证所有数据有效
+        self.assertIsNotNone(imu_frame)
+        self.assertIsNotNone(force_wrench)
+        self.assertIsNotNone(tactile_frame)
+        
+        imu.close()
+        force.close()
+        tactile.close()
+
+    def test_fusion_with_calibrated_sensors(self):
+        """带标定数据的融合"""
+        # 创建并标定传感器
+        imu = IMUSensor(sensor_type=IMUSensorType.BMI088)
+        imu.open()
+        imu.calibrate_gyro_bias(num_samples=50)
+        
+        force = ForceTorqueSensor()
+        force.open()
+        force.set_tool_center(tool_mass=0.5, tool_com=np.array([0.0, 0.0, 0.1]))
+        
+        # 采集数据
+        imu_frames = [imu.capture() for _ in range(10)]
+        force_wrenches = [force.capture() for _ in range(10)]
+        
+        self.assertEqual(len(imu_frames), 10)
+        self.assertEqual(len(force_wrenches), 10)
+        
+        imu.close()
+        force.close()
+
+    def test_fusion_config_hidden_dim_scaling(self):
+        """融合隐藏层维度随规格缩放"""
+        configs = []
+        for dim in [128, 256, 512]:
+            fc = FusionConfig(vision_dim=dim, audio_dim=dim//4, hidden_dim=dim//2)
+            configs.append(fc)
+            self.assertEqual(fc.hidden_dim, dim // 2)
+        
+        # 确保不同配置创建不同的融合器
+        self.assertNotEqual(configs[0].hidden_dim, configs[2].hidden_dim)
+
+
+if __name__ == '__main__':
+    unittest.main()

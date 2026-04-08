@@ -1473,7 +1473,8 @@ class TestForceTorqueSensorExtended(unittest.TestCase):
             stiffness=5000.0
         )
         # 法向力方向与法向量相反: normal=(0,0,1)向上, force向下为负
-        self.assertLess(wrench.force[2], 0)
+        # 接触力的大小应约为 stiffness * penetration_depth = 5000 * 0.002 = 10N
+        self.assertLess(wrench.force[2], -5.0)  # Should be around -10N
         # 接触点产生的力矩
         self.assertIsNotNone(wrench.torque)
         sensor.close()
@@ -2050,6 +2051,525 @@ class TestSensorCrossModalEdgeCases(unittest.TestCase):
         )
         self.assertAlmostEqual(frame.accel_magnitude, 9.81, places=1)
         self.assertAlmostEqual(frame.gyro_magnitude, 0.37, places=1)
+
+
+
+
+class TestTactileAdvanced(unittest.TestCase):
+    """测试触觉传感器高级功能"""
+
+    def test_tactile_virtual_slip_detection(self):
+        """虚拟触觉滑移检测"""
+        sensor = VirtualTactileSensor(array_size=(16, 16), sensor_id="slip_test")
+        sensor.open()
+        
+        # 模拟无滑移接触
+        frame_static = sensor.simulate_contact(
+            contact_pos=(0.5, 0.5),
+            contact_radius=0.3,
+            contact_force=10.0,
+            noise_level=0.01
+        )
+        
+        # 模拟滑移动作
+        frames_sliding = sensor.simulate_sliding(
+            direction=(0.1, 0.0),
+            speed=0.05,
+            duration_frames=10
+        )
+        
+        self.assertEqual(len(frames_sliding), 10)
+        for frame in frames_sliding:
+            self.assertIsNotNone(frame.pressure_map)
+            self.assertGreater(np.max(frame.pressure_map), 0.0)
+        
+        sensor.close()
+
+    def test_tactile_virtual_multi_contact(self):
+        """虚拟触觉多点接触"""
+        sensor = VirtualTactileSensor(array_size=(16, 16))
+        sensor.open()
+        
+        contacts = [
+            ((0.3, 0.3), 5.0, 0.2),
+            ((0.7, 0.7), 8.0, 0.25),
+            ((0.5, 0.2), 3.0, 0.15),
+        ]
+        frame = sensor.simulate_multi_contact(contacts, noise_level=0.02)
+        
+        self.assertEqual(frame.pressure_map.shape, (16, 16))
+        self.assertGreater(np.max(frame.pressure_map), 0.0)
+        sensor.close()
+
+    def test_tactile_virtual_slip_simulation(self):
+        """虚拟触觉滑移状态模拟"""
+        sensor = VirtualTactileSensor(array_size=(16, 16))
+        
+        result = sensor.simulate_slip_detection(
+            normal_force=10.0,
+            friction_coeff=0.3,
+            velocity=(0.0, 0.0)
+        )
+        self.assertEqual(result["slip_state"], "stick")
+        self.assertEqual(result["slip_probability"], 0.0)
+        
+        result_slide = sensor.simulate_slip_detection(
+            normal_force=10.0,
+            friction_coeff=0.3,
+            velocity=(0.1, 0.0)
+        )
+        self.assertIn(result_slide["slip_state"], ["micro_slip", "sliding"])
+        self.assertGreater(result_slide["slip_probability"], 0.0)
+
+    def test_tactile_pressure_processor_filter(self):
+        """压力信号处理器滤波"""
+        proc = PressureProcessor(filter_window=3, drift_compensation=True)
+        
+        # 添加一些尖峰噪声
+        pressure = np.ones((8, 8), dtype=np.float32) * 0.5
+        pressure[3, 3] = 1.0  # 尖峰噪声
+        
+        filtered = proc.filter(pressure)
+        self.assertEqual(filtered.shape, pressure.shape)
+        self.assertLess(filtered[3, 3], pressure[3, 3])  # 尖峰被抑制
+
+    def test_tactile_pressure_processor_baseline(self):
+        """压力基线补偿"""
+        proc = PressureProcessor(drift_compensation=True)
+        
+        baseline = np.ones((8, 8), dtype=np.float32) * 0.2
+        proc.compensate_baseline(baseline, set_baseline=True)
+        
+        drifted = baseline + 0.05
+        compensated = proc.compensate_baseline(drifted)
+        
+        # 补偿后应该接近 0.05 (0.25 - 0.2)
+        np.testing.assert_array_almost_equal(
+            compensated, np.ones((8, 8), dtype=np.float32) * 0.05, decimal=2
+        )
+
+    def test_tactile_pressure_processor_force_centroid(self):
+        """压力质心计算"""
+        proc = PressureProcessor()
+        
+        # 创建高斯压力分布
+        h, w = 16, 16
+        xx, yy = np.meshgrid(np.linspace(0, 1, w), np.linspace(0, 1, h))
+        center = (0.5, 0.5)
+        dist = np.sqrt((xx - center[0])**2 + (yy - center[1])**2)
+        pressure = np.exp(-dist**2 / 0.05).astype(np.float32)
+        
+        cy, cx = proc.compute_centroid(pressure)
+        self.assertAlmostEqual(cy, 7.5, delta=1.0)
+        self.assertAlmostEqual(cx, 7.5, delta=1.0)
+
+    def test_tactile_agv_grades_all(self):
+        """AGV触觉五级规格完整性"""
+        grades = ["S", "M", "L", "XL", "XXL"]
+        for grade in grades:
+            spec = get_tactile_spec(grade)
+            self.assertIn("array", spec)
+            self.assertIn("res", spec)
+            self.assertIn("range_kpa", spec)
+            self.assertIn("freq_hz", spec)
+            self.assertGreater(spec["freq_hz"], 0)
+
+    def test_tactile_capture_with_context_manager(self):
+        """触觉传感器上下文管理器"""
+        with TactileArray(array_size=(8, 8)) as sensor:
+            frame = sensor.capture()
+            self.assertIsNotNone(frame)
+            self.assertEqual(frame.pressure_map.shape, (8, 8))
+
+
+class TestForceAdvanced(unittest.TestCase):
+    """测试力觉传感器高级功能"""
+
+    def test_wrench_transform(self):
+        """力旋量坐标变换"""
+        wrench = Wrench(
+            force=np.array([10.0, 0.0, 0.0]),
+            torque=np.array([0.0, 0.0, 0.0])
+        )
+        
+        # 90度绕Z轴旋转
+        R = np.array([
+            [0, -1, 0],
+            [1, 0, 0],
+            [0, 0, 1]
+        ])
+        t = np.array([0.0, 0.0, 0.0])
+        
+        transformed = wrench.transform(R, t)
+        np.testing.assert_array_almost_equal(
+            transformed.force, np.array([0.0, 10.0, 0.0]), decimal=3
+        )
+
+    def test_wrench_transform_with_translation(self):
+        """力旋量带平移坐标变换"""
+        wrench = Wrench(
+            force=np.array([0.0, 0.0, -10.0]),  # 沿-Z方向
+            torque=np.array([0.0, 0.0, 0.0])
+        )
+        
+        # 旋转矩阵 (单位阵)
+        R = np.eye(3)
+        # 平移向量: 沿X轴0.5m
+        t = np.array([0.5, 0.0, 0.0])
+        
+        transformed = wrench.transform(R, t)
+        # 力矩 = r x F = [0.5, 0, 0] x [0, 0, -10] = [0, 5, 0]
+        np.testing.assert_array_almost_equal(
+            transformed.torque, np.array([0.0, 5.0, 0.0]), decimal=3
+        )
+
+    def test_wrench_vector_conversion(self):
+        """Wrench向量转换"""
+        original = Wrench(
+            force=np.array([1.0, 2.0, 3.0]),
+            torque=np.array([0.1, 0.2, 0.3])
+        )
+        
+        vec = original.to_vector()
+        self.assertEqual(vec.shape, (6,))
+        np.testing.assert_array_equal(vec[:3], original.force)
+        np.testing.assert_array_equal(vec[3:], original.torque)
+        
+        recovered = Wrench.from_vector(vec, timestamp=0.0, frame_id=0, sensor_id="test")
+        np.testing.assert_array_equal(recovered.force, original.force)
+        np.testing.assert_array_equal(recovered.torque, original.torque)
+
+    def test_virtual_force_sensor_contact(self):
+        """虚拟力传感器接触模拟"""
+        sensor = VirtualForceSensor(sensor_id="vf_contact", noise_level=0.01)
+        sensor.open()
+        
+        wrench = sensor.simulate_contact(
+            force=(10.0, 0.0, 0.0),
+            torque=(0.0, 0.0, 5.0),
+            add_noise=True
+        )
+        
+        self.assertIsInstance(wrench, Wrench)
+        self.assertEqual(wrench.sensor_id, "vf_contact")
+        sensor.close()
+
+    def test_virtual_force_sensor_payload(self):
+        """虚拟力传感器负载模拟"""
+        sensor = VirtualForceSensor()
+        sensor.open()
+        
+        wrench = sensor.simulate_payload(mass=2.0, com_offset=(0.1, 0.0, 0.0))
+        
+        # Fz = -mg = -19.62 (无噪声)
+        self.assertLess(wrench.force[2], -15.0)  # Should be around -19.8
+        # Ty = -m*g*dx = -2*9.81*0.1 = -1.962
+        self.assertLess(wrench.torque[1], 0)  # Should be negative
+        
+        sensor.close()
+
+    def test_virtual_force_collision(self):
+        """虚拟力传感器碰撞模拟"""
+        sensor = VirtualForceSensor()
+        sensor.open()
+        
+        frames = sensor.simulate_collision(
+            direction=(1.0, 0.0, 0.0),
+            peak_force=100.0,
+            duration_ms=50.0,
+            decay="exponential"
+        )
+        
+        self.assertGreater(len(frames), 0)
+        first_force = frames[0].force[0]
+        self.assertGreater(first_force, 0)
+        sensor.close()
+
+    def test_virtual_force_surface_contact(self):
+        """虚拟力传感器表面接触"""
+        sensor = VirtualForceSensor()
+        sensor.open()
+        
+        wrench = sensor.simulate_surface_contact(
+            surface_normal=(0.0, 0.0, 1.0),
+            contact_point=(0.0, 0.0, 0.0),
+            penetration_depth=0.002,
+            stiffness=1000.0,
+            damping=50.0
+        )
+        
+        self.assertIsInstance(wrench, Wrench)
+        # Z方向力应为负 (接触力方向向上)
+        self.assertNotEqual(wrench.force[2], 0.0)  # force should be non-zero
+        sensor.close()
+
+    def test_virtual_force_friction(self):
+        """虚拟力传感器摩擦力"""
+        sensor = VirtualForceSensor()
+        
+        # 静止
+        wrench_stick = sensor.simulate_friction_contact(
+            normal_force=10.0,
+            velocity=(0.0, 0.0, 0.0),
+            friction_coeff=0.3
+        )
+        np.testing.assert_array_almost_equal(wrench_stick.force, np.zeros(3), decimal=2)
+        
+        # 滑动
+        wrench_slide = sensor.simulate_friction_contact(
+            normal_force=10.0,
+            velocity=(1.0, 0.0, 0.0),
+            friction_coeff=0.3
+        )
+        # 摩擦力方向与速度相反
+        self.assertLess(wrench_slide.force[0], 0)
+
+    def test_wrench_processor_covariance(self):
+        """Wrench处理器协方差估计"""
+        proc = WrenchProcessor()
+        
+        history = [np.random.randn(6) * 0.5 for _ in range(20)]
+        cov = proc.estimate_covariance(history)
+        
+        self.assertEqual(cov.shape, (6, 6))
+        np.testing.assert_array_almost_equal(cov, cov.T)  # 对称矩阵
+
+    def test_wrench_processor_force_direction(self):
+        """Wrench处理器力方向计算"""
+        proc = WrenchProcessor()
+        
+        wrench = np.array([3.0, 4.0, 0.0, 0.0, 0.0, 0.0])
+        direction = proc.compute_force_direction(wrench)
+        
+        np.testing.assert_array_almost_equal(
+            direction, np.array([0.6, 0.8, 0.0]), decimal=3
+        )
+        self.assertAlmostEqual(np.linalg.norm(direction), 1.0, places=3)
+
+    def test_wrench_processor_equivalent_at(self):
+        """等效力旋量计算"""
+        proc = WrenchProcessor()
+        
+        wrench = np.array([10.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+        translation = np.array([0.0, 0.0, 0.5])  # Z方向0.5m
+        
+        equiv = proc.compute_equivalent_wrench_at(wrench, translation)
+        
+        # 新力矩 = 旧力矩 + r x F = [0,0,0] + [0,0,0.5] x [10,0,0] = [0,5,0]
+        np.testing.assert_array_almost_equal(
+            equiv[3:], np.array([0.0, 5.0, 0.0]), decimal=3
+        )
+
+    def test_force_sensor_calibrate_bias(self):
+        """力传感器偏置校准"""
+        sensor = ForceTorqueSensor(sensor_id="bias_test")
+        sensor.open()
+        
+        # 采集模拟数据
+        for _ in range(50):
+            sensor.capture()
+        
+        # 校准
+        sensor.calibrate_bias(num_samples=50)
+        self.assertEqual(len(sensor.calibration.bias), 6)
+        
+        sensor.close()
+
+    def test_force_sensor_set_tool_center(self):
+        """力传感器工具中心设置"""
+        sensor = ForceTorqueSensor()
+        sensor.open()
+        
+        sensor.set_tool_center(tool_mass=1.0, tool_com=np.array([0.1, 0.0, 0.0]))
+        
+        self.assertEqual(sensor.tool_center[0], 0.1)
+        sensor.close()
+
+    def test_force_agv_grades_all(self):
+        """AGV力觉五级规格完整性"""
+        grades = ["S", "M", "L", "XL", "XXL"]
+        for grade in grades:
+            spec = get_force_spec(grade)
+            self.assertIn("axes", spec)
+            self.assertIn("force_range", spec)
+            self.assertIn("torque_range", spec)
+            self.assertIn("sampling_hz", spec)
+            self.assertGreater(spec["sampling_hz"], 0)
+
+
+class TestIMUAdvanced(unittest.TestCase):
+    """测试IMU高级功能"""
+
+    def test_pose_matrix_roundtrip(self):
+        """姿态矩阵往返转换"""
+        pose = Pose(
+            position=np.array([1.0, 2.0, 3.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0])
+        )
+        
+        matrix = pose.to_matrix()
+        self.assertEqual(matrix.shape, (4, 4))
+        self.assertEqual(matrix[3, 3], 1.0)
+
+    def test_pose_from_euler(self):
+        """从欧拉角创建姿态"""
+        pos = np.array([0.0, 0.0, 0.0])
+        rpy = np.array([0.0, 0.0, 0.0])  # 无旋转
+        
+        pose = Pose.from_euler(pos, rpy)
+        np.testing.assert_array_almost_equal(pose.orientation, [1, 0, 0, 0], decimal=3)
+
+    def test_pose_estimator_madgwick(self):
+        """Madgwick姿态估计"""
+        np.random.seed(42)
+        estimator = PoseEstimator(algorithm="madgwick", beta=0.1)
+        
+        for i in range(100):
+            accel = np.array([0.0, 0.0, 9.81]) + np.random.randn(3) * 0.05
+            gyro = np.array([0.01, -0.01, 0.005]) + np.random.randn(3) * 0.001
+            pose = estimator.update(accel, gyro, dt=0.01)
+        
+        euler = estimator.get_euler()
+        self.assertEqual(len(euler), 3)
+
+    def test_pose_estimator_complementary_algorithm(self):
+        """互补滤波姿态估计"""
+        np.random.seed(123)
+        estimator = PoseEstimator(algorithm="complementary")
+        
+        for i in range(200):
+            accel = np.array([0.0, 0.0, 9.81]) + np.random.randn(3) * 0.05
+            gyro = np.array([0.02, -0.02, 0.01]) + np.random.randn(3) * 0.002
+            pose = estimator.update(accel, gyro, dt=0.01)
+        
+        self.assertIsNotNone(estimator.get_pose())
+        np.testing.assert_array_almost_equal(
+            estimator.get_rotation_matrix().shape, (3, 3)
+        )
+
+    def test_virtual_imu_static(self):
+        """虚拟IMU静止状态"""
+        sensor = VirtualIMUSensor(sensor_id="static_test")
+        sensor.open()
+        
+        frame = sensor.simulate_static(orientation=(0.0, 0.0, 0.0))
+        
+        self.assertIsInstance(frame, IMUFrame)
+        # 静止时应接近重力加速度
+        self.assertAlmostEqual(frame.accel_magnitude, 9.81, places=1)
+        sensor.close()
+
+    def test_virtual_imu_trajectory_circle(self):
+        """虚拟IMU圆轨迹模拟"""
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        
+        frames = sensor.simulate_trajectory(
+            trajectory_type="circle",
+            duration_s=0.1,
+            dt=0.01
+        )
+        
+        self.assertGreater(len(frames), 0)
+        for frame in frames:
+            self.assertIsInstance(frame, IMUFrame)
+        
+        sensor.close()
+
+    def test_virtual_imu_agv_motion(self):
+        """虚拟IMU AGV运动模拟"""
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        
+        grades = ["S", "M", "L", "XL", "XXL"]
+        for grade in grades:
+            frame = sensor.simulate_agv_motion(
+                linear_velocity=(0.5, 0.0),
+                angular_velocity=0.1,
+                dt=0.01,
+                grade=grade
+            )
+            self.assertIsInstance(frame, IMUFrame)
+        
+        sensor.close()
+
+    def test_virtual_imu_human_walking(self):
+        """虚拟IMU人类步行模拟"""
+        sensor = VirtualIMUSensor()
+        sensor.open()
+        
+        frames = sensor.simulate_human_walking(
+            step_frequency=1.5,
+            walk_speed=1.0,
+            duration_s=0.2,
+            dt=0.01
+        )
+        
+        self.assertGreater(len(frames), 0)
+        sensor.close()
+
+    def test_imu_sensor_self_test(self):
+        """IMU传感器自检"""
+        sensor = IMUSensor(sensor_type=IMUSensorType.BMI088, sensor_id="selftest")
+        sensor.open()
+        
+        result = sensor.self_test()
+        self.assertIsInstance(result, bool)
+        
+        sensor.close()
+
+    def test_imu_sensor_calibrate_gyro(self):
+        """IMU陀螺仪偏置校准"""
+        sensor = IMUSensor(sensor_type=IMUSensorType.MPU6050)
+        sensor.open()
+        
+        sensor.calibrate_gyro_bias(num_samples=50, duration_sec=1.0)
+        
+        self.assertEqual(len(sensor.calibration.gyro_bias), 3)
+        sensor.close()
+
+    def test_imu_sensor_calibrate_accel(self):
+        """IMU加速度计标定"""
+        sensor = IMUSensor()
+        sensor.open()
+        
+        sensor.calibrate_accel(known_orientation="level")
+        
+        self.assertEqual(len(sensor.calibration.accel_scale), 3)
+        sensor.close()
+
+    def test_imu_integrate_velocity(self):
+        """IMU速度积分"""
+        estimator = PoseEstimator(sample_rate=100)
+        
+        accel = np.array([0.0, 0.0, 9.81])
+        v, p = estimator.integrate_velocity(accel, dt=0.01, remove_gravity=True)
+        
+        self.assertEqual(v.shape, (3,))
+        self.assertEqual(p.shape, (3,))
+        # 去除重力后加速度为0，速度不变
+        np.testing.assert_array_almost_equal(v, np.zeros(3), decimal=2)
+
+    def test_imu_reset(self):
+        """IMU估计器重置"""
+        estimator = PoseEstimator()
+        
+        estimator.integrate_velocity(np.array([1.0, 0.0, 0.0]), dt=0.01)
+        self.assertFalse(np.allclose(estimator.position, 0.0))
+        
+        estimator.reset()
+        np.testing.assert_array_almost_equal(estimator.position, np.zeros(3))
+        np.testing.assert_array_almost_equal(estimator.velocity, np.zeros(3))
+
+    def test_imu_agv_grades_all(self):
+        """AGV IMU五级规格完整性"""
+        grades = ["S", "M", "L", "XL", "XXL"]
+        for grade in grades:
+            spec = get_imu_spec(grade)
+            self.assertIn("type", spec)
+            self.assertIn("sample_hz", spec)
+            self.assertIn("noise_density", spec)
+            self.assertGreater(spec["sample_hz"], 0)
 
 
 if __name__ == '__main__':

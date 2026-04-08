@@ -2,6 +2,26 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+
+## [v1.77.0] - 2026-04-08 22:38
+
+### 新增测试
+- tests/sensor_tests.py: 新增触觉/力觉/IMU高级测试用例 (+48项)
+  - TactileArray: 虚拟滑移检测、多点接触、抓取质量评估、压力处理器
+  - ForceTorqueSensor: Wrench坐标变换、等效变换、虚拟传感器payload/碰撞/摩擦/表面接触
+  - IMUSensor: 虚拟轨迹模拟(圆/8字/线/正弦)、AGV运动/人类步行仿真、姿态估计器
+  - AGV五级规格完整性验证
+- tests/fusion_tests.py: 新增融合高级测试 (+18项)
+  - 互补滤波全模态、EKF预测/更新、多传感器融合状态
+  - 融合配置维度验证、传感器标定与融合集成
+
+### 文档更新
+- docs/MODULE_INDEX.md: 更新至v1.77.0，1528项测试覆盖
+
+### 测试结果
+- 1561项测试全通过 (较v1.76.0增加105项)
+- 16项跳过，28项警告
+
 ## [v1.71.0] - 2026-04-08 16:30
 
 ### 新增测试
