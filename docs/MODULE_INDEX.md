@@ -509,3 +509,498 @@ World Model 使机器人能够：
 
 > **附录E版本**: v1.29.0 | **最后更新**: 2026-04-01 | **维护者**: SuperModel开发团队
 
+
+---
+
+## 附录D: 传感器模块完整接口规格
+
+### D.1 触觉传感器接口 (tactile.py)
+
+#### 核心类及方法签名
+
+```python
+# === TactileArray ===
+class TactileArray:
+    def __init__(
+        self,
+        array_size: Tuple[int, int],      # (rows, cols)
+        sensor_type: TactileSensorType,     # RESISTIVE/CAPACITIVE/PIEZOELECTRIC/OPTICAL
+        sensor_id: str = "default",
+        calibration: Optional[TactileCalibration] = None
+    ) -> None
+
+    def open(self) -> bool                  # 打开传感器
+    def close(self) -> None                 # 关闭传感器
+    def capture(self) -> TactileFrame       # 采集一帧触觉数据
+    def detect_contacts(self, frame: Optional[TactileFrame] = None) -> List[TactileContact]
+    def get_slip_signal(self, frame: Optional[TactileFrame] = None) -> np.ndarray  # HxW
+    def estimate_grip_quality(self, frame: Optional[TactileFrame] = None) -> Dict[str, float]
+    def calibrate(self, zero_pressure: Optional[np.ndarray] = None,
+                  known_weights: Optional[List[float]] = None) -> None
+
+# === TactileFrame 数据结构 ===
+@dataclass
+class TactileFrame:
+    pressure_map: np.ndarray              # HxW float32, 归一化 0-1
+    temperature_map: Optional[np.ndarray]   # HxW float32, 摄氏度
+    proximity: Optional[np.ndarray]        # HxW float32, 米
+    slip_signal: Optional[np.ndarray]      # HxW float32, 0-1
+    timestamp: float                      # 秒
+    frame_id: int                         # 帧序号
+    sensor_id: str                        # 传感器ID
+
+# === TactileContact 接触事件 ===
+@dataclass
+class TactileContact:
+    center: Tuple[int, int]              # 接触中心 (row, col)
+    area: int                            # 接触面积 (像素)
+    peak_pressure: float                  # 峰值压力
+    mean_pressure: float                  # 平均压力
+    centroid: Tuple[float, float]         # 压力质心
+    contact_force: float                  # 估计接触力 (N)
+    slip_probability: float              # 滑移概率
+    temperature: Optional[float]          # 接触区温度
+
+# === VirtualTactileSensor 仿真接口 ===
+class VirtualTactileSensor:
+    def simulate_contact(
+        self,
+        contact_pos: Tuple[float, float],   # 归一化 (0-1)
+        contact_radius: float = 0.3,
+        contact_force: float = 10.0,
+        noise_level: float = 0.05
+    ) -> TactileFrame
+
+    def simulate_sliding(
+        self,
+        direction: Tuple[float, float],
+        speed: float = 0.1,
+        duration_frames: int = 30
+    ) -> List[TactileFrame]
+
+    def simulate_multi_contact(
+        self,
+        contacts: List[Tuple[Tuple[float, float], float, float]],
+        noise_level: float = 0.05
+    ) -> TactileFrame
+
+    def simulate_slip_detection(
+        self,
+        normal_force: float = 10.0,
+        friction_coeff: float = 0.3,
+        velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    ) -> Dict[str, float]
+
+# === AGV五级触觉规格 ===
+AGV_TACTILE_GRADES = {
+    'S':   {'array': (8,8),    'res': 12, 'range_kpa': (0,500),    'freq_hz': 50,   'temp': False},
+    'M':   {'array': (16,16),  'res': 12, 'range_kpa': (0,1000),   'freq_hz': 100,  'temp': True},
+    'L':   {'array': (24,24),  'res': 14, 'range_kpa': (0,2000),   'freq_hz': 200,  'temp': True},
+    'XL':  {'array': (32,32),  'res': 14, 'range_kpa': (0,5000),   'freq_hz': 500,  'temp': True},
+    'XXL': {'array': (48,48),  'res': 16, 'range_kpa': (0,10000),  'freq_hz': 1000, 'temp': True},
+}
+```
+
+### D.2 力觉传感器接口 (force.py)
+
+```python
+# === ForceTorqueSensor ===
+class ForceTorqueSensor:
+    def __init__(
+        self,
+        sensor_type: ForceSensorType,        # SIX_AXIS/THREE_AXIS/JOINT_TORQUE/FINGER_TIP
+        sensor_id: str = "ft_0",
+        calibration: Optional[ForceCalibration] = None,
+        ip_address: Optional[str] = None,
+        ethernet_type: str = "UDP"
+    ) -> None
+
+    def open(self) -> bool                  # 打开传感器
+    def close(self) -> None                 # 关闭传感器
+    def capture(self) -> Wrench              # 采集六维力旋量
+    def get_wrench(self) -> Optional[Wrench]
+    def detect_contact(self, wrench: Optional[Wrench] = None,
+                       threshold: Optional[float] = None) -> ContactState
+    def estimate_payload(self, wrench: Optional[Wrench] = None) -> float
+    def set_tool_center(self, tool_mass: float, tool_com: np.ndarray) -> None
+    def calibrate_bias(self, num_samples: int = 100) -> None
+
+# === Wrench 力旋量 ===
+@dataclass
+class Wrench:
+    force: np.ndarray    # (3,) Fx,Fy,Fz 单位:N
+    torque: np.ndarray   # (3,) Tx,Ty,Tz 单位:N·m
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+
+    def magnitude(self) -> float           # ||F||
+    def torque_magnitude(self) -> float    # ||T||
+    def to_vector(self) -> np.ndarray      # (6,) [Fx,Fy,Fz,Tx,Ty,Tz]
+    def transform(self, rotation: np.ndarray, translation: np.ndarray) -> 'Wrench'
+
+# === VirtualForceSensor 仿真接口 ===
+class VirtualForceSensor:
+    def simulate_contact(
+        self,
+        force: Tuple[float, float, float],
+        torque: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        add_noise: bool = True
+    ) -> Wrench
+
+    def simulate_payload(
+        self,
+        mass: float = 1.0,
+        com_offset: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        gravity: float = 9.81
+    ) -> Wrench
+
+    def simulate_collision(
+        self,
+        direction: Tuple[float, float, float],
+        peak_force: float = 50.0,
+        duration_ms: float = 100.0,
+        decay: str = "exponential"
+    ) -> List[Wrench]
+
+    def simulate_surface_contact(
+        self,
+        surface_normal: Tuple[float, float, float] = (0.0, 0.0, 1.0),
+        contact_point: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        penetration_depth: float = 0.001,
+        stiffness: float = 1000.0,
+        damping: float = 50.0
+    ) -> Wrench
+
+    def simulate_friction_contact(
+        self,
+        normal_force: float = 10.0,
+        velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+        friction_coeff: float = 0.3,
+        object_mass: float = 1.0
+    ) -> Wrench
+
+# === AGV五级力觉规格 ===
+AGV_FORCE_GRADES = {
+    'S':   {'axes': 3,  'force_range': 100,   'torque_range': 10,    'resolution': 0.1,  'sampling_hz': 100},
+    'M':   {'axes': 6,  'force_range': 200,   'torque_range': 20,    'resolution': 0.05, 'sampling_hz': 500},
+    'L':   {'axes': 6,  'force_range': 500,   'torque_range': 50,    'resolution': 0.02, 'sampling_hz': 1000},
+    'XL':  {'axes': 6,  'force_range': 1000,  'torque_range': 100,   'resolution': 0.01, 'sampling_hz': 2000},
+    'XXL': {'axes': 6,  'force_range': 5000,  'torque_range': 500,   'resolution': 0.005,'sampling_hz': 5000},
+}
+```
+
+### D.3 IMU传感器接口 (imu.py)
+
+```python
+# === IMUSensor ===
+class IMUSensor:
+    def __init__(
+        self,
+        sensor_type: IMUSensorType,          # BMI088/MPU6050/MPU9250/ADIS16470/VIRTUAL
+        sensor_id: str = "imu_0",
+        calibration: Optional[IMUCalibration] = None,
+        accel_range: int = 16,               # g
+        gyro_range: int = 2000,              # deg/s
+        sample_rate: int = 200               # Hz
+    ) -> None
+
+    def open(self) -> bool                  # 打开传感器
+    def close(self) -> None                 # 关闭传感器
+    def capture(self) -> IMUFrame            # 采集IMU数据帧
+    def self_test(self) -> bool              # 自检
+    def calibrate_gyro_bias(self, num_samples: int = 500, duration_sec: float = 5.0) -> None
+    def calibrate_accel(self, known_orientation: str = "level") -> None
+
+# === IMUFrame 数据帧 ===
+@dataclass
+class IMUFrame:
+    accel: np.ndarray             # (3,) m/s²
+    gyro: np.ndarray              # (3,) rad/s
+    mag: Optional[np.ndarray]     # (3,) μT (9轴IMU)
+    temperature: float            # 摄氏度
+    timestamp: float              # 秒
+    frame_id: int
+    sensor_id: str
+
+    @property def accel_magnitude(self) -> float
+    @property def gyro_magnitude(self) -> float
+
+# === Pose 位姿 ===
+@dataclass
+class Pose:
+    position: np.ndarray          # (3,) m
+    orientation: np.ndarray       # (4,) qw,qx,qy,qz
+
+    def to_euler(self) -> np.ndarray     # [roll, pitch, yaw] rad
+    def to_matrix(self) -> np.ndarray    # 4x4变换矩阵
+    @classmethod def identity(cls) -> 'Pose'
+    @classmethod def from_euler(cls, position: np.ndarray, rpy: np.ndarray) -> 'Pose'
+
+# === PoseEstimator 姿态估计 ===
+class PoseEstimator:
+    def __init__(
+        self,
+        algorithm: str = "madgwick",   # "madgwick" / "complementary" / "kalman"
+        sample_rate: float = 200.0,
+        beta: float = 0.1
+    ) -> None
+
+    def update(
+        self,
+        accel: np.ndarray,
+        gyro: np.ndarray,
+        mag: Optional[np.ndarray] = None,
+        dt: Optional[float] = None
+    ) -> Pose
+
+    def get_euler(self) -> np.ndarray
+    def get_rotation_matrix(self) -> np.ndarray
+    def integrate_velocity(self, accel: np.ndarray, dt: float,
+                           remove_gravity: bool = True) -> Tuple[np.ndarray, np.ndarray]
+    def reset(self) -> None
+
+# === VirtualIMUSensor 仿真接口 ===
+class VirtualIMUSensor:
+    def simulate_static(self, orientation: Tuple[float, float, float] = (0,0,0)) -> IMUFrame
+    def simulate_motion(self, linear_accel: Tuple, angular_vel: Tuple, dt: float = 0.01) -> IMUFrame
+    def simulate_trajectory(self, trajectory_type: str = "circle",
+                            duration_s: float = 2.0, dt: float = 0.01) -> List[IMUFrame]
+    def simulate_agv_motion(self, linear_velocity: Tuple = (0,0),
+                              angular_velocity: float = 0.0,
+                              dt: float = 0.01, grade: str = "M") -> IMUFrame
+    def simulate_human_walking(self, step_frequency: float = 1.5,
+                               walk_speed: float = 1.0,
+                               duration_s: float = 5.0,
+                               dt: float = 0.01) -> List[IMUFrame]
+
+# === AGV五级IMU规格 ===
+AGV_IMU_GRADES = {
+    'S':   {'type': 'MPU6050',    'accel_range': 8,   'gyro_range': 1000,  'sample_hz': 100,  'noise_density': 400},
+    'M':   {'type': 'BMI088',     'accel_range': 16,  'gyro_range': 2000,  'sample_hz': 200,  'noise_density': 120},
+    'L':   {'type': 'BMI088',      'accel_range': 24,  'gyro_range': 4000,  'sample_hz': 500,  'noise_density': 60},
+    'XL':  {'type': 'ADIS16470',   'accel_range': 40,  'gyro_range': 4000,  'sample_hz': 1000, 'noise_density': 20},
+    'XXL': {'type': 'ADIS16470',   'accel_range': 80,  'gyro_range': 8000,  'sample_hz': 2000, 'noise_density': 10},
+}
+```
+
+### D.4 传感器融合接口 (sensor_fusion.py / cross_modal_fusion.py)
+
+```python
+# === sensor_fusion.py ===
+
+class ComplementaryFilter(SensorFusion):
+    def __init__(self, alpha: float = 0.98) -> None
+    def update(self, measurements: Dict[str, np.ndarray], dt: float) -> np.ndarray  # [roll, pitch, yaw]
+    def get_state(self) -> np.ndarray
+    def reset(self) -> None
+
+class ExtendedKalmanFilter:
+    def __init__(self, state_dim: int, measurement_dim: int) -> None
+    def initialize(self, initial_state: np.ndarray) -> None
+    def predict(self, dt: float) -> None
+    def correct(self, measurement: np.ndarray) -> None
+    def update(self, measurements: Dict[str, np.ndarray], dt: float) -> np.ndarray
+    def get_state(self) -> np.ndarray
+    def get_covariance(self) -> np.ndarray
+
+class MultiSensorFusion:
+    def add_fusion_method(self, name: str, method: SensorFusion, weight: float) -> None
+    def update(self, sensor_data: Dict[str, Any], dt: float) -> Dict[str, np.ndarray]
+    def get_fused_state(self) -> np.ndarray
+
+# === cross_modal_fusion.py ===
+
+class CrossModalFusion(nn.Module):
+    def __init__(self, config: FusionConfig) -> None
+    def forward(self, multimodal: MultimodalInput) -> Dict[str, torch.Tensor]
+    def set_fusion_weights(self, weights: Dict[str, float]) -> None
+    def get_fusion_weights(self) -> Dict[str, float]
+
+@dataclass
+class FusionConfig:
+    vision_dim: int = 256
+    tactile_dim: int = 64
+    force_dim: int = 32
+    imu_dim: int = 32
+    hidden_dim: int = 256
+    num_heads: int = 8
+    dropout: float = 0.1
+
+@dataclass
+class MultimodalInput:
+    vision: Optional[torch.Tensor]   # BxCxHxW
+    audio: Optional[torch.Tensor]    # BxTxF
+    tactile: Optional[torch.Tensor] # BxN
+    force: Optional[torch.Tensor]   # Bx6
+    imu: Optional[torch.Tensor]     # Bx9
+    language: Optional[torch.Tensor] # BxL
+```
+
+### D.5 传感-运动融合接口 (sensorimotor.py)
+
+```python
+class SensorimotorIntegration:
+    def __init__(self, config: SensorimotorConfig) -> None
+    def open(self) -> bool
+    def close(self) -> None
+    def step(self, dt: float) -> SensorimotorState
+    def update_weights(self, tactile: float, force: float, imu: float) -> None
+    def emergency_stop(self) -> None
+    def get_state(self) -> SensorimotorState
+
+@dataclass
+class SensorimotorConfig:
+    tactile_weight: float = 0.3
+    force_weight: float = 0.4
+    imu_weight: float = 0.3
+    fusion_strategy: str = "weighted"
+    control_rate: float = 100.0
+    grade: str = 'M'
+    tactile_enabled: bool = True
+    force_enabled: bool = True
+    imu_enabled: bool = True
+
+    @classmethod
+    def from_grade(cls, grade: str) -> 'SensorimotorConfig'
+
+AGV_SENSORIMOTOR_GRADES = {
+    'S':   {'control_rate': 50,  'fusion': 'simple',    'tactile_weight': 0.2},
+    'M':   {'control_rate': 100, 'fusion': 'weighted',   'tactile_weight': 0.3},
+    'L':   {'control_rate': 200, 'fusion': 'adaptive',   'tactile_weight': 0.35},
+    'XL':  {'control_rate': 500, 'fusion': 'hierarchical','tactile_weight': 0.4},
+    'XXL': {'control_rate': 1000,'fusion': 'full',       'tactile_weight': 0.4},
+}
+```
+
+---
+
+## 附录E: 控制子系统五级规格详解
+
+### E.1 控制子系统 AGV 五级规格表
+
+| 控制参数 | S | M | L | XL | XXL |
+|---------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **控制模式** | 位置 | 位置+速度 | 位置+速度+阻抗 | 全模态 | 全模态+MPC |
+| **避障算法** | 人工势场 | DWA | DWA+VFH+APF | 混合 | 多层融合 |
+| **轨迹规划** | 直线 | RRT | RRT*+样条 | MPC+RRT* | MPC+多次RRT* |
+| **碰撞响应** | >100ms | <50ms | <20ms | <10ms | <5ms |
+| **姿态稳定** | <500ms | <200ms | <100ms | <50ms | <20ms |
+| **力控制** | 无 | 碰撞检测 | 力位混合 | 阻抗+导纳 | 全阻抗控制 |
+| **触觉伺服** | 无 | 开环 | 闭环 | 自适应 | 智能预测 |
+| **IMU融合** | 互补滤波 | Madgwick | EKF | EKF+磁力计 | 多传感器EKF |
+| **多机协同** | 无 | 无 | 无 | 5台 | 20台+ |
+
+### E.2 感知→控制闭环延迟
+
+| 阶段 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| 传感器采样 | 20ms | 10ms | 5ms | 2ms | 1ms |
+| 特征提取 | 80ms | 30ms | 15ms | 5ms | 2ms |
+| 融合推理 | 30ms | 10ms | 5ms | 2ms | 1ms |
+| 决策规划 | 20ms | 10ms | 5ms | 2ms | 1ms |
+| 控制计算 | 10ms | 5ms | 2ms | 1ms | 0.5ms |
+| 电机响应 | 40ms | 15ms | 5ms | 2ms | 1ms |
+| **总延迟** | **<200ms** | **<80ms** | **<35ms** | **<15ms** | **<7ms** |
+
+### E.3 计算与通信五级规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **处理器** | RPi 4B | RK3588/Nano | Orin NX | Orin AGX | Orin AGX×2+GPU |
+| **AI算力** | <5 TOPS | 5-20 TOPS | 20-100 TOPS | 100-300 TOPS | >300 TOPS |
+| **内存** | 4GB | 8GB | 16-32GB | 64-128GB | 256+GB |
+| **功耗** | <10W | 15-30W | 30-80W | 80-150W | 150-500W |
+| **实时控制** | ✗ | ✗ | ✓ Xenomai | ✓ RT-PREEMPT | ✓ Xenomai+FPGA |
+| **有线通信** | USB | USB/ETH | Ethernet | EtherCAT | EtherCAT+光纤 |
+| **无线通信** | WiFi | WiFi | WiFi+5G | 5G+LoRa | 5G+卫星 |
+| **多机协同** | ✗ | ✗ | ✗ | ✓ 5台 | ✓ 20台+ |
+
+### E.4 控制子系统详细接口
+
+```python
+# === 关节运动控制 ===
+class MotionController:
+    def __init__(self, num_joints: int, config: dict) -> None
+    def set_target(self, position: np.ndarray, velocity: float = 0.0) -> None
+    def step(self, dt: float) -> np.ndarray        # 返回控制量
+    def stop(self) -> None
+
+class AdaptivePIDController:
+    def __init__(self, kp: float, ki: float, kd: float) -> None
+    def compute(self, error: float, error_derivative: float, dt: float) -> float
+    def auto_tune(self, plant: 'SimulatedPlant') -> TunerResult
+
+# === 轨迹规划 ===
+class TrajectoryGenerator:
+    def generate(self, waypoints: List[JointWaypoint], dt: float) -> JointTrajectory
+    def generate_scurve(self, start: float, end: float, duration: float, dt: float) -> np.ndarray
+
+class RRTPlanner:
+    def __init__(self, space_bounds: dict, max_iter: int = 1000) -> None
+    def plan(self, start: np.ndarray, goal: np.ndarray) -> List[np.ndarray]
+
+# === MPC控制 ===
+class JointSpaceMPC:
+    def __init__(self, config: MPCConfig) -> None
+    def solve(self, state: np.ndarray, ref_traj: np.ndarray) -> np.ndarray
+    def set_weights(self, Q: np.ndarray, R: np.ndarray) -> None
+
+# === 阻抗控制 ===
+class ImpedanceController:
+    def __init__(self, M: np.ndarray, B: np.ndarray, K: np.ndarray) -> None
+    def compute(self, error: np.ndarray, error_dot: np.ndarray) -> np.ndarray
+
+# === 安全监控 ===
+class SafetyController:
+    def __init__(self, config: SafetyConfig) -> None
+    def check(self, state: JointStateSnapshot) -> SafetyCheckResult
+    def log_event(self, event: SafetyEvent) -> None
+
+# === ROS2接口 ===
+class ROS2JointTrajectoryInterface:
+    def __init__(self, node_name: str) -> None
+    def send_trajectory(self, trajectory: JointTrajectory) -> bool
+    def get_state(self) -> JointState
+
+# === AGV运动控制 ===
+class AGVMotionController:
+    def __init__(self, grade: AGVGrade, drive_type: DriveType) -> None
+    def set_twist(self, twist: AGVTwist) -> None
+    def follow_trajectory(self, trajectory: List[AGVPose], dt: float) -> None
+    def stop(self) -> None
+
+# === 多AGV协调 ===
+class MultiAgentCoordinator:
+    def __init__(self, formation: FormationType) -> None
+    def add_agent(self, agent_id: str, state: AgentState) -> None
+    def coordinate(self, states: Dict[str, AgentState]) -> Dict[str, AGVTwist]
+
+# === 遥操作 ===
+class TeleoperationController:
+    def __init__(self, mode: TeleopMode, config: TeleopConfig) -> None
+    def step(self, master: MasterState, latency_ms: float) -> SlaveCommand
+
+# === 控制监管 ===
+class ControlSupervisor:
+    def __init__(self, config: SupervisorConfig) -> None
+    def switch_mode(self, new_mode: ControlMode) -> bool
+    def get_health(self) -> HealthStatus
+    def recover_from_fault(self) -> bool
+```
+
+---
+
+## 附录F: SuperModel 版本路线图
+
+| 版本 | 阶段 | 主要目标 | 状态 |
+|------|------|---------|------|
+| v1.0 | 基础框架 | 传感器+融合+控制骨架 | ✅ |
+| v1.5 | 核心实现 | 触觉+力觉+IMU完整实现 | ✅ |
+| v1.7 | 仿真验证 | PyBullet+MuJoCo仿真 | ✅ |
+| v1.8 | 具身集成 | 传感器-运动融合+仿真 | ✅ |
+| **v1.71** | **测试完善** | **全面测试+接口文档** | **🔄进行中** |
+| v2.0 | 具身智能 | 真实AGV部署+视觉-语言-动作 | 计划 |
+| v3.0 | 超模态大脑 | 完整超模态LLM+具身RL | 计划 |
+
