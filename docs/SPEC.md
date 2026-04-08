@@ -104,6 +104,34 @@
 | `smooth_trajectory(traj)` | List[TrajectoryPoint] | List[TrajectoryPoint] | 轨迹平滑 |
 | `plan_path(waypoints)` | List[Waypoint] | List[TrajectoryPoint] | 多路点规划 |
 
+#### NavigationController (AGV导航控制器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `plan_to_goal(start, goal)` | np.ndarray, np.ndarray | bool | 规划到目标位姿 |
+| `set_global_path(path)` | Path | None | 设置全局路径 |
+| `update(current_pose, dt)` | np.ndarray, float | np.ndarray | 更新导航,返回速度指令 |
+| `reset()` | - | None | 重置导航状态 |
+| `emergency_stop()` | - | None | 紧急停止 |
+| `get_state()` | - | NavigationState | 获取导航状态 |
+| `get_progress()` | - | float | 获取导航进度 0.0~1.0 |
+
+#### OccupancyGrid (占用栅格地图)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `world_to_grid(wx, wy)` | float, float | Tuple[int, int] | 世界坐标转栅格坐标 |
+| `grid_to_world(gx, gy)` | int, int | Tuple[float, float] | 栅格坐标转世界坐标 |
+| `set_obstacle(wx, wy, radius)` | float, float, float | None | 设置障碍物 |
+| `is_free(wx, wy)` | float, float | bool | 检查是否空闲 |
+| `get_nearby_obstacles(wx, wy, radius)` | float, float, float | List[Tuple[int, int]] | 获取附近障碍物 |
+
+#### DijkstraPlanner / AStarPlanner (全局路径规划器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `plan(start, goal)` | Tuple[float, float], Tuple[float, float] | Optional[Path] | 规划全局路径 |
+
 ### 1.3 融合模块接口
 
 #### CrossModalFusion (跨模态融合网络)

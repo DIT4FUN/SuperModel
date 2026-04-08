@@ -1,5 +1,5 @@
 # SuperModel 模块索引 / Module Index
-- **v1.96.0** (2026-04-09): 新增SensorHealthMonitor传感器健康监控类, embodied_control模块完善, 1762项测试全通过
+- **v1.97.0** (2026-04-09): 新增NavigationController导航控制模块(A*/Dijkstra路径规划+轨迹跟踪), navigation_tests.py 29项测试, 1791项测试全通过
 - **v1.86.0** (2026-04-09): 326项传感器+融合测试全通过, 触觉/力觉/IMU完整模块就绪, AGV五级规格体系完整
 
 > **版本**: v1.96.0
@@ -72,7 +72,8 @@ src/
 │   ├── multi_agent.py     # 多AGV协调
 │   ├── agv.py             # AGV运动学/轨迹跟踪
 │   ├── embodied_control.py # 具身传感控制 (触觉+力觉+IMU融合)
-│   └── sensorimotor.py    # 传感器-运动整合
+│   ├── sensorimotor.py    # 传感器-运动整合
+│   └── navigation.py      # AGV导航 (全局路径规划+局部避障+轨迹跟踪)
 │
 ├── hardware/         # 硬件抽象层
 │   ├── __init__.py
@@ -164,6 +165,7 @@ src/
 | ROS2接口 | `ros2_interface.py` | `ROS2JointTrajectoryInterface`, `ROS2ActionInterface` | ROS2通信 |
 | 多AGV协调 | `multi_agent.py` | `MultiAgentCoordinator` | 编队/碰撞检测/任务分配 |
 | AGV运动 | `agv.py` | `AGVMotionController`, `KinematicsBase` | 差速/麦克纳姆轮运动学 |
+| 导航控制 | `navigation.py` | `NavigationController`, `OccupancyGrid`, `AStarPlanner`, `DijkstraPlanner` | 全局路径规划+轨迹跟踪 |
 
 ---
 
