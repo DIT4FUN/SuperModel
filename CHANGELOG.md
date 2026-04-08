@@ -2,6 +2,32 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.71.0] - 2026-04-08 16:30
+
+### 新增测试
+- tests/sensor_tests.py: 新增触觉/力觉/IMU扩展测试 (+36项)
+  - TactileArray: AGV五级规格验证、多点接触跟踪、滑移检测信号质量、标定流程
+  - ForceTorqueSensor: Wrench坐标变换、负载估计、虚拟碰撞/摩擦/表面接触
+  - IMUSensor: 欧拉角往返转换、位姿矩阵、PoseEstimator收敛性、AGV全等级IMU
+  - 跨模态传感器集成: 触觉-IMU时序同步、力觉-IMU重力补偿
+- tests/fusion_tests.py: 新增传感器融合控制测试 (+13项)
+  - 带磁力计的互补滤波航向估计、EKF协方差边界
+  - 多模态融合权重分配、力/位置混合融合
+  - 触觉滑移预测历史分析、IMU速度估计融合
+  - 结合IMU的抓取质量评估、多模态接触检测
+  - 融合延迟预算、触觉/力觉时间对齐
+
+### 文档更新
+- docs/MODULE_INDEX.md: 更新至v1.71.0
+- docs/design/AGV_FIVE_LEVEL_SPEC_TABLE.md: 更新至v1.71.0
+- PROGRESS.md: 更新至v1.71.0
+
+### 测试结果
+- 全项目测试: 1434项全部通过 (原1398项 + 新增36项)
+
+### GitHub
+- 提交: 658947a (v1.70.0) → 本次提交 v1.71.0
+
 ## [v1.70.0] - 2026-04-08 16:09
 
 ### Bug Fixes

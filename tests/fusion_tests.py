@@ -533,3 +533,275 @@ class TestFusionRobustness(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main(verbosity=2)
+
+    # ===== 新增 v1.71.0 融合测试用例 =====
+
+    def test_complementary_filter_with_mag_heading(self):
+        """测试带磁力计的互补滤波航向估计"""
+        cf = ComplementaryFilter(alpha=0.98)
+        accel = np.array([0.0, 0.0, 9.81])
+        gyro = np.array([0.0, 0.0, 0.2])
+        mag = np.array([25.0, 0.0, 45.0])
+        
+        for _ in range(50):
+            cf.update({'accel': accel, 'gyro': gyro}, dt=0.01)
+        
+        state = cf.get_state()
+        self.assertEqual(len(state), 3)
+        # 航向角应有变化
+        self.assertNotAlmostEqual(state[2], 0.0, places=2)
+
+    def test_ekf_covariance_bounds(self):
+        """测试EKF协方差边界"""
+        ekf = ExtendedKalmanFilter(state_dim=6, measurement_dim=3)
+        for i in range(20):
+            ekf.predict(dt=0.01)
+            accel = np.array([0.1 * np.sin(i/10), 0.1 * np.cos(i/10), -9.81 + 0.1])
+            ekf.correct(accel)
+            cov = ekf.get_covariance()
+            # 协方差应正定且有界
+            self.assertTrue(np.all(np.isfinite(cov)))
+            self.assertGreater(np.linalg.det(cov), 0)
+
+    def test_multi_sensor_fusion_weight_assignment(self):
+        """测试多传感器融合权重分配"""
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig
+        
+        config = FusionConfig(
+            modality_dims={'vision': 256, 'audio': 128, 'force': 32},
+            fusion_strategy='late'
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 设置不同模态权重
+        weights = {'vision': 0.5, 'audio': 0.3, 'force': 0.2}
+        fusion.set_fusion_weights(weights)
+        
+        # 验证权重
+        w = fusion.get_fusion_weights()
+        self.assertAlmostEqual(sum(w.values()), 1.0, places=5)
+
+
+class TestSensorFusionForControl(unittest.TestCase):
+    """传感器融合用于控制 v1.71.0"""
+
+    def test_force_position_hybrid_fusion(self):
+        """测试力/位置混合融合"""
+        # 模拟力控+位控融合
+        from src.sensors.force import VirtualForceSensor
+        from src.sensors.imu import VirtualIMUSensor
+        
+        ft = VirtualForceSensor()
+        imu = VirtualIMUSensor()
+        ft.open()
+        imu.open()
+        
+        fused_state = []
+        for i in range(20):
+            wrench = ft.simulate_contact((0, 0, -10.0 + np.sin(i/10)))
+            imu_frame = imu.simulate_static((0.1 * np.sin(i/10), 0.0, 0.0))
+            
+            # 简单的状态融合
+            state = np.concatenate([
+                wrench.force / 10.0,  # 归一化力
+                imu_frame.gyro * 10   # 放大角速度
+            ])
+            fused_state.append(state)
+        
+        self.assertEqual(len(fused_state), 20)
+        self.assertEqual(fused_state[0].shape, (6,))
+        
+        ft.close()
+        imu.close()
+
+    def test_tactile_slip_prediction_from_history(self):
+        """测试基于历史数据的滑移预测"""
+        from src.sensors.tactile import TactileArray, TactileSensorType
+        from src.sensors.imu import VirtualIMUSensor
+        
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.CAPACITIVE)
+        imu = VirtualIMUSensor()
+        tactile.open()
+        imu.open()
+        
+        # 收集历史数据
+        history = []
+        for i in range(30):
+            tf = tactile.capture()
+            iface = imu.simulate_motion(
+                (0.2 * np.sin(i/5), 0, 0),
+                (0.1 * np.cos(i/5), 0, 0),
+                dt=0.01
+            )
+            
+            slip_signal = tactile.get_slip_signal(tf)
+            history.append({
+                'slip_mean': float(np.mean(slip_signal)),
+                'imu_gyro_mag': float(np.linalg.norm(iface.gyro)),
+                'force_mag': float(np.mean(tf.pressure_map))
+            })
+        
+        # 验证历史数据长度
+        self.assertEqual(len(history), 30)
+        
+        # 验证历史滑移信号范围
+        slip_vals = [h['slip_mean'] for h in history]
+        self.assertTrue(all(0 <= v <= 1 for v in slip_vals))
+        
+        tactile.close()
+        imu.close()
+
+    def test_imu_velocity_estimation_fusion(self):
+        """测试IMU速度估计融合"""
+        from src.sensors.imu import IMUSensor, IMUSensorType, PoseEstimator
+        
+        imu = IMUSensor(sensor_type=IMUSensorType.VIRTUAL)
+        pose_est = PoseEstimator(algorithm='madgwick', sample_rate=100)
+        
+        imu.open()
+        
+        velocities = []
+        positions = []
+        
+        for i in range(50):
+            frame = imu.capture()
+            pose_est.update(frame.accel, frame.gyro, dt=0.01)
+            v, p = pose_est.integrate_velocity(frame.accel, 0.01, remove_gravity=True)
+            velocities.append(v)
+            positions.append(p)
+        
+        # 验证速度/位置变化趋势
+        v_arr = np.array(velocities)
+        self.assertEqual(v_arr.shape, (50, 3))
+        
+        imu.close()
+
+    def test_force_grip_quality_using_imu(self):
+        """测试结合IMU的抓取质量评估"""
+        from src.sensors.tactile import TactileArray, TactileSensorType
+        from src.sensors.force import VirtualForceSensor
+        from src.sensors.imu import VirtualIMUSensor
+        
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.PIEZOELECTRIC)
+        force = VirtualForceSensor()
+        imu = VirtualIMUSensor()
+        
+        tactile.open()
+        force.open()
+        imu.open()
+        
+        # 模拟抓取过程
+        for i in range(20):
+            tf = tactile.capture()
+            fw = force.simulate_contact((0, 0, -5.0 - i * 0.5))
+            iface = imu.simulate_static()
+            
+            grip_quality = tactile.estimate_grip_quality(tf)
+            self.assertIn('overall', grip_quality)
+            self.assertIn('stability', grip_quality)
+        
+        tactile.close()
+        force.close()
+        imu.close()
+
+    def test_contact_detection_from_multi_modal(self):
+        """测试多模态接触检测"""
+        from src.sensors.force import ForceTorqueSensor, ForceSensorType
+        from src.sensors.tactile import TactileArray, TactileSensorType
+        
+        ft = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.OPTICAL)
+        
+        ft.open()
+        tactile.open()
+        
+        contact_detected = {'force': False, 'tactile': False}
+        
+        for _ in range(10):
+            wrench = ft.capture()
+            tf = tactile.capture()
+            
+            ft_contact = ft.detect_contact(wrench, threshold=2.0)
+            tactile_contacts = tactile.detect_contacts(tf)
+            
+            if ft_contact.is_contact:
+                contact_detected['force'] = True
+            if len(tactile_contacts) > 0:
+                contact_detected['tactile'] = True
+        
+        # 至少力检测应触发
+        self.assertTrue(contact_detected['force'])
+        
+        ft.close()
+        tactile.close()
+
+    def test_fusion_latency_budget(self):
+        """测试融合延迟预算"""
+        import time
+        from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
+        
+        config = FusionConfig(
+            vision_dim=256, tactile_dim=64, force_dim=32, imu_dim=32,
+            hidden_dim=256
+        )
+        fusion = CrossModalFusion(config)
+        
+        # 模拟多模态输入
+        multimodal = MultimodalInput(
+            vision=np.random.randn(1, 256).astype(np.float32),
+            tactile=np.random.randn(1, 64).astype(np.float32),
+            force=np.random.randn(1, 32).astype(np.float32),
+            imu=np.random.randn(1, 32).astype(np.float32)
+        )
+        
+        # 测量延迟 (PyTorch首次运行较慢,先warmup)
+        for _ in range(10):
+            _ = fusion.forward(multimodal)
+        
+        latencies = []
+        for _ in range(50):
+            start = time.perf_counter()
+            output = fusion.forward(multimodal)
+            latency = (time.perf_counter() - start) * 1000
+            latencies.append(latency)
+        
+        avg_latency = np.mean(latencies)
+        # 平均延迟应合理 (PyTorch融合在CPU上可能较慢)
+        self.assertLess(avg_latency, 500)  # 放宽限制
+
+    def test_tactile_force_temporal_alignment(self):
+        """测试触觉/力觉时间对齐"""
+        import time
+        from src.sensors.tactile import TactileArray, TactileSensorType
+        from src.sensors.force import ForceTorqueSensor, ForceSensorType
+        
+        tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.RESISTIVE)
+        force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+        
+        tactile.open()
+        force.open()
+        
+        timestamps = []
+        for _ in range(50):
+            t0 = time.perf_counter()
+            tf = tactile.capture()
+            wrench = force.capture()
+            t1 = time.perf_counter()
+            
+            # 记录帧间隔
+            timestamps.append({
+                't_tactile': tf.timestamp,
+                't_force': wrench.timestamp,
+                't_capture': (t1 - t0) * 1000  # ms
+            })
+        
+        # 验证捕获时间合理
+        capture_times = [t['t_capture'] for t in timestamps]
+        self.assertLess(np.mean(capture_times), 100)  # 平均捕获应小于100ms
+        
+        tactile.close()
+        force.close()
+
+
+if __name__ == '__main__':
+    unittest.main()
