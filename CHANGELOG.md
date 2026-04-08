@@ -2,6 +2,21 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [v1.70.0] - 2026-04-08 16:09
+
+### Bug Fixes
+- tests/embodied_pipeline_extended_tests.py: 修复6个测试失败
+  - test_agv_motion_controller_all_grades: 驱动类型判断修正 (DIFFERENTIAL=2轮/MECANUM=4轮)
+  - test_force_control_closed_loop: ForceController→HybridForcePositionController
+  - test_multi_sensor_fusion_pipeline: ExtendedKalmanFilter predict/correct模式修正
+  - test_full_pipeline_single_step: 同上
+  - test_fusion_output_shapes: 同上
+  - test_pipeline_continuous_loop: VirtualIMUSensor.capture→simulate_static
+- 全项目测试: 1398项全部通过 (原1392项 + 修复6项)
+
+### GitHub
+- 提交: aff98f5 (v1.69.0) → 本次提交 v1.70.0
+
 ## [v1.69.0] - 2026-04-08 15:20
 
 ### 新增

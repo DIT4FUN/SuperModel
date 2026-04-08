@@ -5,6 +5,30 @@
 
 ---
 
+## v1.70.0 (2026-04-08 16:09) - 具身流水线测试修复 + 1398项全通过
+
+### 本次更新
+
+1. **具身流水线测试修复** ✅
+   - tests/embodied_pipeline_extended_tests.py: 修复6个失败测试
+   - test_agv_motion_controller_all_grades: 驱动类型判断修正 (DIFFERENTIAL=2轮/MECANUM=4轮)
+   - test_force_control_closed_loop: ForceController→HybridForcePositionController
+   - test_multi_sensor_fusion_pipeline: ExtendedKalmanFilter predict/correct模式修正
+   - test_full_pipeline_single_step: 同上
+   - test_fusion_output_shapes: 同上
+   - test_pipeline_continuous_loop: VirtualIMUSensor.capture→simulate_static
+
+2. **全项目测试验证** ✅
+   - 1398项全部通过 (原1392项 + 修复6项)
+   - sensor_tests.py: 134项通过 ✅
+   - fusion_tests.py: 37项通过 ✅
+
+3. **GitHub状态** ✅
+   - 最新提交: aff98f5 (v1.69.0)
+   - 本次提交: v1.70.0 测试修复
+
+---
+
 ## v1.69.0 (2026-04-08 15:20) - 触觉/力觉/IMU终验 + AGV五级规格体系完整
 
 ### 本次更新
