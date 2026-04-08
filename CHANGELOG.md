@@ -3,6 +3,23 @@
 All notable changes to SuperModel will be documented in this file.
 
 
+## [v1.92.0] - 2026-04-09 04:28
+### Added
+- 附录H: AGV五级规格总表 (v1.92.0 新增) - DESIGN.md 新增完整六子系统规格总表
+  - H.1 快速选型对照表 (定位/控制频率/传感器/触觉/力觉/IMU/融合策略/NPU算力/价格)
+  - H.2 感知子系统完整规格 (触觉/力觉/IMU详细参数)
+  - H.3 控制子系统完整规格 (驱动/速度/频率/安全/避障策略/控制模块)
+  - H.4 仿真子系统规格 (引擎/物理步长/渲染模式)
+  - H.5 传感器-控制集成流水线路径 (S/M/L/XL/XXL五级流水线图)
+  - H.6 AGV五级快速选型指南 (场景/推荐等级/理由/选型步骤)
+
+### Verified
+- sensor_tests.py: 270项测试全部通过 ✓
+- fusion_tests.py: 73项测试全部通过 ✓
+- 传感器模块: TactileArray / ForceTorqueSensor / IMUSensor / VirtualTactileSensor / VirtualForceSensor / VirtualIMUSensor
+- 控制模块: ForceController / TactileServoController / AttitudeStabilizer / ImpedanceController / AGVController / Supervisor
+
+
 ## [v1.88.0] - 2026-04-09 02:43
 ### Added
 - +96项全流水线集成测试 (tests/full_pipeline_integration_tests.py): 传感器同步/融合/控制/端到端/AGV五级

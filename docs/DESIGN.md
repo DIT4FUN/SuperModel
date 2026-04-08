@@ -842,3 +842,144 @@ EmbodiedGrade 定义:
   XXL: + DreamerAgent自主学习 + 世界模型预测
 ```
 
+---
+
+## 附录H: AGV五级规格总表 (v1.92.0 新增)
+
+> 本附录提供 SuperModel 超模态大模型 AGV 五大等级（教育S / 标准M / 专业L / 高性能XL / 旗舰XXL）的完整规格对照，涵盖传感器、控制、融合、学习、仿真、硬件六大子系统的全部关键参数。
+
+### H.1 快速选型对照表
+
+| 维度 | S 教育级 | M 标准级 | L 专业级 | XL 高性能 | XXL 旗舰 |
+|------|---------|---------|---------|----------|---------|
+| **定位** | 教学/科研 | 室内服务 | 工业装配 | 高精度场景 | 全功能旗舰 |
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **传感器** | 单目+IMU | 双目+力觉 | 多目+力觉+IMU | 多目+全传感器 | 多目+3D LiDAR+全传感器 |
+| **触觉** | 8×8@50Hz | 16×16@100Hz | 24×24@200Hz | 32×32@500Hz | 48×48@1000Hz |
+| **力觉** | 3轴@100Hz | 6轴@500Hz | 6轴@1000Hz | 6轴@2000Hz | 6轴@5000Hz |
+| **IMU** | MPU6050@100Hz | BMI088@200Hz | BMI088@500Hz | ADIS16470@1000Hz | ADIS×2@2000Hz |
+| **融合策略** | LATE | HYBRID | HYBRID | EARLY+HYBRID | EARLY+HYBRID+LATE |
+| **NPU算力** | <5 TOPS | 5-20 TOPS | 20-100 TOPS | 100-300 TOPS | >300 TOPS |
+| **典型价格** | ¥5-15K | ¥15-50K | ¥50-150K | ¥150-500K | >¥500K |
+
+### H.2 感知子系统完整规格
+
+#### H.2.1 触觉感知规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **阵列尺寸** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **分辨率** | 12bit | 12bit | 14bit | 14bit | 16bit |
+| **压力范围** | 0-500 kPa | 0-1000 kPa | 0-2000 kPa | 0-5000 kPa | 0-10000 kPa |
+| **采样频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **温度感知** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **接近觉** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **滑移检测** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **编码器维度** | 32 | 64 | 64 | 128 | 128 |
+| **模块类** | TactileArray | TactileArray | TactileArray | TactileArray | TactileArray |
+| **虚拟传感器** | VirtualTactileSensor | VirtualTactileSensor | VirtualTactileSensor | VirtualTactileSensor | VirtualTactileSensor |
+
+#### H.2.2 力觉感知规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **轴数** | 3 | 6 | 6 | 6 | 6 |
+| **力范围** | ±100N | ±200N | ±500N | ±1000N | ±5000N |
+| **力矩范围** | ±10N·m | ±20N·m | ±50N·m | ±100N·m | ±500N·m |
+| **分辨率** | 0.1N | 0.05N | 0.02N | 0.01N | 0.005N |
+| **采样频率** | 100Hz | 500Hz | 1000Hz | 2000Hz | 5000Hz |
+| **编码器维度** | 16 | 32 | 32 | 64 | 64 |
+| **模块类** | ForceTorqueSensor | ForceTorqueSensor | ForceTorqueSensor | ForceTorqueSensor | ForceTorqueSensor |
+| **虚拟传感器** | VirtualForceSensor | VirtualForceSensor | VirtualForceSensor | VirtualForceSensor | VirtualForceSensor |
+
+#### H.2.3 IMU感知规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **型号** | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470×2 |
+| **加速度量程** | ±8g | ±16g | ±24g | ±40g | ±80g |
+| **陀螺量程** | ±1000°/s | ±2000°/s | ±4000°/s | ±4000°/s | ±8000°/s |
+| **采样频率** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **噪声密度** | 400μg/√Hz | 120μg/√Hz | 60μg/√Hz | 20μg/√Hz | 10μg/√Hz |
+| **磁力计** | ✗ | ✗/✓ | ✗ | ✓ | ✓ |
+| **姿态算法** | 互补滤波 | Madgwick | Madgwick | Madgwick/KF | 扩展KF |
+| **编码器维度** | 32 | 32 | 64 | 64 | 128 |
+| **模块类** | IMUSensor | IMUSensor | IMUSensor | IMUSensor | IMUSensor |
+| **虚拟传感器** | VirtualIMUSensor | VirtualIMUSensor | VirtualIMUSensor | VirtualIMUSensor | VirtualIMUSensor |
+
+### H.3 控制子系统完整规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **驱动类型** | 差速驱动 | 差速驱动 | Mecanum | Mecanum | Mecanum |
+| **最大线速度** | 0.5m/s | 1.0m/s | 2.0m/s | 3.0m/s | 5.0m/s |
+| **最大角速度** | 1.5rad/s | 2.0rad/s | 2.5rad/s | 3.0rad/s | 3.5rad/s |
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **安全等级** | 软件限位 | ISO 3691-2 | ISO 3691-4 | IEC 61508 SIL2 | IEC 61508 SIL3 |
+| **避障策略** | 传感器检测 | DWA | DWA+APF | VFH+DWA+APF | 混合+学习 |
+| **控制模块** | MotorController | AGVController | AGVMotionController | AdaptiveMPCController | MultiAgentCoordinator |
+| **力控模块** | — | ForceController | HybridForcePositionController | ImpedanceController | ForceImpedanceController |
+| **触控模块** | TactileServoController | TactileServoController | TactileServoController | TactileServoController | GraspQualityController |
+| **IMU控制** | AttitudeStabilizer | AttitudeStabilizer | AttitudeStabilizer | AttitudeStabilizer | MotionEstimator |
+| **轨迹规划** | 线性插值 | 梯形速度 |五次多项式 | MINCO |学习型MINCO |
+
+### H.4 仿真子系统规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **仿真引擎** | NumPy | MuJoCo | PyBullet | PyBullet+Gazebo | 全栈仿真 |
+| **物理步长** | 10ms | 5ms | 2ms | 1ms | 0.5ms |
+| **渲染模式** | 无 | 软件渲染 | 硬件渲染 | 硬件渲染+ROS | 数字孪生 |
+| **传感器仿真** | 简化模型 | 噪声模型 | 物理模型 | 物理+标定 | 物理+标定+漂移 |
+
+### H.5 传感器-控制集成流水线路径
+
+```
+S级流水线:
+  TactileArray → TactileServoController → MotorController → Motor
+
+M级流水线:
+  TactileArray + ForceTorqueSensor → TactileServoController + ForceController
+  → HybridForcePositionController → MotorController → Motor
+
+L级流水线:
+  TactileArray + ForceTorqueSensor + IMUSensor
+  → TactileServoController + ForceController + AttitudeStabilizer
+  → HybridForcePositionController + AGVMotionController → MotorController → Motor
+
+XL级流水线:
+  TactileArray + ForceTorqueSensor + IMUSensor + BinocularCamera + LiDAR
+  → TactileServoController + ForceController + AttitudeStabilizer + ObstacleAvoider
+  → ImpedanceController + AdaptiveMPCController + AGVMotionController
+  → MotorController → Motor
+
+XXL级流水线:
+  TactileArray + ForceTorqueSensor + IMUSensor + MultiViewCamera + 3D LiDAR + Audio
+  → CrossModalFusion → EmbodiedController (DreamerAgent + WorldModel)
+  → TactileServoController + ForceImpedanceController + MotionEstimator + Planner
+  → MultiAgentCoordinator + Supervisor → MotorController → Motor
+```
+
+### H.6 AGV五级快速选型指南
+
+| 需求场景 | 推荐等级 | 理由 |
+|---------|---------|------|
+| 教育/实验 | S | 成本低, 功能完整, 够用即可 |
+| 服务机器人 | M | 性价比最高, 具备完整感知能力 |
+| 工业装配 | L | 高精度, 强实时性, 多传感器协同 |
+| 重载车间 | XL | 高性能, 大负载, 复杂避障 |
+| 无人化工厂 | XXL | 全功能旗舰, 具身智能, 自主学习 |
+
+选型步骤:
+1. 确定负载需求 (≤500kg / 500-1500 / 1500-3000 / 3000-5000 / >5000)
+2. 确定精度需求 (±10mm / ±5mm / ±3mm / ±1mm / <±0.5mm)
+3. 确定场景复杂度 (简单固定路线 / 动态障碍 / 多AGV协同 / 具身智能)
+4. 确定安全等级要求
+
+推荐配置:
+- 教育实验 → S级 (RK3588 + RealSense + MPU6050)
+- 服务机器人 → M级 (RK3588 + RealSense D455 + BMI088)
+- 工业搬运 → L级 (RK3588x2 + 双目 + ADIS16470)
+- 重载车间 → XL级 (RK3588集群 + 多目LiDAR + ADIS16470)
+- 无人化工厂 → XXL级 (集群+GPU + 超模态感知 + 具身智能)
+
