@@ -5386,3 +5386,218 @@ class UnifiedControlLoop:
 *附录版本: v1.67.0 | 补充日期: 2026-04-07*
 
 *详细性能基准请参考: `docs/design/AGV_FIVE_LEVEL_PERFORMANCE_SPEC.md`*
+
+
+---
+
+## 附录G: 轨迹规划与跟踪模块接口规范 v1.76.0
+
+> **补充时间**: 2026-04-08
+> **补充内容**: 轨迹规划器 (TrajectoryPlanner)、轨迹跟踪器 (PurePursuit/Stanley/PID)、RRT*、最小Snap轨迹生成
+
+### G.1 轨迹规划子系统类图
+
+```
+TrajectoryPlanner
+├── plan_line(waypoints) → Trajectory
+├── plan_arc(waypoints, curvature) → Trajectory
+├── plan_path(waypoints) → Trajectory
+└── VelocityProfiler
+    ├── plan(distance, v0, v1) → (time_pts, vel_pts)
+    ├── _trapezoidal(distance, v0, v1)
+    └── _s_curve(distance, v0, v1)
+
+TrajectoryTracker (ABC)
+├── compute(x, y, theta, traj, t) → (v_ref, omega_ref)
+├── PurePursuitTracker
+├── StanleyTracker
+└── PIDTrajectoryTracker
+
+RRTStarPlanner
+├── plan(start, goal, obstacles) → path
+└── _nearest/_steer/_collision_free/_rewire
+
+MinimumSnapTrajectory
+└── plan(waypoints, dt) → Trajectory
+```
+
+### G.2 核心数据结构
+
+#### TrajectoryPoint (轨迹点)
+```python
+@dataclass
+class TrajectoryPoint:
+    x: float           # X坐标 (m)
+    y: float           # Y坐标 (m)
+    theta: float       # 朝向角 (rad)
+    v: float           # 切向速度 (m/s)
+    t: float           # 时间戳 (s)
+    ax: float = 0.0    # X方向加速度 (m/s²)
+    ay: float = 0.0    # Y方向加速度 (m/s²)
+    omega: float = 0.0 # 角速度 (rad/s)
+    curvature: float = 0.0  # 曲率 (1/m)
+    a: float = 0.0     # 切向加速度 (m/s²)
+```
+
+#### Trajectory (完整轨迹)
+```python
+@dataclass
+class Trajectory:
+    points: List[TrajectoryPoint]  # 轨迹点序列
+    start_time: float = 0.0        # 开始时间
+    total_time: float = 0.0        # 总时长 (s)
+    total_length: float = 0.0      # 总长度 (m)
+
+    # 方法
+    at_time(t) → TrajectoryPoint    # 时间插值获取轨迹点
+    closest_point(x, y) → (point, idx)  # 最近轨迹点
+```
+
+#### Waypoint (航点)
+```python
+@dataclass
+class Waypoint:
+    x: float       # X坐标 (m)
+    y: float       # Y坐标 (m)
+    theta: float   # 朝向角 (rad)
+    v: float       # 期望速度 (m/s)
+    t: float       # 到达时间 (s)
+    k: float       # 曲率 (1/m)
+```
+
+### G.3 轨迹规划器接口
+
+#### TrajectoryPlanner
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `plan_line(start, end)` | Waypoint, Waypoint | List[TrajectoryPoint] | 直线轨迹 |
+| `plan_arc(start, end, curvature)` | Waypoint, Waypoint, float | List[TrajectoryPoint] | 圆弧轨迹 |
+| `plan_path(waypoints)` | List[Waypoint] | Trajectory | 多路点完整轨迹 |
+| `VelocityProfiler.plan(d, v0, v1)` | float, float, float | (np.ndarray, np.ndarray) | 速度曲线 |
+
+#### VelocityProfile 类型
+| 枚举值 | 说明 | 适用场景 |
+|--------|------|---------|
+| `TRAPEZOIDAL` | 梯形速度曲线 | 简单运动、快速加速 |
+| `S_CURVE` | S曲线 (恒定jeb) | 平滑运动、无冲击 |
+| `POLYNOMIAL` | 多项式曲线 | 最小Snap轨迹 |
+
+### G.4 轨迹跟踪器接口
+
+#### TrajectoryTracker.compute()
+```python
+def compute(x, y, theta, traj, t) → Tuple[float, float]:
+    """
+    计算轨迹跟踪控制量
+
+    Args:
+        x, y, theta: 当前机器人位姿
+        traj: Trajectory 对象
+        t: 当前时间 (s)
+
+    Returns:
+        (v_ref, omega_ref): 期望线速度 (m/s), 期望角速度 (rad/s)
+    """
+```
+
+#### PurePursuitTracker (几何前瞻跟踪)
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `lookahead` | float | 0.5 | 前瞻距离 (m) |
+| `k_vel` | float | 1.0 | 速度增益 |
+| `k_angle` | float | 2.0 | 角度增益 |
+| `max_omega` | float | 2.0 | 最大角速度 (rad/s) |
+
+#### StanleyTracker (前轴中心跟踪)
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `k_ce` | float | 1.0 | 交叉航向误差增益 |
+| `k_v` | float | 0.5 | 速度增益 |
+| `softening_epsilon` | float | 0.001 | 软化系数 |
+| `max_steer` | float | 0.5 | 最大前轮转角 (rad) |
+
+#### PIDTrajectoryTracker (PID跟踪)
+| 参数 | 类型 | 默认值 | 说明 |
+|------|------|--------|------|
+| `kp_v, ki_v, kd_v` | float | 2.0, 0.1, 0.5 | 速度PID参数 |
+| `kp_omega, ki_omega, kd_omega` | float | 3.0, 0.2, 0.5 | 角速度PID参数 |
+| `max_v` | float | 1.5 | 最大线速度 (m/s) |
+| `max_omega` | float | 2.0 | 最大角速度 (rad/s) |
+
+### G.5 RRT* 规划器接口
+
+```python
+class RRTStarPlanner:
+    def __init__(
+        bounds: Tuple[float, float, float, float],  # (xmin, xmax, ymin, ymax)
+        max_iter: int = 500,
+        step_size: float = 0.3,
+        search_radius: float = 0.5,
+        goal_sample_rate: float = 0.1
+    )
+
+    def plan(
+        start: Tuple[float, float],
+        goal: Tuple[float, float],
+        obstacles: List[Tuple[float, float, float]] = None  # [(cx, cy, radius), ...]
+    ) → List[Tuple[float, float]]
+```
+
+### G.6 最小Snap轨迹接口
+
+```python
+class MinimumSnapTrajectory:
+    def __init__(self, order: int = 7):
+        """order: 多项式阶数"""
+
+    def plan(
+        waypoints: List[Waypoint],
+        dt: float = 0.1
+    ) → Trajectory
+```
+
+### G.7 使用示例
+
+```python
+from control.planner import (
+    TrajectoryPlanner, PurePursuitTracker, RRTStarPlanner,
+    Waypoint, VelocityProfile, VelocityProfiler
+)
+
+# 1. 速度规划
+profiler = VelocityProfiler(max_v=1.0, max_a=0.5, profile_type=VelocityProfile.TRAPEZOIDAL)
+t_pts, v_pts = profiler.plan(distance=2.0, v0=0.0, v1=0.0)
+
+# 2. 轨迹规划
+planner = TrajectoryPlanner(max_v=1.0, max_a=0.5)
+waypoints = [
+    Waypoint(x=0, y=0, theta=0, v=0),
+    Waypoint(x=2, y=1, theta=0.5, v=0.5),
+    Waypoint(x=4, y=0, theta=0, v=0),
+]
+traj = planner.plan_path(waypoints)
+
+# 3. 轨迹跟踪
+tracker = PurePursuitTracker(lookahead=0.5)
+v_ref, omega_ref = tracker.compute(x=0.5, y=0.1, theta=0.1, traj=traj, t=1.0)
+
+# 4. RRT* 全局规划
+rrt = RRTStarPlanner(bounds=(-5, 5, -5, 5), max_iter=300)
+path = rrt.plan(start=(0, 0), goal=(3, 4), obstacles=[(1.5, 2.0, 0.5)])
+```
+
+### G.8 五级AGV轨迹控制规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **轨迹规划算法** | 梯形速度 | 梯形速度 | S曲线 | 最小Snap | 最小Snap |
+| **跟踪算法** | PID | PID | PurePursuit | PurePursuit+Stanley | 自适应切换 |
+| **最大规划频率** | 10Hz | 20Hz | 50Hz | 100Hz | 200Hz |
+| **跟踪周期** | 50ms | 20ms | 10ms | 5ms | 2ms |
+| **前瞻距离** | 0.2m | 0.5m | 0.8m | 1.0m | 1.5m |
+| **路径平滑度** | 基础 | 中等 | 平滑 | 高平滑 | 最平滑 |
+| **避障响应** | 200ms | 100ms | 50ms | 20ms | 10ms |
+
+---
+
+*附录版本: v1.76.0 | 补充日期: 2026-04-08*
