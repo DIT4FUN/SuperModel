@@ -2,6 +2,40 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.00.1] - 2026-04-09
+
+### Added
+- 根目录 fusion/cross_modal_fusion.py (从 src/fusion/ 复制)
+  - 跨模态融合网络完整实现 (1034行)
+  - 支持视觉/听觉/触觉/力觉/IMU/语言多模态融合
+  - 支持 Early/Late/Hybrid/Transformer Cross-Attention 融合策略
+  - 支持 AGV 五级规格 (S/M/L/XL/XXL)
+- fusion/__init__.py 已更新为本地导入
+
+### Fixed
+- src/__init__.py 版本号: 1.68.0 -> 2.00.0
+
+### Testing
+- sensor_tests.py: 283项通过
+- fusion_tests.py: 73项通过
+- control_tests.py: 244项通过
+- 总计: 600项全部通过
+
+## [2.00.0] - 2026-04-09
+
+### Added
+- 传感器-控制集成测试 (12项)
+- 传感器五级规格验证
+- 附录J: 控制五级能力矩阵
+- MODULE_INTERFACE.md 新增附录J (6000+行)
+
+### Testing
+- 600项测试全通过
+
+# Changelog
+
+All notable changes to SuperModel will be documented in this file.
+
 
 ## [v1.94.0] - 2026-04-09 05:31
 ### Fixed
