@@ -1,5 +1,7 @@
 # SuperModel 模块索引 / Module Index
-- **v2.31.0** (2026-04-10): 新增传感器融合控制模块(sensor_fusion_control.py, 320行) + 34项测试; 统一IMU+力觉+触觉→控制闭环; sensor+fusion+fusion_ctrl 439项全部通过
+- **v2.33.0** (2026-04-10): 新增传感器偏置补偿模块(bias_compensation.py, 695行); 29项测试全通过; AGV五级规格表补充偏置补偿章节; 传感器+融合+偏置补偿 450项全部通过
+- **v2.32.0** (2026-04-10): 新增行为树模块(behavior_tree.py, 795行, 51项测试); Selector/Sequence/Parallel/Condition/Action/SubTree + 5个装饰器; 456项测试全通过
+- **v2.31.0** (2026-04-10): 新增传感器融合控制模块(sensor_fusion_control.py, 398行) + 34项测试; 统一IMU+力觉+触觉→控制闭环; sensor+fusion+fusion_ctrl 439项全部通过
 - **v2.30.0** (2026-04-10): 新增预测性维护模块(predictive_maintenance.py, 900行) + 45项测试; 电机轴承磨损/电池SOH/车轮打滑检测; sensor+fusion+pred_main 450项全部通过
 - **v2.29.0** (2026-04-10): 传感器模块完善(tactile/force/imu)+控制模块深化; sensor_tests 332项/fusion_tests 73项全部通过; AGV五级规格文档完整
 - **v2.28.0** (2026-04-10): 新增自适应增益测试模块(24项) + AGV五级规格补充章节(v1.40.0); 429项测试全通过
@@ -8,7 +10,7 @@
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.31.0
+> **版本**: v2.33.0
 > **更新**: 2026-04-10
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
@@ -173,6 +175,9 @@ src/
 | 多AGV协调 | `multi_agent.py` | `MultiAgentCoordinator` | 编队/碰撞检测/任务分配 |
 | AGV运动 | `agv.py` | `AGVMotionController`, `KinematicsBase` | 差速/麦克纳姆轮运动学 |
 | 导航控制 | `navigation.py` | `NavigationController`, `OccupancyGrid`, `AStarPlanner`, `DijkstraPlanner` | 全局路径规划+轨迹跟踪 |
+| 偏置补偿 | `bias_compensation.py` | `BiasCompensator`, `ZeroVelocityUpdater`, `StaticBiasEstimator` | 传感器偏置在线估计/零速度更新/静态偏置标定 |
+| 融合控制 | `sensor_fusion_control.py` | `SensorFusionController`, `MultimodalController`, `UnifiedControlInput` | IMU+力觉+触觉统一融合控制/多模态控制器 |
+| 行为树 | `behavior_tree.py` | `BehaviorTree`, `Selector`, `Sequence`, `Parallel`, `ConditionNode`, `ActionNode` | 层次化任务执行/行为决策/AGV五级规格 |
 
 ---
 
@@ -187,8 +192,8 @@ src/
 | `pybullet_sim_tests.py` | 41 | PyBullet仿真 |
 | `ros2_interface_tests.py` | 44+ | ROS2通信 |
 | `five_grade_integration_tests.py` | 50+ | 五级AGV完整集成 |
-| 其他 | 732+ | 编码器/仿真/场景/边界/鲁棒性 |
-| **总计** | **1456** | **全部通过** |
+| 其他 | 762+ | 编码器/仿真/场景/边界/鲁棒性/行为树 |
+| **总计** | **2244** | **全部通过** |
 
 ---
 
@@ -243,8 +248,8 @@ docs/
 
 ---
 
-*本文档版本: v1.29.0*
-*最后更新: 2026-04-01*
+*本文档版本: v2.33.0*
+*最后更新: 2026-04-10*
 
 ---
 

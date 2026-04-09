@@ -494,8 +494,8 @@ python3 examples/sensor_control_integration_example.py
 
 ## 附录L: AGV五级规格总表 (SuperModel Master Specification)
 
-> **版本**: v2.01.0  
-> **更新**: 2026-04-09  
+> **版本**: v2.33.0  
+> **更新**: 2026-04-10  
 > **说明**: 整合所有子系统规格，提供五级AGV完整参数对照总表
 
 ### L.1 整车规格总表
@@ -653,4 +653,40 @@ python3 examples/sensor_control_integration_example.py
 | **fusion** | CrossModalFusion, ComplementaryFilter, EKF | fuse(), update(), predict(), correct() | MultimodalInput, FusionOutput |
 | **control** | AttitudeStabilizer, TactileServoController | update(), compute_control_signal(), detect_and_react_slip() | 控制指令(np.ndarray) |
 | **learning** | DreamerAgent, WorldModel | update(), predict(), plan() | Observed, Action, Reward |
+
+### L.10 偏置补偿五级规格 (v2.33.0)
+
+| 偏置补偿参数 | S级 | M级 | L级 | XL级 | XXL级 |
+|-------------|-----|-----|-----|------|-------|
+| **补偿类型** | 静态偏置 | 静态+温漂 | 在线估计 | 自适应 | 自适应+预测 |
+| **IMU偏置估计** | 启动时标定 | 启动时+运行时 | 零速更新 | 自适应Kalman | 神经网络补偿 |
+| **力觉偏置** | 手动清零 | 启动时自动 | 在线估计 | 自适应 | 多传感器融合 |
+| **触觉偏置** | 无 | 静态标定 | 漂移补偿 | 自适应 | 智能补偿 |
+| **更新频率** | 1Hz | 5Hz | 10Hz | 50Hz | 100Hz |
+| **算法复杂度** | O(1) | O(n) | O(n²) | O(n³) | 自适应 |
+| **内存占用** | <1KB | <10KB | <100KB | <1MB | <10MB |
+
+### L.11 传感器融合控制五级规格 (v2.31.0)
+
+| 融合控制参数 | S级 | M级 | L级 | XL级 | XXL级 |
+|-------------|-----|-----|-----|------|-------|
+| **融合模态** | IMU+编码器 | +力觉 | +触觉 | +视觉 | 全模态 |
+| **控制策略** | 级联PID | 阻抗 | 力位混合 | 自适应阻抗 | 预测控制 |
+| **闭环延迟** | <100ms | <50ms | <20ms | <10ms | <5ms |
+| **力控带宽** | — | 5Hz | 10Hz | 20Hz | 50Hz |
+| **触觉反馈** | — | 接触检测 | 滑移检测 | 抓取质量 | 精细操作 |
+| **IMU融合** | 互补滤波 | EKF | 自适应EKF | 神经网络 | 图神经网络 |
+| **故障容错** | 单传感器 | 双冗余 | 三冗余 | 多模态容错 | 智能切换 |
+
+### L.12 行为树五级规格 (v2.32.0)
+
+| 行为树参数 | S级 | M级 | L级 | XL级 | XXL级 |
+|-----------|-----|-----|-----|------|-------|
+| **节点类型** | Selector/Sequence | +Parallel/Condition | +SubTree | +Decorator | 全部 |
+| **装饰器** | Retry/Repeat | +Inverter/AlwaysSuccess | +Timeout | +MaxTime | +CountLimit |
+| **最大深度** | 3层 | 5层 | 8层 | 12层 | 无限制 |
+| **并行节点** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **行为数量** | 10个 | 30个 | 100个 | 300个 | 1000+ |
+| **执行频率** | 10Hz | 20Hz | 50Hz | 100Hz | 200Hz |
+| **内存占用** | <10KB | <50KB | <200KB | <1MB | <10MB |
 
