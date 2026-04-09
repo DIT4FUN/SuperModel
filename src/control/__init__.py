@@ -128,6 +128,11 @@ from .patrol_control import (
     create_patrol_controller, run_patrol_benchmark, get_patrol_spec,
     PatrolMetrics, PatrolEvent,
 )
+from .adaptive_gain import (
+    AdaptiveGainScheduler, GainSchedule, AdaptationState,
+    GainBlendController, ModelReferenceAdaptiveController,
+    AdaptationStrategy, get_adaptive_gain_spec, AGV_ADAPTIVE_GAIN_GRADES
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -201,4 +206,8 @@ __all__ = [
     'Obstacle', 'PatrolGrade', 'PatrolSpec',
     'create_patrol_controller', 'run_patrol_benchmark', 'get_patrol_spec',
     'PatrolMetrics', 'PatrolEvent',
+    # adaptive_gain
+    'AdaptiveGainScheduler', 'GainSchedule', 'AdaptationState',
+    'GainBlendController', 'ModelReferenceAdaptiveController',
+    'AdaptationStrategy', 'get_adaptive_gain_spec', 'AGV_ADAPTIVE_GAIN_GRADES',
 ]
