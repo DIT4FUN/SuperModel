@@ -60,7 +60,7 @@ SuperModel/
 │   ├── run_agv_showcase.py # AGV等级展示
 │   └── base_sim.py       # 仿真基类
 ├── examples/             # 示例脚本
-├── tests/               # 测试用例 (2126+项通过)
+├── tests/               # 测试用例 (2160+项通过)
 │   ├── sensor_tests.py   # 触觉/力觉/IMU传感器测试
 │   ├── fusion_tests.py   # 跨模态融合测试
 │   ├── control_integration_tests.py  # 控制集成测试

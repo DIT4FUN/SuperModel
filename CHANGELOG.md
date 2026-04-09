@@ -2,6 +2,25 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.31.0] - 2026-04-10
+
+### Added
+- src/control/sensor_fusion_control.py: 新增传感器融合控制模块 (约320行)
+  - SensorFusionController: 统一感知→融合→控制闭环接口, 支持S/M/L/XL/XXL五级
+  - SensorFusionControlState: 融合控制状态 (IMU/力觉/触觉原始数据+融合姿态+控制指令)
+  - FusionControlConfig: 融合控制配置
+  - _ComplementaryFilter / _SimpleEKF: 姿态融合滤波器 (互补滤波+扩展卡尔曼滤波)
+  - AGV_FUSION_CONTROL_GRADES: AGV五级融合控制规格表 (50Hz~1000Hz)
+- src/control/__init__.py: 新增 sensor_fusion_control 模块导出, __all__ 更新
+- tests/sensor_fusion_control_tests.py: 新增 34 项传感器融合控制测试
+  - AGV五级规格测试 7项 / 初始化测试 3项 / 滤波器测试 5项
+  - 生命周期测试 3项 / update测试 6项 / 五级等级测试 4项 / 状态数据类测试 2项
+
+### Changed
+- sensor+fusion+fusion_ctrl tests: 439项全通过 (332+73+34)
+- src/__init__.py: 版本更新 2.30.0 → 2.31.0
+- PROGRESS.md: 新增 v2.31.0 章节 (传感器融合控制模块)
+
 ## [2.30.0] - 2026-04-10
 
 ### Added

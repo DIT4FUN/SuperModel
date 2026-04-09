@@ -1,7 +1,45 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 04:25 (v2.30.0)
+> Last Updated: 2026-04-10 04:45 (v2.31.0)
+
+---
+
+## v2.31.0 (2026-04-10 04:45) - 传感器融合控制模块 + 439项测试全通过
+
+### 本次更新
+
+1. **新增传感器融合控制模块** ✅
+   - `src/control/sensor_fusion_control.py` (约320行)
+   - `SensorFusionController`: 统一感知→融合→控制闭环接口
+   - `SensorFusionControlState`: 融合控制状态数据结构 (IMU/力觉/触觉/控制指令)
+   - `FusionControlConfig`: 融合控制配置 (AGV五级适配)
+   - `FusionControlGrade` (S/M/L/XL/XXL): 五级规格 (50Hz~1000Hz融合, 互补滤波/EKF自适应)
+   - `_ComplementaryFilter` / `_SimpleEKF`: 姿态融合滤波器
+   - `AGV_FUSION_CONTROL_GRADES`: AGV五级融合控制规格表
+
+2. **新增传感器融合控制测试** ✅
+   - `tests/sensor_fusion_control_tests.py` (34项测试)
+   - 规格配置测试 7项 / 初始化测试 3项 / 滤波器测试 5项
+   - 生命周期测试 3项 / update测试 6项 / 五级等级测试 4项
+   - 状态数据类测试 2项
+
+3. **控制模块完善** ✅
+   - `src/control/__init__.py`: 新增 sensor_fusion_control 模块导出
+   - 控制模块现包含 20+ 子模块 (motor/motion/trajectory/impedance/mpc/AGV/遥操作/传感融合控制等)
+
+4. **测试统计** ✅
+   - sensor_tests: 332项 / fusion_tests: 73项 / sensor_fusion_control_tests: 34项
+   - 合计: **439项测试全部通过**
+
+### 已完成模块清单
+- ✅ 触觉传感器模块 (tactile.py): 电子皮肤阵列, 压力/温度/接近觉/滑移检测
+- ✅ 力觉传感器模块 (force.py): 六维力矩传感器, Wrench数据, 接触检测, 负载估计
+- ✅ IMU传感器模块 (imu.py): 惯性测量, 姿态解算, PoseEstimator, AGV五级规格
+- ✅ 传感器融合控制 (sensor_fusion_control.py): 统一IMU+力觉+触觉→控制闭环
+- ✅ 控制模块: 20+子模块, AGV五级全覆盖
+- ✅ 仿真环境: PyBullet/Gymnasium多级AGV仿真
+- ✅ 测试用例: 439项传感器/融合/控制测试全通过
 
 ---
 

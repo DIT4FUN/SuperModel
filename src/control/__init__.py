@@ -16,6 +16,7 @@ SuperModel 控制模块
 - multi_agent: 多智能体协调控制 (L/XL/XXL)
 - teleop: 遥操作控制 (主从同步/共享控制/力反馈)
 - supervisor: 控制子系统监管 (生命周期/模式切换/故障恢复)
+- sensor_fusion_control: 传感器融合控制 (统一感知→控制闭环)
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand, AdaptivePIDController
@@ -133,6 +134,11 @@ from .adaptive_gain import (
     GainBlendController, ModelReferenceAdaptiveController,
     AdaptationStrategy, get_adaptive_gain_spec, AGV_ADAPTIVE_GAIN_GRADES
 )
+from .sensor_fusion_control import (
+    SensorFusionController, SensorFusionControlState, FusionControlConfig,
+    FusionControlGrade, get_fusion_control_spec,
+    AGV_FUSION_CONTROL_GRADES,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -210,4 +216,7 @@ __all__ = [
     'AdaptiveGainScheduler', 'GainSchedule', 'AdaptationState',
     'GainBlendController', 'ModelReferenceAdaptiveController',
     'AdaptationStrategy', 'get_adaptive_gain_spec', 'AGV_ADAPTIVE_GAIN_GRADES',
+    # sensor_fusion_control
+    'SensorFusionController', 'SensorFusionControlState', 'FusionControlConfig',
+    'FusionControlGrade', 'get_fusion_control_spec', 'AGV_FUSION_CONTROL_GRADES',
 ]
