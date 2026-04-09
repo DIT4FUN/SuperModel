@@ -3836,3 +3836,202 @@ class TestIMUAdvancedFeatures(unittest.TestCase):
             self.assertEqual(frame.accel.shape, (3,))
         
         vi.close()
+
+
+class TestTactileAdvancedFeatures(unittest.TestCase):
+    """触觉高级功能测试 - 扩展"""
+
+    def test_multi_contact_detection(self):
+        """测试多点接触检测"""
+        vt = VirtualTactileSensor(array_size=(16, 16), sensor_id="multi_test")
+        vt.open()
+        
+        # 模拟两点接触
+        frame = vt.simulate_multi_contact([
+            ((0.3, 0.3), 5.0, 0.2),
+            ((0.7, 0.7), 3.0, 0.15)
+        ])
+        
+        self.assertEqual(frame.pressure_map.shape, (16, 16))
+        self.assertGreater(np.max(frame.pressure_map), 0)
+        
+        vt.close()
+
+    def test_slip_detection_algorithm(self):
+        """测试滑移检测算法"""
+        arr = TactileArray(array_size=(8, 8), sensor_id="slip_test")
+        arr.open()
+        
+        # 模拟连续帧滑移
+        for i in range(5):
+            frame = arr.capture()
+            arr._last_contact_pos = (0.5 + i * 0.05, 0.5)
+        
+        slip = arr.get_slip_signal()
+        self.assertEqual(slip.shape, (8, 8))
+        
+        arr.close()
+
+    def test_grip_quality_comprehensive(self):
+        """测试综合抓取质量评估"""
+        vt = VirtualTactileSensor((16, 16), sensor_id="grip_test")
+        vt.open()
+        
+        frame = vt.simulate_contact(
+            contact_pos=(0.5, 0.5),
+            contact_radius=0.2,
+            contact_force=15.0
+        )
+        
+        arr = TactileArray((16, 16), sensor_id="grip_arr")
+        arr.open()
+        arr._last_frame = frame
+        
+        contacts = arr.detect_contacts(frame)
+        quality = arr.estimate_grip_quality(frame)
+        
+        self.assertIn('overall', quality)
+        self.assertIn('contact_area', quality)
+        self.assertIn('uniformity', quality)
+        self.assertIn('stability', quality)
+        self.assertGreaterEqual(quality['overall'], 0.0)
+        self.assertLessEqual(quality['overall'], 1.0)
+        
+        vt.close()
+        arr.close()
+
+
+class TestForceAdvancedSimulation(unittest.TestCase):
+    """力觉高级仿真测试"""
+
+    def test_friction_contact_simulation(self):
+        """测试摩擦力仿真"""
+        vf = VirtualForceSensor("friction_test")
+        vf.open()
+        
+        wrench = vf.simulate_friction_contact(
+            normal_force=10.0,
+            velocity=(0.1, 0.0, 0.0),
+            friction_coeff=0.3
+        )
+        
+        self.assertIsNotNone(wrench)
+        self.assertEqual(wrench.force.shape, (3,))
+        
+        vf.close()
+
+    def test_collision_simulation(self):
+        """测试碰撞事件仿真"""
+        vf = VirtualForceSensor("collision_test")
+        vf.open()
+        
+        collision = vf.simulate_collision(
+            direction=(1.0, 0.0, 0.0),
+            peak_force=50.0,
+            duration_ms=50.0,
+            decay="exponential"
+        )
+        
+        self.assertGreater(len(collision), 0)
+        self.assertGreater(collision[0].magnitude, 0)
+        
+        vf.close()
+
+    def test_wrench_processor_covariance(self):
+        """测试力旋量协方差估计"""
+        proc = WrenchProcessor()
+        
+        history = [np.random.randn(6) * 0.5 for _ in range(20)]
+        cov = proc.estimate_covariance(history)
+        
+        self.assertEqual(cov.shape, (6, 6))
+        np.testing.assert_array_almost_equal(cov, cov.T)
+        
+        eigenvalues = np.linalg.eigvalsh(cov)
+        self.assertTrue(np.all(eigenvalues >= 0))
+
+
+class TestIMUAdvancedSimulation(unittest.TestCase):
+    """IMU高级仿真测试"""
+
+    def test_human_walking_simulation(self):
+        """测试人类步行仿真"""
+        vi = VirtualIMUSensor("walk_test")
+        vi.open()
+        
+        frames = vi.simulate_human_walking(
+            step_frequency=1.5,
+            walk_speed=1.0,
+            duration_s=1.0
+        )
+        
+        self.assertGreater(len(frames), 50)
+        for frame in frames:
+            self.assertEqual(frame.accel.shape, (3,))
+            self.assertEqual(frame.gyro.shape, (3,))
+        
+        vi.close()
+
+    def test_pose_from_euler(self):
+        """测试欧拉角创建位姿"""
+        pos = np.array([1.0, 2.0, 3.0])
+        rpy = np.array([0.1, 0.2, 0.3])
+        
+        pose = Pose.from_euler(pos, rpy)
+        self.assertEqual(pose.orientation.shape, (4,))
+        self.assertAlmostEqual(np.linalg.norm(pose.orientation), 1.0, places=5)
+        
+        recovered_rpy = pose.to_euler()
+        np.testing.assert_array_almost_equal(rpy, recovered_rpy, decimal=5)
+
+    def test_pose_to_matrix(self):
+        """测试位姿转矩阵"""
+        pose = Pose.identity()
+        T = pose.to_matrix()
+        
+        self.assertEqual(T.shape, (4, 4))
+        np.testing.assert_array_almost_equal(T[3, :], [0, 0, 0, 1])
+
+
+class TestAGVFiveGradeSpecs(unittest.TestCase):
+    """AGV五级规格一致性测试"""
+
+    def test_tactile_grade_consistency(self):
+        """测试触觉五级规格完整性"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_tactile_spec(grade)
+            self.assertIn('array', spec)
+            self.assertIn('res', spec)
+            self.assertIn('range_kpa', spec)
+            self.assertIn('freq_hz', spec)
+
+    def test_force_grade_consistency(self):
+        """测试力觉五级规格完整性"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_force_spec(grade)
+            self.assertIn('axes', spec)
+            self.assertIn('force_range', spec)
+            self.assertIn('torque_range', spec)
+            self.assertIn('sampling_hz', spec)
+
+    def test_imu_grade_consistency(self):
+        """测试IMU五级规格完整性"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_imu_spec(grade)
+            self.assertIn('type', spec)
+            self.assertIn('accel_range', spec)
+            self.assertIn('gyro_range', spec)
+            self.assertIn('sample_hz', spec)
+
+    def test_grade_progression(self):
+        """测试等级递增规律"""
+        specs_s = get_tactile_spec('S')
+        specs_xxl = get_tactile_spec('XXL')
+        
+        # 高级别应具有更高规格
+        self.assertLessEqual(specs_s['array'][0], specs_xxl['array'][0])
+        self.assertLessEqual(specs_s['freq_hz'], specs_xxl['freq_hz'])
+
+
+if __name__ == '__main__':
+    unittest.main()

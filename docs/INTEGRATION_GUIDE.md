@@ -450,3 +450,266 @@ python3 -m pytest tests/ -v --tb=short
 | v2.05.1 | 2026-04-09 | 1857项测试全通过，新增部署清单 |
 | v2.05.0 | 2026-04-09 | 传感器-控制模块详细接口规范 |
 | v2.04.0 | 2026-04-09 | 具身传感控制仿真测试完成 |
+
+---
+
+## 附录A: 完整模块接口规范 (Interface Specification)
+
+### A.1 触觉模块接口 (tactile.py)
+
+#### 类: `TactileArray`
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | `bool` | 打开传感器连接 |
+| `close()` | - | `None` | 关闭传感器连接 |
+| `capture()` | - | `TactileFrame` | 采集一帧触觉数据 |
+| `detect_contacts()` | `TactileFrame` | `List[TactileContact]` | 检测接触区域 |
+| `get_slip_signal()` | `TactileFrame` | `np.ndarray` | 计算滑移信号 |
+| `estimate_grip_quality()` | `TactileFrame` | `Dict[str, float]` | 评估抓取质量 |
+| `calibrate()` | `zero_pressure`, `known_weights` | `None` | 传感器标定 |
+
+#### 数据类型: `TactileFrame`
+
+```python
+@dataclass
+class TactileFrame:
+    pressure_map: np.ndarray          # H x W, 压力值 (归一化 0-1)
+    temperature_map: Optional[np.ndarray]  # H x W, 温度 (摄氏度)
+    proximity: Optional[np.ndarray]   # H x W, 接近距离 (米)
+    slip_signal: Optional[np.ndarray] # H x W, 滑移信号
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+```
+
+#### 数据类型: `TactileContact`
+
+```python
+@dataclass
+class TactileContact:
+    center: Tuple[int, int]          # (row, col)
+    area: int                        # 接触面积 (像素数)
+    peak_pressure: float             # 峰值压力
+    mean_pressure: float             # 平均压力
+    centroid: Tuple[float, float]    # (row, col)
+    contact_force: float             # 接触力 (N)
+    slip_probability: float          # 滑移概率
+    temperature: Optional[float]     # 接触区温度
+```
+
+### A.2 力觉模块接口 (force.py)
+
+#### 类: `ForceTorqueSensor`
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | `bool` | 打开传感器连接 |
+| `close()` | - | `None` | 关闭传感器连接 |
+| `capture()` | - | `Wrench` | 采集一帧力数据 |
+| `get_wrench()` | - | `Optional[Wrench]` | 获取最新力数据 |
+| `detect_contact()` | `Wrench`, `threshold` | `ContactState` | 接触检测 |
+| `estimate_payload()` | `Wrench` | `float` | 估计负载重量 |
+| `set_tool_center()` | `tool_mass`, `tool_com` | `None` | 设置工具中心 |
+| `calibrate_bias()` | `num_samples` | `None` | 偏置校准 |
+
+#### 数据类型: `Wrench`
+
+```python
+@dataclass
+class Wrench:
+    force: np.ndarray    # 3, (Fx, Fy, Fz), N
+    torque: np.ndarray   # 3, (Tx, Ty, Tz), N·m
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+    
+    # 属性
+    magnitude: float           # 力向量模长
+    torque_magnitude: float    # 力矩模长
+    to_vector() -> np.ndarray # [Fx, Fy, Fz, Tx, Ty, Tz]
+    transform(R, t) -> Wrench  # 坐标变换
+```
+
+#### 数据类型: `ContactState`
+
+```python
+@dataclass
+class ContactState:
+    is_contact: bool
+    contact_force: float = 0.0
+    contact_point: Optional[np.ndarray] = None
+    normal_vector: Optional[np.ndarray] = None
+    slip_probability: float = 0.0
+```
+
+### A.3 IMU模块接口 (imu.py)
+
+#### 类: `IMUSensor`
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | `bool` | 打开传感器连接 |
+| `close()` | - | `None` | 关闭传感器连接 |
+| `capture()` | - | `IMUFrame` | 采集一帧IMU数据 |
+| `self_test()` | - | `bool` | 传感器自检 |
+| `calibrate_gyro_bias()` | `num_samples` | `None` | 陀螺仪偏置校准 |
+| `calibrate_accel()` | `known_orientation` | `None` | 加速度计标定 |
+
+#### 类: `PoseEstimator`
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `update()` | `accel`, `gyro`, `mag`, `dt` | `Pose` | 更新姿态估计 |
+| `get_pose()` | - | `Pose` | 获取当前姿态 |
+| `get_euler()` | - | `np.ndarray` | 获取欧拉角 |
+| `get_rotation_matrix()` | - | `np.ndarray` | 获取旋转矩阵 |
+| `integrate_velocity()` | `accel`, `dt` | `(velocity, position)` | 速度/位置积分 |
+| `reset()` | - | `None` | 重置积分状态 |
+
+#### 数据类型: `IMUFrame`
+
+```python
+@dataclass
+class IMUFrame:
+    accel: np.ndarray          # 3, 加速度 (m/s^2)
+    gyro: np.ndarray          # 3, 角速度 (rad/s)
+    mag: Optional[np.ndarray]  # 3, 磁力计 (μT)
+    temperature: float         # 温度 (摄氏度)
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+    
+    # 属性
+    accel_magnitude: float  # 加速度向量模长
+    gyro_magnitude: float  # 角速度向量模长
+```
+
+#### 数据类型: `Pose`
+
+```python
+@dataclass
+class Pose:
+    position: np.ndarray     # 3, 位置 (m)
+    orientation: np.ndarray # 4, 四元数 (qw, qx, qy, qz)
+    
+    # 方法
+    to_euler() -> np.ndarray  # [roll, pitch, yaw], rad
+    to_matrix() -> np.ndarray # 4x4 变换矩阵
+    from_euler(cls, pos, rpy) -> Pose  # 从欧拉角创建
+    identity(cls) -> Pose      # 单位位姿
+```
+
+### A.4 传感器管理器接口 (manager.py)
+
+#### 类: `SensorManager`
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | `configs` | `bool` | 初始化所有传感器 |
+| `close()` | - | `None` | 关闭所有传感器 |
+| `capture_all()` | - | `Dict[str, Any]` | 采集所有传感器数据 |
+| `get_sensor()` | `sensor_id` | `Sensor` | 获取指定传感器 |
+| `check_health()` | - | `Dict[str, bool]` | 健康检查 |
+| `sync_capture()` | - | `AlignedData` | 同步采集 |
+
+### A.5 跨模态融合接口 (fusion/cross_modal_fusion.py)
+
+#### 类: `CrossModalFusion`
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `fuse()` | `MultimodalInput` | `UnifiedRepresentation` | 跨模态融合 |
+| `encode_vision()` | `StereoFrame` | `np.ndarray` | 视觉编码 |
+| `encode_audio()` | `AudioFrame` | `np.ndarray` | 听觉编码 |
+| `encode_tactile()` | `TactileFrame` | `np.ndarray` | 触觉编码 |
+| `encode_force()` | `Wrench` | `np.ndarray` | 力觉编码 |
+| `encode_imu()` | `IMUFrame` | `np.ndarray` | IMU编码 |
+| `predict_world_model()` | `state`, `action` | `np.ndarray` | 世界模型预测 |
+
+### A.6 控制模块核心接口
+
+#### 具身控制 (embodied_control.py)
+
+```python
+class EmbodiedController:
+    def open(self) -> bool: ...
+    def close(self): ...
+    def capture(self) -> Dict[str, Any]: ...
+    def run(self, duration_s: float, task: str) -> Dict[str, Any]: ...
+    def run_five_grade_benchmark(self, grade: str) -> Dict[str, Any]: ...
+```
+
+#### 安全控制器 (safety_controller.py)
+
+```python
+class SafetyController:
+    def check_limits(self, state: State) -> SafetyResult: ...
+    def detect_collision(self, wrench: Wrench, threshold: float) -> bool: ...
+    def emergency_stop(self): ...
+    def get_safety_level(self) -> SafetyLevel: ...
+```
+
+#### 导航控制 (navigation.py)
+
+```python
+class NavigationController:
+    def plan_path(self, start: Pose, goal: Pose) -> List[Pose]: ...
+    def avoid_obstacles(self, obstacles: List[Obstacle]) -> Trajectory: ...
+    def follow_trajectory(self, trajectory: Trajectory) -> ControlCommand: ...
+```
+
+---
+
+## 附录B: AGV五级完整规格总表
+
+### B.1 整车规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **负载能力** | 30kg | 100kg | 300kg | 600kg | 1200kg |
+| **自重** | 15kg | 35kg | 80kg | 150kg | 300kg |
+| **最大总重** | 45kg | 135kg | 380kg | 750kg | 1500kg |
+| **车体尺寸** | 0.4×0.3×0.12m | 0.6×0.4×0.15m | 0.8×0.6×0.2m | 1.0×0.7×0.25m | 1.2×0.9×0.3m |
+| **轮子配置** | 2轮驱动 | 2轮驱动 | 4轮驱动 | 4轮驱动 | 4轮驱动 |
+| **轮子直径** | 100mm | 140mm | 140mm | 165mm | 200mm |
+| **电机类型** | 57步进 | 5.5寸轮毂150W | 5.5寸轮毂150W×2 | 6.5寸轮毂200W×2 | 7.5寸轮毂300W×4 |
+| **最高速度** | 0.5m/s | 1.5m/s | 2.0m/s | 2.5m/s | 3.0m/s |
+| **最大扭矩** | 5Nm | 15Nm | 30Nm | 60Nm | 120Nm |
+| **定位精度** | ±10mm | ±5mm | ±3mm | ±1mm | ±0.5mm |
+| **防护等级** | IP20 | IP30 | IP54 | IP65 | IP67 |
+| **典型价格** | ¥5-15K | ¥15-50K | ¥50-150K | ¥150-500K | >¥500K |
+
+### B.2 感知子系统
+
+| 模态 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **触觉阵列** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **触觉分辨率** | 12bit | 12bit | 14bit | 14bit | 16bit |
+| **触觉采样率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **力觉轴数** | 3轴 | 6轴 | 6轴 | 6轴 | 6轴 |
+| **力觉范围** | ±100N | ±200N/±20Nm | ±500N/±50Nm | ±1000N/±100Nm | ±5000N/±500Nm |
+| **力觉采样率** | 100Hz | 500Hz | 1000Hz | 2000Hz | 5000Hz |
+| **IMU型号** | MPU6050 | BMI088 | BMI088×2 | ADIS16470×2 | ADIS16470×4 |
+| **IMU采样率** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **编码器精度** | 128CPR | 256CPR | 512CPR | 768CPR | 1024CPR |
+
+### B.3 控制子系统
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **控制模式** | 位置 | 位置+速度 | 位置+速度+阻抗 | 全模态 | 全模态+MPC |
+| **碰撞响应** | >100ms | <50ms | <20ms | <10ms | <5ms |
+| **姿态稳定** | <500ms | <200ms | <100ms | <50ms | <20ms |
+
+### B.4 计算子系统
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **处理器** | RPi 4B | RK3588/Nano | Orin NX | Orin AGX | Orin AGX×2+GPU |
+| **AI算力** | <5 TOPS | 5-20 TOPS | 20-100 TOPS | 100-300 TOPS | >300 TOPS |
+| **内存** | 4GB | 8GB | 16-32GB | 64-128GB | 256+GB |
+| **功耗** | <10W | 15-30W | 30-80W | 80-150W | 150-500W |
+| **实时控制** | ✗ | ✗ | ✓ Xenomai | ✓ RT-PREEMPT | ✓ Xenomai+FPGA |
+

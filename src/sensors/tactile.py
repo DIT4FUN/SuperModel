@@ -392,7 +392,7 @@ class TactileArray:
         
         # 稳定性评分 (基于历史滑移)
         slip = self.get_slip_signal(frame)
-        avg_slip = np.mean(slip[slip > 0])
+        avg_slip = np.mean(slip[slip > 0]) if np.any(slip > 0) else 0.0
         stability_score = 1.0 - min(avg_slip * 5.0, 1.0)
         
         # 综合评分
