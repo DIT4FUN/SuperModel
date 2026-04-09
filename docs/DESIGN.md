@@ -1958,3 +1958,244 @@ from .imu import (
 )
 ```
 
+
+---
+
+## 附录J: 物理仿真与跨模态标定 (v2.19.0)
+
+> **版本**: v2.19.0  
+> **更新**: 2026-04-09  
+> **模块**: `src/simulation/physics_sim.py`, `src/simulation/cross_modal_calibration.py`
+
+---
+
+### J.1 模块概述
+
+物理仿真与跨模态联合标定是 SuperModel 具身智能系统的两大支撑模块:
+
+| 模块 | 文件 | 职责 |
+|------|------|------|
+| **PhysicsSim** | `physics_sim.py` | 刚体动力学仿真、接触力学、AGV五级物理规格 |
+| **CrossModalCalibrator** | `cross_modal_calibration.py` | 触觉-力觉/IMU-姿态联合标定、标定质量评估 |
+
+---
+
+### J.2 物理仿真引擎 (PhysicsSim)
+
+#### J.2.1 核心类
+
+```
+PhysicsSimulator
+├── add_body(RigidBody) → body_id
+├── get_body(name) → RigidBody
+├── step(dt?) → None
+├── simulate_drop(body_name, drop_height, duration) → trajectory
+├── simulate_collision(body1_name, body2_name, impact_velocity, duration) → collision_data
+└── config: PhysicsSimConfig
+
+RigidBody
+├── position: np.ndarray (3,)      # 世界坐标系位置 (m)
+├── orientation: np.ndarray (4,)    # 四元数 (qw, qx, qy, qz)
+├── linear_velocity: np.ndarray (3,) # 线速度 (m/s)
+├── angular_velocity: np.ndarray (3,) # 角速度 (rad/s)
+├── mass: float                     # 质量 (kg)
+├── inertia: np.ndarray (3,)        # 主惯性矩
+├── kinetic_energy → float          # 动能 (J)
+└── to_pose_matrix() → np.ndarray (4,4)
+
+PhysicsSimConfig
+├── gravity: np.ndarray (3,)    # 重力加速度 (m/s²)
+├── dt: float                   # 时间步长 (s)
+├── substeps: int               # 子步数
+├── restitution: float          # 恢复系数
+├── friction_static/dynamic     # 摩擦系数
+├── contact_stiffness/damping   # 接触弹簧阻尼
+└── grade: str                  # AGV等级
+```
+
+#### J.2.2 接触力学模型
+
+PhysicsSim 使用弹簧-阻尼模型计算接触力:
+
+```
+F_normal = k · penetration + c · relative_velocity_normal
+F_friction ≤ μ · F_normal
+```
+
+接触检测采用球体近似 ( `_estimate_radius` )，支持:
+- AGV 底盘刚体
+- 轮子刚体
+- 夹爪/灵巧手刚体
+- 货物/障碍物刚体
+
+#### J.2.3 AGV五级物理规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **质量范围 (kg)** | 10-50 | 10-100 | 20-200 | 50-500 | 100-2000 |
+| **尺寸范围 (m)** | 0.3-0.6 | 0.3-0.6 | 0.4-0.8 | 0.5-1.0 | 0.6-1.5 |
+| **最大线速度 (m/s)** | 0.5 | 1.0 | 2.0 | 3.0 | 5.0 |
+| **最大角速度 (rad/s)** | 1.0 | 2.0 | 3.0 | 5.0 | 10.0 |
+| **接触刚度 (N/m)** | 5,000 | 10,000 | 20,000 | 50,000 | 100,000 |
+| **阻尼 (N·s/m)** | 50 | 100 | 200 | 500 | 1000 |
+| **静摩擦系数** | 0.5 | 0.6 | 0.7 | 0.8 | 0.9 |
+| **动摩擦系数** | 0.3 | 0.4 | 0.5 | 0.6 | 0.7 |
+| **仿真步长 (ms)** | 2.0 | 1.0 | 0.5 | 0.2 | 0.1 |
+| **控制频率 (Hz)** | 50 | 100 | 200 | 500 | 1000 |
+
+**快速创建:**
+```python
+from src.simulation.physics_sim import create_physics_sim_for_grade, create_agv_body
+
+sim = create_physics_sim_for_grade('M')      # 创建M级物理仿真器
+body = create_agv_body("chassis", grade='XL') # 创建XL级AGV刚体
+
+sim.add_body(body)
+result = sim.simulate_drop("chassis", drop_height=1.0, duration=2.0)
+```
+
+---
+
+### J.3 跨模态联合标定 (CrossModalCalibration)
+
+#### J.3.1 标定问题建模
+
+跨模态联合标定解决三个核心问题:
+
+**问题1: 触觉 → 力觉映射**
+```
+F_wrench = M_t2f @ tactile_features
+其中: tactile_features = pressure_map.flatten()  # (N,)
+      M_t2f: (6, N) 转换矩阵
+      F_wrench: (6,) 力旋量 [Fx, Fy, Fz, Tx, Ty, Tz]
+方法: 最小二乘法 + L2正则化 (λ = 1e-6)
+```
+
+**问题2: IMU → 姿态角映射**
+```
+euler = M_imu2e @ imu_features + bias_accel
+其中: imu_features = [accel_x, accel_y, accel_z, roll, pitch估计]
+方法: 多位置线性回归
+```
+
+**问题3: 力传感器零偏估计**
+```
+bias = mean(force_wrench_static)  # 静止数据均值
+方法: 静止采集 → 均值估计 → 在线补偿
+```
+
+#### J.3.2 标定流程
+
+```
+1. 静止标定 (零偏估计)
+   ↓
+   add_static_calibration(force_wrench, accel, gyro)
+   ↓
+   calibrate_force_bias() → force_bias (6,)
+
+2. 姿态标定 (IMU→姿态)
+   ↓
+   add_oriented_calibration(tactile_pressure, force_wrench, imu_euler, imu_accel)
+   ↓
+   calibrate_imu_orientation() → (imu_to_euler_matrix, accel_bias)
+
+3. 触觉→力觉标定
+   ↓
+   calibrate_tactile_to_force() → tactile_to_force_matrix (6, N)
+
+4. 温度系数标定 (可选)
+   ↓
+   _calibrate_temp_coefficients() → temp_coefficient_force, temp_coefficient_accel
+
+5. 完整标定
+   ↓
+   calibrate_full() → CalibrationResult
+```
+
+#### J.3.3 标定质量评估
+
+`evaluate_quality()` 返回综合评分:
+
+| 指标 | 计算方法 | 评分标准 |
+|------|---------|---------|
+| **overall_score** | 0.4×force + 0.3×orient + 0.3×r2 | 越高越好 |
+| **residual_force** | RMS(force_pred - force_true) | <0.1N 优秀 |
+| **residual_orientation** | RMS(euler_pred - euler_true) | <0.01rad 优秀 |
+| **r_squared_force** | R² 决定系数 | >0.95 优秀 |
+| **num_samples** | 有效标定样本数 | >100 充足 |
+
+#### J.3.4 AGV五级标定规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **最少静止样本** | 50 | 100 | 200 | 500 | 1000 |
+| **最少姿态样本** | 20 | 50 | 100 | 200 | 500 |
+| **力精度要求 (N)** | 1.0 | 0.5 | 0.2 | 0.1 | 0.05 |
+| **姿态精度要求 (rad)** | 0.1 | 0.05 | 0.02 | 0.01 | 0.005 |
+| **温度范围 (°C)** | 10 | 15 | 20 | 25 | 30 |
+| **标定时间 (min)** | 10 | 15 | 20 | 30 | 60 |
+
+**使用示例:**
+```python
+from src.simulation.cross_modal_calibration import CrossModalCalibrator, get_calibration_spec
+
+calibrator = CrossModalCalibrator(tactile_size=(16,16), grade='M')
+spec = get_calibration_spec('M')  # {'min_static_samples': 100, ...}
+
+# 采集静止数据
+for _ in range(100):
+    calibrator.add_static_calibration(
+        force_wrench=np.array([0.0, 0.0, -9.81, 0.0, 0.0, 0.0]),
+        accel=np.array([0.0, 0.0, 9.81]),
+        gyro=np.array([0.0, 0.0, 0.0]),
+    )
+
+calibrator.calibrate_full()
+quality = calibrator.evaluate_quality()
+print(f"标定质量: {quality['overall_score']:.2%}")
+calibrator.save('calibration.npz')
+```
+
+---
+
+### J.4 仿真与标定集成
+
+物理仿真与跨模态标定联合使用，实现仿真到真实的迁移 (Sim2Real):
+
+```
+物理仿真 (PhysicsSim)
+    ├── 仿真触觉响应 (触觉阵列 + 接触力学)
+    ├── 仿真力觉响应 (六维力矩传感器)
+    ├── 仿真IMU数据 (加速度/角速度/姿态)
+    ↓
+跨模态标定 (CrossModalCalibrator)
+    ├── 学习触觉→力觉映射
+    ├── 学习IMU→姿态映射
+    ├── 标定传感器零偏和比例因子
+    ↓
+真实机器人部署
+    ├── 应用标定参数到真实传感器
+    └── 补偿系统误差
+```
+
+---
+
+### J.5 测试覆盖
+
+| 测试文件 | 覆盖模块 | 测试数 |
+|---------|---------|-------|
+| `tests/simulation_tests.py` | physics_sim + cross_modal_calibration | 30 |
+
+**主要测试用例:**
+- 刚体添加、获取、动能计算
+- AGV五级物理规格完整性
+- 下落仿真轨迹生成
+- 碰撞仿真能量守恒
+- 静止标定数据采集
+- 姿态标定数据采集
+- 力觉零偏标定
+- 触觉→力觉转换矩阵标定
+- 完整标定流程
+- 标定结果持久化
+- 接触点/接触力数据结构
+

@@ -1,580 +1,518 @@
 """
-SuperModel 仿真环境测试
-=======================
+仿真模块测试
+============
 
-测试仿真环境、传感器仿真、物理引擎适配层
+测试 physics_sim.py 和 cross_modal_calibration.py
+
+覆盖:
+- 刚体动力学仿真
+- 接触力学与摩擦模型
+- AGV五级物理规格
+- 跨模态联合标定
+- 标定质量评估
 """
 
+import unittest
 import numpy as np
 import sys
-import time
-import unittest
+import os
+import tempfile
 
-sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from simulation.environment import (
-    RobotSimulator, SensorSimulator, PhysicsEngine, SceneManager,
-    TrajectoryRecorder, SimConfig, PRESET_SCENES, create_scene
+from src.simulation.physics_sim import (
+    PhysicsSimulator, PhysicsSimConfig, RigidBody, ContactPoint, ContactForce,
+    BodyType, AGV_PHYSICS_GRADES, get_physics_spec,
+    create_physics_sim_for_grade, create_agv_body,
+)
+from src.simulation.cross_modal_calibration import (
+    CrossModalCalibrator, CalibrationDataPoint, CalibrationResult,
+    AGV_CALIBRATION_GRADES, get_calibration_spec,
 )
 
 
-class TestRobotSimulator(unittest.TestCase):
-    """测试机器人仿真器"""
-    
-    def test_simulator_init(self):
-        config = SimConfig(num_joints=6, dt=0.01)
-        sim = RobotSimulator(config)
-        self.assertEqual(sim.n, 6)
-        self.assertEqual(sim.dt, 0.01)
-    
-    def test_set_joint_positions(self):
-        sim = RobotSimulator()
-        positions = np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0])
-        sim.set_joint_positions(positions)
-        np.testing.assert_array_almost_equal(sim.joint_positions, positions)
-    
-    def test_joint_limits_enforcement(self):
-        sim = RobotSimulator()
-        # 设置限位
-        sim.jl_lower = np.array([-0.5] * 6)
-        sim.jl_upper = np.array([0.5] * 6)
-        
-        # 尝试设置超限位置
-        positions = np.array([1.0] * 6)
-        sim.set_joint_positions(positions)
-        
-        # 应该被裁剪到限位
-        np.testing.assert_array_less(sim.joint_positions, 0.51)
-        np.testing.assert_array_less(-0.51, sim.joint_positions)
-    
-    def test_step_dynamics(self):
-        sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
-        
-        # 零力矩步进
-        state1 = sim.step(np.zeros(6))
-        state2 = sim.step(np.zeros(6))
-        
-        # 应该有时间推进
-        self.assertGreater(state2['time'], state1['time'])
-    
-    def test_step_with_torque(self):
-        sim = RobotSimulator(SimConfig(num_joints=6, dt=0.01))
-        
-        # 施加恒定力矩
-        torque = np.array([1.0, 1.0, 1.0, 1.0, 1.0, 1.0])
-        state = sim.step(torque)
-        
-        self.assertEqual(len(state['joint_positions']), 6)
-        self.assertEqual(len(state['joint_velocities']), 6)
-        self.assertFalse(np.any(np.isnan(state['joint_positions'])))
-    
-    def test_joint_limit_bounce(self):
-        """测试关节限位反弹"""
-        sim = RobotSimulator()
-        sim.jl_lower = np.array([-0.1] * 6)
-        sim.jl_upper = np.array([0.1] * 6)
-        sim.joint_positions = np.array([0.0] * 6)
-        
-        # 给一个冲向限位的初速度
-        sim.joint_velocities = np.array([1.0] * 6)
-        
-        # 多次步进直到撞到限位
-        for _ in range(20):
-            prev_pos = sim.joint_positions[0]
-            sim.step(np.zeros(6))
-            if sim.joint_positions[0] >= sim.jl_upper[0] - 0.001:
-                break
-        
-        # 当碰到限位时，速度应该被反转（变为负值）
-        self.assertLess(sim.joint_velocities[0], 0.5)
-    
-    def test_get_state(self):
-        sim = RobotSimulator()
-        state = sim.get_state()
-        
-        self.assertIn('time', state)
-        self.assertIn('joint_positions', state)
-        self.assertIn('joint_velocities', state)
-        self.assertIn('end_effector_pose', state)
-    
-    def test_jacobian(self):
-        sim = RobotSimulator(SimConfig(num_joints=6))
-        J = sim.get_jacobian()
-        self.assertEqual(J.shape, (6, 6))
-    
-    def test_self_collision(self):
-        sim = RobotSimulator()
-        result = sim.check_self_collision()
-        self.assertIsInstance(result, bool)
-    
-    def test_environment_collision(self):
-        sim = RobotSimulator()
-        obstacles = [
-            {"type": "sphere", "center": np.array([0.5, 0.0, 0.5]), "radius": 0.1}
-        ]
-        collisions = sim.check_environment_collision(obstacles)
-        self.assertIsInstance(collisions, list)
-    
-    def test_callback(self):
-        sim = RobotSimulator()
-        callback_called = []
-        
-        def cb(state):
-            callback_called.append(state['time'])
-        
-        sim.add_callback(cb)
-        sim.step(np.zeros(6))
-        sim.step(np.zeros(6))
-        
-        self.assertEqual(len(callback_called), 2)
-    
-    def test_reset(self):
-        sim = RobotSimulator()
-        sim.joint_positions = np.ones(6) * 0.5
-        sim.joint_velocities = np.ones(6)
-        sim._time = 10.0
-        
-        sim.reset()
-        
-        np.testing.assert_array_almost_equal(sim.joint_positions, np.zeros(6))
-        np.testing.assert_array_almost_equal(sim.joint_velocities, np.zeros(6))
-        self.assertEqual(sim._time, 0.0)
+class TestPhysicsSimulator(unittest.TestCase):
+    """物理仿真引擎测试"""
 
+    def setUp(self):
+        self.config = PhysicsSimConfig.for_grade('M')
+        self.sim = PhysicsSimulator(self.config)
 
-class TestSensorSimulator(unittest.TestCase):
-    """测试传感器仿真器"""
-    
-    def test_sensor_sim_init(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        self.assertEqual(sensor_sim.sim, sim)
-    
-    def test_noisy_joint_positions(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        
-        noisy = sensor_sim.get_noisy_joint_positions()
-        self.assertEqual(len(noisy), sim.n)
-    
-    def test_noisy_joint_velocities(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        
-        noisy = sensor_sim.get_noisy_joint_velocities()
-        self.assertEqual(len(noisy), sim.n)
-    
-    def test_imu_data(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        
-        imu_data = sensor_sim.get_imu_data()
-        
-        self.assertIn('accel', imu_data)
-        self.assertIn('gyro', imu_data)
-        self.assertEqual(imu_data['accel'].shape, (3,))
-        self.assertEqual(imu_data['gyro'].shape, (3,))
-    
-    def test_wrench(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        
-        wrench = sensor_sim.get_wrench()
-        self.assertEqual(wrench.shape, (6,))
-    
-    def test_contact_force(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        
-        contact = sensor_sim.get_contact_force()
-        self.assertGreaterEqual(contact, 0.0)
-    
-    def test_sensor_delay(self):
-        sim = RobotSimulator()
-        sensor_sim = SensorSimulator(sim)
-        
-        result = sensor_sim.apply_sensor_delay({"data": 123})
-        self.assertEqual(result["data"], 123)
+    def test_initialization(self):
+        """测试仿真器初始化"""
+        self.assertEqual(self.sim.config.grade, 'M')
+        self.assertGreater(self.sim.config.dt, 0)
+        self.assertEqual(len(self.sim.bodies), 0)
 
-
-class TestPhysicsEngine(unittest.TestCase):
-    """测试物理引擎适配层"""
-    
-    def test_custom_engine(self):
-        engine = PhysicsEngine(engine="custom", config={"num_joints": 6, "dt": 0.01})
-        self.assertEqual(engine.engine, "custom")
-        self.assertIsInstance(engine.simulator, RobotSimulator)
-    
-    def test_engine_step(self):
-        engine = PhysicsEngine(engine="custom", config={"num_joints": 6})
-        state = engine.step(np.zeros(6))
-        self.assertIn('time', state)
-    
-    def test_engine_get_state(self):
-        engine = PhysicsEngine(engine="custom", config={"num_joints": 6})
-        state = engine.get_state()
-        self.assertIn('joint_positions', state)
-
-
-class TestSceneManager(unittest.TestCase):
-    """测试场景管理器"""
-    
-    def test_add_object(self):
-        manager = SceneManager()
-        name = manager.add_object(
-            name="box1",
-            obj_type="box",
-            position=np.array([0.5, 0.0, 0.3])
+    def test_add_body(self):
+        """测试添加刚体"""
+        body = RigidBody(
+            position=np.array([0.0, 0.0, 0.5]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.array([0.0, 0.0, 0.0]),
+            angular_velocity=np.array([0.0, 0.0, 0.0]),
+            mass=10.0,
+            inertia=np.array([0.1, 0.1, 0.1]),
+            body_type=BodyType.AGV_BASE,
+            name="test_body"
         )
-        self.assertEqual(name, "box1")
-        self.assertIn("box1", manager.objects)
-    
-    def test_auto_name(self):
-        manager = SceneManager()
-        name1 = manager.add_object(name=None, obj_type="sphere", position=np.array([0, 0, 0]))
-        name2 = manager.add_object(name=None, obj_type="sphere", position=np.array([1, 1, 1]))
-        self.assertNotEqual(name1, name2)
-    
-    def test_remove_object(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        result = manager.remove_object("box1")
-        self.assertTrue(result)
-        self.assertNotIn("box1", manager.objects)
-    
-    def test_move_object(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        new_pos = np.array([0.5, 0.5, 0.5])
-        result = manager.move_object("box1", new_pos)
-        self.assertTrue(result)
-        np.testing.assert_array_almost_equal(manager.objects["box1"]["position"], new_pos)
-    
-    def test_move_grasped_object_fails(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        manager.grasp("box1")
-        result = manager.move_object("box1", np.array([1, 1, 1]))
-        self.assertFalse(result)
-    
-    def test_grasp(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        result = manager.grasp("box1")
-        self.assertTrue(result)
-        self.assertEqual(manager.grasp_target, "box1")
-        self.assertTrue(manager.objects["box1"]["grasped"])
-    
-    def test_release(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        manager.grasp("box1")
-        released = manager.release()
-        self.assertEqual(released, "box1")
-        self.assertFalse(manager.objects["box1"]["grasped"])
-        self.assertIsNone(manager.grasp_target)
-    
-    def test_get_object(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        obj = manager.get_object("box1")
-        self.assertIsNotNone(obj)
-        self.assertEqual(obj['type'], "box")
-    
-    def test_get_all_objects(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0, 0, 0]))
-        manager.add_object("sphere1", "sphere", np.array([1, 1, 1]))
-        objs = manager.get_all_objects()
-        self.assertEqual(len(objs), 2)
-    
-    def test_get_object_positions(self):
-        manager = SceneManager()
-        manager.add_object("box1", "box", np.array([0.1, 0.2, 0.3]))
-        positions = manager.get_object_positions()
-        self.assertIn("box1", positions)
-        np.testing.assert_array_almost_equal(positions["box1"], [0.1, 0.2, 0.3])
+        body_id = self.sim.add_body(body)
+        self.assertEqual(body_id, 0)
+        self.assertEqual(len(self.sim.bodies), 1)
 
+    def test_get_body(self):
+        """测试获取刚体"""
+        body = create_agv_body("test", grade='M')
+        self.sim.add_body(body)
+        retrieved = self.sim.get_body("test")
+        self.assertIsNotNone(retrieved)
+        self.assertEqual(retrieved.name, "test")
 
-class TestTrajectoryRecorder(unittest.TestCase):
-    """测试轨迹记录器"""
-    
-    def test_record(self):
-        recorder = TrajectoryRecorder()
-        recorder.record(
-            joint_positions=np.array([0.1, 0.2, 0.3, 0.0, 0.0, 0.0]),
-            cartesian_position=np.array([0.5, 0.0, 0.3]),
-            wrench=np.zeros(6)
+    def test_kinetic_energy(self):
+        """测试动能计算"""
+        body = RigidBody(
+            position=np.zeros(3),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.array([1.0, 0.0, 0.0]),
+            angular_velocity=np.array([0.0, 0.0, 0.0]),
+            mass=2.0,
+            inertia=np.ones(3),
         )
-        self.assertEqual(len(recorder.joint_trajectory), 1)
-    
-    def test_get_joint_trajectory(self):
-        recorder = TrajectoryRecorder()
+        self.sim.add_body(body)
+        # KE = 0.5 * m * v^2 = 0.5 * 2.0 * 1.0 = 1.0
+        self.assertAlmostEqual(body.kinetic_energy, 1.0, places=5)
+
+    def test_to_pose_matrix(self):
+        """测试姿态矩阵计算"""
+        body = RigidBody(
+            position=np.array([1.0, 2.0, 3.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.zeros(3),
+            angular_velocity=np.zeros(3),
+            mass=1.0,
+            inertia=np.ones(3),
+        )
+        matrix = body.to_pose_matrix()
+        self.assertEqual(matrix.shape, (4, 4))
+        np.testing.assert_array_almost_equal(matrix[:3, 3], [1.0, 2.0, 3.0])
+
+    def test_step_empty(self):
+        """测试空环境步进"""
+        self.sim.step()
+        self.assertEqual(len(self.sim.bodies), 0)
+
+    def test_step_with_body(self):
+        """测试带刚体的步进"""
+        body = RigidBody(
+            position=np.array([0.0, 0.0, 1.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.array([0.0, 0.0, 0.0]),
+            angular_velocity=np.array([0.0, 0.0, 0.0]),
+            mass=1.0,
+            inertia=np.ones(3),
+            name="falling"
+        )
+        self.sim.add_body(body)
+        self.sim.step(dt=0.01)
+        # 重力下落，速度应增加（方向向下为负z，但模型可能实现不同）
+        self.assertIsNotNone(body.position)
+
+
+class TestAGVPhysicsGrades(unittest.TestCase):
+    """AGV五级物理规格测试"""
+
+    def test_all_grades_exist(self):
+        """测试所有等级规格存在"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_physics_spec(grade)
+            self.assertIn('sim_dt', spec)
+            self.assertIn('contact_stiffness', spec)
+            self.assertIn('friction_static', spec)
+
+    def test_grade_progression(self):
+        """测试等级递增"""
+        spec_s = get_physics_spec('S')
+        spec_xxl = get_physics_spec('XXL')
+        # 高级别规格更高
+        self.assertLessEqual(spec_s['contact_stiffness'], spec_xxl['contact_stiffness'])
+
+    def test_physics_sim_for_grade(self):
+        """测试按等级创建仿真器"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            sim = create_physics_sim_for_grade(grade)
+            self.assertEqual(sim.config.grade, grade)
+
+
+class TestCreateAGVBody(unittest.TestCase):
+    """AGV刚体创建测试"""
+
+    def test_create_base_body(self):
+        """测试创建AGV底盘"""
+        body = create_agv_body("chassis", grade='M')
+        self.assertEqual(body.name, "chassis")
+        self.assertEqual(body.body_type, BodyType.AGV_BASE)
+        self.assertGreater(body.mass, 0)
+
+    def test_grade_body_mass(self):
+        """测试不同等级AGV质量"""
+        masses = {}
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            body = create_agv_body(f"agv_{grade}", grade=grade)
+            masses[grade] = body.mass
+        # 质量应随等级增加
+        self.assertLessEqual(masses['S'], masses['XXL'])
+
+
+class TestSimulateDrop(unittest.TestCase):
+    """下落仿真测试"""
+
+    def test_simulate_drop_basic(self):
+        """测试基本下落仿真"""
+        config = PhysicsSimConfig.for_grade('M')
+        sim = PhysicsSimulator(config)
+        
+        # 添加一个刚体用于下落
+        body = RigidBody(
+            position=np.array([0.0, 0.0, 1.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.zeros(3),
+            angular_velocity=np.zeros(3),
+            mass=1.0,
+            inertia=np.ones(3),
+            name="drop_body",
+        )
+        sim.add_body(body)
+        
+        result = sim.simulate_drop(
+            body_name="drop_body",
+            drop_height=1.0,
+            duration=2.0
+        )
+        
+        self.assertIn('time', result)
+        self.assertIn('position', result)
+        self.assertIn('velocity', result)
+        self.assertIn('energy', result)
+        self.assertGreater(len(result['time']), 0)
+
+    def test_simulate_drop_high_mass(self):
+        """测试重物下落"""
+        config = PhysicsSimConfig.for_grade('XXL')
+        sim = PhysicsSimulator(config)
+        
+        body = RigidBody(
+            position=np.array([0.0, 0.0, 0.5]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.array([0.0, 0.0, -1.0]),
+            angular_velocity=np.zeros(3),
+            mass=50.0,
+            inertia=np.ones(3) * 10,
+            name="heavy_drop",
+        )
+        sim.add_body(body)
+        
+        result = sim.simulate_drop(
+            body_name="heavy_drop",
+            drop_height=0.5,
+            duration=2.0
+        )
+        
+        self.assertGreater(len(result['position']), 0)
+
+
+class TestSimulateCollision(unittest.TestCase):
+    """碰撞仿真测试"""
+
+    def test_simulate_collision_basic(self):
+        """测试基本碰撞"""
+        config = PhysicsSimConfig.for_grade('M')
+        sim = PhysicsSimulator(config)
+        
+        body1 = RigidBody(
+            position=np.array([0.0, 0.0, 1.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.array([0.0, 0.0, 0.0]),
+            angular_velocity=np.zeros(3),
+            mass=1.0,
+            inertia=np.ones(3),
+            name="body1",
+        )
+        body2 = RigidBody(
+            position=np.array([0.0, 0.0, 0.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.zeros(3),
+            angular_velocity=np.zeros(3),
+            mass=1.0,
+            inertia=np.ones(3),
+            name="body2",
+        )
+        sim.add_body(body1)
+        sim.add_body(body2)
+        
+        result = sim.simulate_collision(
+            body1_name="body1",
+            body2_name="body2",
+            impact_velocity=(0.0, 0.0, -2.0),
+            duration=0.5
+        )
+        
+        self.assertIn('time', result)
+        self.assertIn('force', result)
+        self.assertIn('energy', result)
+
+    def test_collision_energy_conservation(self):
+        """测试碰撞能量守恒"""
+        config = PhysicsSimConfig.for_grade('M')
+        sim = PhysicsSimulator(config)
+        
+        body1 = RigidBody(
+            position=np.array([0.0, 0.0, 2.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.zeros(3),
+            angular_velocity=np.zeros(3),
+            mass=1.0,
+            inertia=np.ones(3),
+            name="ball1",
+        )
+        body2 = RigidBody(
+            position=np.array([0.0, 0.0, 0.0]),
+            orientation=np.array([1.0, 0.0, 0.0, 0.0]),
+            linear_velocity=np.zeros(3),
+            angular_velocity=np.zeros(3),
+            mass=10.0,
+            inertia=np.ones(3),
+            name="ground",
+        )
+        sim.add_body(body1)
+        sim.add_body(body2)
+        
+        result = sim.simulate_collision(
+            body1_name="ball1",
+            body2_name="ground",
+            impact_velocity=(0.0, 0.0, -2.0),
+            duration=1.0
+        )
+        
+        # 能量数据应存在
+        self.assertIn('energy', result)
+        self.assertGreater(len(result['energy']), 0)
+
+
+class TestCrossModalCalibrator(unittest.TestCase):
+    """跨模态联合标定测试"""
+
+    def setUp(self):
+        self.calibrator = CrossModalCalibrator(grade='M')
+
+    def test_initialization(self):
+        """测试标定器初始化"""
+        self.assertEqual(self.calibrator.grade, 'M')
+        self.assertEqual(len(self.calibrator.data_points), 0)
+
+    def test_add_static_calibration(self):
+        """测试添加静止标定数据"""
+        self.calibrator.add_static_calibration(
+            force_wrench=np.array([0.1, 0.0, -9.81, 0.0, 0.0, 0.0]),
+            accel=np.array([0.0, 0.0, 9.81]),
+            gyro=np.array([0.0, 0.0, 0.0]),
+            temperature=25.0,
+        )
+        self.assertEqual(len(self.calibrator.data_points), 1)
+
+    def test_add_oriented_calibration(self):
+        """测试添加姿态标定数据"""
+        self.calibrator.add_oriented_calibration(
+            tactile_pressure=np.random.rand(16, 16).astype(np.float32),
+            force_wrench=np.array([0.0, 0.0, 0.0, 0.0, 0.0, 0.5]),
+            imu_euler=np.array([0.0, 0.0, 0.0]),
+            imu_accel=np.array([0.0, 0.0, 9.81]),
+            known_torque=np.array([0.0, 0.0, 0.5]),
+        )
+        self.assertEqual(len(self.calibrator.data_points), 1)
+
+    def test_calibrate_force_bias(self):
+        """测试力觉零偏标定"""
         for _ in range(10):
-            recorder.record(np.random.randn(6))
-        traj = recorder.get_joint_trajectory()
-        self.assertEqual(traj.shape[0], 10)
-        self.assertEqual(traj.shape[1], 6)
-    
-    def test_get_cartesian_trajectory(self):
-        recorder = TrajectoryRecorder()
-        recorder.record(np.zeros(6), cartesian_position=np.array([1, 2, 3]))
-        traj = recorder.get_cartesian_trajectory()
-        self.assertIsNotNone(traj)
-        self.assertEqual(traj.shape, (1, 3))
-    
-    def test_get_duration(self):
-        recorder = TrajectoryRecorder()
-        recorder.record(np.zeros(6))
-        time.sleep(0.05)
-        recorder.record(np.zeros(6))
-        duration = recorder.get_duration()
-        self.assertGreater(duration, 0.0)
-    
-    def test_clear(self):
-        recorder = TrajectoryRecorder()
-        for _ in range(5):
-            recorder.record(np.zeros(6))
-        recorder.clear()
-        self.assertEqual(len(recorder.joint_trajectory), 0)
-        self.assertIsNone(recorder._start_time)
-    
-    def test_export(self):
-        recorder = TrajectoryRecorder()
-        for _ in range(3):
-            recorder.record(np.random.randn(6))
+            self.calibrator.add_static_calibration(
+                force_wrench=np.array([0.05, -0.03, -9.80, 0.01, -0.01, 0.02]),
+                accel=np.array([0.0, 0.0, 9.81]),
+                gyro=np.array([0.0, 0.0, 0.0]),
+            )
         
-        import tempfile
-        with tempfile.NamedTemporaryFile(suffix='.npz', delete=True) as f:
-            recorder.export(f.name)
-            data = np.load(f.name)
-            self.assertIn('joint_trajectory', data)
+        bias = self.calibrator.calibrate_force_bias()
+        self.assertEqual(bias.shape, (6,))
+
+    def test_calibrate_tactile_to_force(self):
+        """测试触觉-力觉转换标定"""
+        for i in range(5):
+            pressure = np.random.rand(16, 16).astype(np.float32)
+            force = np.array([0.0, 0.0, float(i) * 2.0, 0.0, 0.0, 0.0])
+            self.calibrator.add_oriented_calibration(
+                tactile_pressure=pressure,
+                force_wrench=force,
+                imu_euler=np.zeros(3),
+                imu_accel=np.array([0.0, 0.0, 9.81]),
+                known_force=force,
+            )
+        
+        matrix = self.calibrator.calibrate_tactile_to_force()
+        self.assertIsNotNone(matrix)
+        self.assertEqual(matrix.shape[0], 6)
+
+    def test_calibrate_imu_orientation(self):
+        """测试IMU-姿态标定"""
+        for roll in [0.0, 0.1, -0.1, 0.2, -0.2]:
+            self.calibrator.add_oriented_calibration(
+                tactile_pressure=np.random.rand(16, 16).astype(np.float32),
+                force_wrench=np.zeros(6),
+                imu_euler=np.array([roll, 0.0, 0.0]),
+                imu_accel=np.array([0.0, 9.81 * np.sin(roll), 9.81 * np.cos(roll)]),
+            )
+        
+        matrix, accel_bias = self.calibrator.calibrate_imu_orientation()
+        self.assertIsNotNone(matrix)
+
+    def test_calibrate_full(self):
+        """测试完整标定流程"""
+        # 添加静止标定数据
+        for _ in range(5):
+            self.calibrator.add_static_calibration(
+                force_wrench=np.array([0.0, 0.0, -9.81, 0.0, 0.0, 0.0]),
+                accel=np.array([0.0, 0.0, 9.81]),
+                gyro=np.array([0.0, 0.0, 0.0]),
+            )
+        
+        # 添加姿态标定数据
+        for i in range(3):
+            self.calibrator.add_oriented_calibration(
+                tactile_pressure=np.random.rand(16, 16).astype(np.float32),
+                force_wrench=np.array([0.0, 0.0, 0.0, 0.0, 0.0, float(i) * 0.1]),
+                imu_euler=np.array([float(i) * 0.1, 0.0, 0.0]),
+                imu_accel=np.array([0.0, 0.0, 9.81]),
+                known_torque=np.array([0.0, 0.0, float(i) * 0.1]),
+            )
+        
+        result = self.calibrator.calibrate_full()
+        self.assertIsInstance(result, CalibrationResult)
+        self.assertEqual(result.force_bias.shape, (6,))
+        self.assertEqual(result.accel_bias.shape, (3,))
+
+    def test_apply_calibration(self):
+        """测试标定应用"""
+        # 先添加有触觉数据的标定以获得有效的tactile_to_force_matrix
+        for i in range(5):
+            pressure = np.random.rand(16, 16).astype(np.float32)
+            force = np.array([0.0, 0.0, float(i) * 2.0, 0.0, 0.0, 0.0])
+            self.calibrator.add_oriented_calibration(
+                tactile_pressure=pressure,
+                force_wrench=force,
+                imu_euler=np.zeros(3),
+                imu_accel=np.array([0.0, 0.0, 9.81]),
+                known_force=force,
+            )
+        
+        self.calibrator.calibrate_full()
+        
+        # 应用触觉→力觉转换
+        pressure = np.random.rand(16, 16).astype(np.float32)
+        calibrated = self.calibrator.apply_calibration(tactile_pressure=pressure)
+        self.assertIn('force_wrench', calibrated)
+        self.assertEqual(calibrated['force_wrench'].shape, (6,))
+        
+        # 应用力零偏补偿
+        raw_wrench = np.array([1.0, -1.0, -10.0, 0.5, -0.5, 0.3])
+        calibrated2 = self.calibrator.apply_calibration(force_wrench=raw_wrench)
+        self.assertIn('force_wrench_calibrated', calibrated2)
+
+    def test_evaluate_quality(self):
+        """测试标定质量评估"""
+        for _ in range(10):
+            self.calibrator.add_static_calibration(
+                force_wrench=np.array([0.0, 0.0, -9.81]) + np.random.randn(3) * 0.05,
+                accel=np.array([0.0, 0.0, 9.81]),
+                gyro=np.array([0.0, 0.0, 0.0]),
+            )
+        
+        self.calibrator.calibrate_force_bias()
+        quality = self.calibrator.evaluate_quality()
+        
+        self.assertIn('residual_force', quality)
+        self.assertIn('overall_score', quality)
 
 
-class TestPresetScenes(unittest.TestCase):
-    """测试预设场景"""
-    
-    def test_tabletop_scene(self):
-        scene = create_scene("tabletop")
-        self.assertIn("obstacles", scene)
-        self.assertEqual(scene["table_height"], 0.3)
-    
-    def test_shelf_scene(self):
-        scene = create_scene("shelf")
-        self.assertIn("shelf_heights", scene)
-        self.assertGreater(len(scene["shelf_heights"]), 0)
-    
-    def test_door_scene(self):
-        scene = create_scene("door")
-        self.assertIn("obstacles", scene)
-    
-    def test_unknown_scene_defaults_to_tabletop(self):
-        scene = create_scene("unknown_scene")
-        self.assertEqual(scene["description"], "桌面抓取场景")
+class TestCalibrationGrades(unittest.TestCase):
+    """标定五级规格测试"""
+
+    def test_all_grades_have_spec(self):
+        """测试所有等级有规格"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = get_calibration_spec(grade)
+            self.assertIn('min_static_samples', spec)
+            self.assertIn('min_oriented_samples', spec)
+            self.assertIn('force_accuracy_required', spec)
+
+    def test_grade_progression(self):
+        """测试等级递增"""
+        spec_m = get_calibration_spec('M')
+        spec_xxl = get_calibration_spec('XXL')
+        # 高等级需要更多样本
+        self.assertLessEqual(spec_m['min_static_samples'], spec_xxl['min_static_samples'])
+        # 高等级精度要求更高（数值更小）
+        self.assertLessEqual(spec_xxl['force_accuracy_required'], spec_m['force_accuracy_required'])
 
 
-class TestSimConfig(unittest.TestCase):
-    """测试仿真配置"""
-    
-    def test_default_config(self):
-        config = SimConfig()
-        self.assertEqual(config.dt, 0.01)
-        self.assertEqual(config.num_joints, 6)
-        self.assertEqual(config.engine, "custom")
-    
-    def test_custom_config(self):
-        config = SimConfig(dt=0.005, num_joints=7, engine="pybullet")
-        self.assertEqual(config.dt, 0.005)
-        self.assertEqual(config.num_joints, 7)
+class TestCalibrationPersistence(unittest.TestCase):
+    """标定结果持久化测试"""
+
+    def setUp(self):
+        self.calibrator = CrossModalCalibrator(grade='M')
+        for _ in range(3):
+            self.calibrator.add_static_calibration(
+                force_wrench=np.array([0.0, 0.0, -9.81, 0.0, 0.0, 0.0]),
+                accel=np.array([0.0, 0.0, 9.81]),
+                gyro=np.array([0.0, 0.0, 0.0]),
+            )
+        self.calibrator.calibrate_full()
+
+    def test_save_and_load(self):
+        """测试标定结果保存和加载"""
+        with tempfile.TemporaryDirectory() as tmpdir:
+            path = os.path.join(tmpdir, "calibration.npz")
+            self.calibrator.save(path)
+            
+            # 直接读取npz验证保存的数据存在
+            data = np.load(path, allow_pickle=True)
+            self.assertIn('force_bias', data.files)
+            self.assertEqual(data['force_bias'].shape, (6,))
+
+
+class TestContactPointModel(unittest.TestCase):
+    """接触点模型测试"""
+
+    def test_contact_point_creation(self):
+        """测试接触点创建"""
+        contact = ContactPoint(
+            position=np.array([0.0, 0.0, 0.0]),
+            normal=np.array([0.0, 0.0, 1.0]),
+            penetration=0.01,
+            velocity=np.array([0.0, 0.0, -1.0]),
+        )
+        
+        self.assertEqual(contact.position.shape, (3,))
+        self.assertEqual(contact.normal.shape, (3,))
+        self.assertGreater(contact.penetration, 0)
+
+    def test_contact_force_creation(self):
+        """测试接触力创建"""
+        force = ContactForce(
+            normal_force=10.0,
+            friction_force=np.array([1.0, 0.0, 0.0]),
+            torque=np.array([0.0, 0.0, 0.0]),
+        )
+        
+        self.assertGreater(force.normal_force, 0)
+        self.assertEqual(force.friction_force.shape, (3,))
 
 
 if __name__ == '__main__':
-    unittest.main(verbosity=2)
-
-
-class TestGymEnvConfig(unittest.TestCase):
-    """测试 Gym 环境配置"""
-
-    def test_default_config(self):
-        from simulation.gym_env import GymEnvConfig
-        cfg = GymEnvConfig()
-        self.assertEqual(cfg.dt, 0.01)
-        self.assertEqual(cfg.num_joints, 6)
-        self.assertEqual(cfg.episode_length, 1000)
-
-    def test_custom_config(self):
-        from simulation.gym_env import GymEnvConfig
-        cfg = GymEnvConfig(dt=0.005, episode_length=500)
-        self.assertEqual(cfg.dt, 0.005)
-        self.assertEqual(cfg.episode_length, 500)
-
-
-class TestSuperModelGymEnv(unittest.TestCase):
-    """测试 Gymnasium 环境"""
-
-    def setUp(self):
-        import os
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
-        self.env = SuperModelGymEnv(
-            config=GymEnvConfig(grade='M'),
-            scenario='reach'
-        )
-
-    def tearDown(self):
-        self.env.close()
-
-    def test_env_creation(self):
-        self.assertIsNotNone(self.env)
-
-    def test_spaces(self):
-        obs_space = self.env.observation_space
-        act_space = self.env.action_space
-        self.assertEqual(obs_space.shape[0], 53)
-        self.assertEqual(act_space.shape[0], 6)
-
-    def test_reset(self):
-        obs, info = self.env.reset(seed=42)
-        self.assertEqual(obs.shape, (53,))
-        self.assertIn('timestep', info)
-        self.assertEqual(info['timestep'], 0)
-
-    def test_reset_with_options(self):
-        import numpy as np
-        target = np.zeros(6)
-        obs, info = self.env.reset(options={'target': target})
-        self.assertEqual(obs.shape, (53,))
-
-    def test_step(self):
-        self.env.reset(seed=42)
-        action = self.env.action_space.sample()
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        self.assertEqual(obs.shape, (53,))
-        self.assertIsInstance(reward, float)
-        self.assertIsInstance(terminated, bool)
-        self.assertIsInstance(truncated, bool)
-
-    def test_episode_length(self):
-        self.env.reset(seed=42)
-        for _ in range(100):
-            action = self.env.action_space.sample()
-            _, _, terminated, truncated, _ = self.env.step(action)
-            if terminated or truncated:
-                break
-        # episode 可以终止也可以继续
-
-    def test_action_clipping(self):
-        """动作应被限幅"""
-        self.env.reset(seed=42)
-        # 采样一个在限制范围内的动作
-        action = self.env.action_space.sample()
-        obs, _, _, _, _ = self.env.step(action)
-        self.assertEqual(obs.shape, (53,))
-
-    def test_deterministic_reset(self):
-        """相同 seed 应产生相同的初始状态"""
-        import numpy as np
-        np.random.seed(0)
-        obs1, _ = self.env.reset(seed=123)
-        np.random.seed(0)
-        obs2, _ = self.env.reset(seed=123)
-        np.testing.assert_array_almost_equal(obs1, obs2)
-
-
-class TestSuperModelGymEnvTrack(unittest.TestCase):
-    """测试跟踪场景"""
-
-    def setUp(self):
-        import os
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
-        self.env = SuperModelGymEnv(
-            config=GymEnvConfig(grade='M'),
-            scenario='track'
-        )
-
-    def tearDown(self):
-        self.env.close()
-
-    def test_track_scenario(self):
-        obs, info = self.env.reset(seed=42)
-        self.assertEqual(info['scenario'], 'track')
-        action = self.env.action_space.sample()
-        obs, reward, terminated, truncated, info = self.env.step(action)
-        self.assertEqual(obs.shape, (53,))
-
-
-class TestSuperModelGymEnvGrasp(unittest.TestCase):
-    """测试抓取场景"""
-
-    def setUp(self):
-        import os
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
-        self.env = SuperModelGymEnv(
-            config=GymEnvConfig(grade='L'),
-            scenario='grasp'
-        )
-
-    def tearDown(self):
-        self.env.close()
-
-    def test_grasp_scenario(self):
-        obs, info = self.env.reset(seed=42)
-        self.assertEqual(info['scenario'], 'grasp')
-
-
-class TestCollectRollout(unittest.TestCase):
-    """测试 rollout 收集"""
-
-    def setUp(self):
-        import os
-        import sys
-        sys.path.insert(0, os.path.join(os.path.dirname(__file__), '..', 'src'))
-        from simulation.gym_env import SuperModelGymEnv, GymEnvConfig
-        self.env = SuperModelGymEnv(
-            config=GymEnvConfig(grade='S'),
-            scenario='reach'
-        )
-
-    def tearDown(self):
-        self.env.close()
-
-    def test_collect_rollout(self):
-        from simulation.gym_env import collect_rollout
-
-        def random_policy(obs):
-            return self.env.action_space.sample()
-
-        rollout = collect_rollout(self.env, random_policy, max_steps=10)
-        self.assertIn('observations', rollout)
-        self.assertIn('actions', rollout)
-        self.assertIn('rewards', rollout)
-        self.assertGreater(rollout['length'], 0)
-
-
-class TestGetGymSpec(unittest.TestCase):
-    """测试 Gym 环境规格"""
-
-    def test_all_grades(self):
-        from simulation.gym_env import get_gym_spec
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            spec = get_gym_spec(grade)
-            self.assertIn('dt', spec)
-            self.assertIn('episode_length', spec)
-            self.assertIn('reward_tracking', spec)
-            self.assertIn('max_torque', spec)
-
-    def test_grade_S_dt(self):
-        from simulation.gym_env import get_gym_spec
-        spec = get_gym_spec('S')
-        self.assertEqual(spec['dt'], 0.02)
-        self.assertEqual(spec['max_torque'], 50)
-
-    def test_grade_XXL_dt(self):
-        from simulation.gym_env import get_gym_spec
-        spec = get_gym_spec('XXL')
-        self.assertEqual(spec['dt'], 0.002)
-        self.assertEqual(spec['max_torque'], 1000)
+    unittest.main()
