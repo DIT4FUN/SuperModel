@@ -1880,6 +1880,653 @@ class SensorHealthMonitor:
 
 
 # ─────────────────────────────────────────────
+# 表面跟踪控制器 (Surface Following Controller)
+# ─────────────────────────────────────────────
+
+class SurfaceFollowingController:
+    """
+    触觉引导表面跟踪控制器
+
+    用于需要沿表面移动的任务:
+    - 表面擦拭/清洁
+    - 曲面打磨/抛光
+    - 表面检测/扫描
+    - 边缘跟踪
+
+    控制策略:
+      感知层: TactileFrame → 压力梯度 → 表面法向估计
+      规划层: 目标速度向量 + 表面法向
+      控制层: 力位混合 → 末端速度指令
+
+    AGV五级支持:
+      S:  固定下压力 + 开环速度
+      M:  触觉梯度反馈 + 导纳控制
+      L:  实时法向估计 + 阻抗控制
+      XL: 多触觉区域融合 + 自适应阻抗
+      XXL: 视觉+触觉融合 + MPC预测控制
+    """
+
+    class FollowMode(str, Enum):
+        CONSTANT_FORCE = 'constant_force'    # 恒定法向力
+        ADMITTANCE = 'admittance'              # 导纳控制
+        IMPEDANCE = 'impedance'                # 阻抗控制
+        ADAPTIVE = 'adaptive'                  # 自适应阻抗
+
+    def __init__(
+        self,
+        grade: str = 'M',
+        follow_mode: str = 'admittance',
+        nominal_force: float = 5.0,    # N, 期望法向接触力
+        nominal_velocity: float = 0.05,  # m/s, 标称跟踪速度
+        force_deadband: float = 1.0,      # N, 力控制死区
+    ):
+        self.grade = grade
+        self.follow_mode = follow_mode
+        self.nominal_force = nominal_force
+        self.nominal_velocity = nominal_velocity
+        self.force_deadband = force_deadband
+
+        # 表面状态
+        self._surface_normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        self._tangent_direction = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        self._height_error = 0.0
+        self._error_history: List[float] = []
+
+        # 速度积分
+        self._velocity_integral = 0.0
+        self._last_velocity = np.zeros(3)
+
+        # 导纳参数
+        self._admittance_M = 0.5   # 等效质量 kg
+        self._admittance_D = 10.0   # 等效阻尼 N·s/m
+        self._admittance_K = 100.0  # 等效刚度 N/m
+
+        # 阻抗参数
+        self._impedance_Kp = 500.0  # N/m
+        self._impedance_Kd = 50.0   # N·s/m
+
+        # 状态
+        self._is_following = False
+        self._total_distance = 0.0   # 累计跟踪距离 m
+        self._cycle_count = 0
+
+        print(f"[SurfaceFollowing] Grade={grade}, mode={follow_mode}, "
+              f"force={nominal_force}N, vel={nominal_velocity}m/s")
+
+    def estimate_surface_normal(
+        self,
+        pressure_map: np.ndarray
+    ) -> np.ndarray:
+        """
+        从触觉压力图估计表面法向
+
+        算法: 压力梯度 → 法向估计
+        - 压力梯度方向 = 表面倾斜方向
+        - 梯度幅值 = 表面倾斜角度
+
+        Args:
+            pressure_map: HxW 压力图 (归一化 0-1)
+
+        Returns:
+            表面法向单位向量 (3,)
+        """
+        h, w = pressure_map.shape
+
+        # Sobel 梯度
+        from scipy import ndimage
+        gx = ndimage.sobel(pressure_map, axis=1)
+        gy = ndimage.sobel(pressure_map, axis=0)
+
+        # 平均梯度
+        mean_gx = np.mean(gx)
+        mean_gy = np.mean(gy)
+
+        # 梯度幅值决定倾斜角
+        grad_mag = np.sqrt(mean_gx**2 + mean_gy**2)
+        tilt_angle = np.clip(grad_mag * 0.5, 0.0, np.pi / 4)  # 最多45度
+
+        # 法向 (假设初始法向朝上 +Z)
+        nx = -mean_gx * 0.5
+        ny = -mean_gy * 0.5
+        nz = 1.0
+        normal = np.array([nx, ny, nz], dtype=np.float32)
+        normal_norm = np.linalg.norm(normal)
+
+        if normal_norm > 1e-6:
+            normal = normal / normal_norm
+        else:
+            normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+
+        self._surface_normal = normal
+        return normal
+
+    def compute_tangent_direction(
+        self,
+        surface_normal: np.ndarray
+    ) -> np.ndarray:
+        """
+        计算切向方向 (跟踪方向)
+
+        切向方向 ⊥ 表面法向, 取前一时刻运动方向在表面上的投影
+        """
+        # 默认切向 = 法向的右侧方向
+        ref = np.array([1.0, 0.0, 0.0], dtype=np.float32)
+        if abs(np.dot(surface_normal, ref)) > 0.9:
+            ref = np.array([0.0, 1.0, 0.0], dtype=np.float32)
+
+        tangent = ref - np.dot(ref, surface_normal) * surface_normal
+        tangent_norm = np.linalg.norm(tangent)
+        if tangent_norm > 1e-6:
+            tangent = tangent / tangent_norm
+
+        self._tangent_direction = tangent
+        return tangent
+
+    def compute_control(
+        self,
+        pressure_map: np.ndarray,
+        current_force: float,
+        dt: float = 0.01
+    ) -> Dict[str, np.ndarray]:
+        """
+        主控制计算: 压力图 → 末端速度指令
+
+        Args:
+            pressure_map: 当前触觉压力图
+            current_force: 当前测量的法向力 (N)
+            dt: 控制周期 (s)
+
+        Returns:
+            {
+                'velocity': 末端速度 (3,) m/s,
+                'normal_force_error': 法向力误差 (N),
+                'surface_normal': 估计的表面法向 (3,),
+                'tangent_direction': 切向方向 (3,),
+            }
+        """
+        # 1. 估计表面法向
+        normal = self.estimate_surface_normal(pressure_map)
+        tangent = self.compute_tangent_direction(normal)
+
+        # 2. 法向力误差
+        force_error = self.nominal_force - current_force
+        self._height_error = force_error
+        self._error_history.append(force_error)
+        if len(self._error_history) > 100:
+            self._error_history.pop(0)
+
+        # 3. 速度计算 (根据控制模式)
+        if self.follow_mode == 'constant_force':
+            # 恒定下压力模式: 仅调节高度
+            height_correction = self._admittance_K * force_error * dt
+            vel_tangent = tangent * self.nominal_velocity
+            vel_normal = -normal * height_correction
+            velocity = vel_tangent + vel_normal
+
+        elif self.follow_mode == 'admittance':
+            # 导纳控制
+            # M * a + D * v + K * x = F_error
+            accel = force_error / self._admittance_M
+            damping_force = -self._admittance_D * np.linalg.norm(self._last_velocity)
+            spring_force = -self._admittance_K * self._velocity_integral
+
+            correction_vel = (accel + damping_force + spring_force) * dt
+            self._velocity_integral += correction_vel * dt
+            np.clip(self._velocity_integral, -0.05, 0.05)
+
+            vel_tangent = tangent * self.nominal_velocity
+            vel_normal = -normal * np.clip(correction_vel, -0.1, 0.1)
+            velocity = vel_tangent + vel_normal
+
+        elif self.follow_mode == 'impedance':
+            # 阻抗控制
+            impedance_force = (
+                self._impedance_Kp * force_error +
+                self._impedance_Kd * (force_error - (self._error_history[-2] if len(self._error_history) > 1 else 0)) / dt
+            )
+            vel_normal = -normal * np.clip(impedance_force * dt, -0.1, 0.1)
+            velocity = tangent * self.nominal_velocity + vel_normal
+
+        else:  # adaptive
+            # 自适应阻抗: 根据力误差大小自动调整刚度
+            abs_error = abs(force_error)
+            adaptive_K = self._impedance_Kp * (1.0 + 0.5 * np.exp(-abs_error / 2.0))
+            adaptive_D = self._impedance_Kd * (1.0 + 0.3 * np.exp(-abs_error / 5.0))
+
+            impedance_force = adaptive_K * force_error
+            vel_normal = -normal * np.clip(impedance_force * dt, -0.1, 0.1)
+            velocity = tangent * self.nominal_velocity + vel_normal
+
+        # 4. 速度限幅
+        max_speed = self.nominal_velocity * 2.0
+        speed_mag = np.linalg.norm(velocity)
+        if speed_mag > max_speed:
+            velocity = velocity / speed_mag * max_speed
+
+        self._last_velocity = velocity
+        self._is_following = True
+        self._total_distance += np.linalg.norm(velocity[:2]) * dt
+        self._cycle_count += 1
+
+        return {
+            'velocity': velocity,
+            'normal_force_error': force_error,
+            'surface_normal': normal,
+            'tangent_direction': tangent,
+        }
+
+    def compute_contact_quality(self, pressure_map: np.ndarray) -> Dict[str, float]:
+        """
+        评估接触质量
+
+        用于判断是否良好接触表面
+        """
+        # 接触面积比
+        contact_mask = pressure_map > 0.1
+        contact_ratio = np.sum(contact_mask) / pressure_map.size
+
+        # 压力均匀性 (标准差越小越均匀)
+        if contact_mask.any():
+            contact_pressures = pressure_map[contact_mask]
+            uniformity = 1.0 - min(np.std(contact_pressures) * 3, 1.0)
+        else:
+            uniformity = 0.0
+
+        # 综合质量
+        quality = (contact_ratio * 0.4 + uniformity * 0.6)
+
+        return {
+            'contact_ratio': contact_ratio,
+            'uniformity': uniformity,
+            'quality': quality,
+            'is_good_contact': quality > 0.3 and contact_ratio > 0.1,
+        }
+
+    def get_status(self) -> Dict:
+        """获取控制器状态"""
+        return {
+            'is_following': self._is_following,
+            'total_distance_m': self._total_distance,
+            'cycle_count': self._cycle_count,
+            'surface_normal': self._surface_normal.tolist(),
+            'tangent_direction': self._tangent_direction.tolist(),
+            'height_error': self._height_error,
+            'mode': self.follow_mode,
+        }
+
+    def reset(self):
+        """重置控制器状态"""
+        self._is_following = False
+        self._total_distance = 0.0
+        self._velocity_integral = 0.0
+        self._last_velocity = np.zeros(3)
+        self._error_history = []
+        self._cycle_count = 0
+
+
+# ─────────────────────────────────────────────
+# 精密装配控制器 (Assembly Controller)
+# ─────────────────────────────────────────────
+
+class AssemblyController:
+    """
+    精密装配控制器
+
+    任务类型:
+    - 孔轴配合 (peg-in-hole)
+    - 螺纹连接
+    - 卡扣装配
+    - 精密对位
+
+    控制阶段:
+      1. APPROACH: 接近目标位置
+      2. SEARCH: 触觉搜索/试探
+      3. INSERT: 插入阶段 (力控制)
+      4. SEAT: 到位/压合
+      5. VERIFY: 装配验证
+
+    AGV五级装配能力:
+      S:  粗定位 ±5mm, 手动辅助
+      M:  ±1mm, 触觉搜索
+      L:  ±0.3mm, 力控插入
+      XL: ±0.1mm, 视觉+力觉融合
+      XXL: ±0.01mm, MPC预测+自适应
+    """
+
+    class AssemblyPhase(str, Enum):
+        IDLE = 'idle'
+        APPROACH = 'approach'
+        SEARCH = 'search'
+        INSERT = 'insert'
+        SEAT = 'seat'
+        VERIFY = 'verify'
+        COMPLETE = 'complete'
+        FAILED = 'failed'
+
+    def __init__(
+        self,
+        grade: str = 'M',
+        hole_tolerance: float = 1.0,   # mm, 孔径公差
+        insertion_depth: float = 10.0, # mm, 插入深度
+        max_insertion_force: float = 20.0,  # N, 最大插入压力
+        search_force: float = 3.0,    # N, 搜索时的法向力
+        search_pattern: str = 'spiral',  # spiral | raster | random
+    ):
+        self.grade = grade
+        self.hole_tolerance = hole_tolerance
+        self.insertion_depth = insertion_depth
+        self.max_insertion_force = max_insertion_force
+        self.search_force = search_force
+
+        # 装配阶段
+        self._phase = self.AssemblyPhase.IDLE
+        self._insertion_progress = 0.0  # 0-1
+        self._search_count = 0
+        self._cycle_count = 0
+
+        # 位置状态
+        self._current_depth = 0.0   # mm, 当前插入深度
+        self._lateral_offset = np.zeros(2, dtype=np.float32)  # mm, 横向偏移
+        self._target_position = np.zeros(3, dtype=np.float32)
+
+        # 搜索参数
+        self._search_pattern = search_pattern  # spiral | raster | random
+        self._search_radius = min(hole_tolerance * 2, 5.0)  # mm
+        self._search_speed = 1.0  # mm/s
+
+        # 插入参数 (根据AGV等级调整)
+        if grade == 'S':
+            self._insertion_velocity = 0.5   # mm/s
+            self._force_gain = 1.0
+        elif grade == 'M':
+            self._insertion_velocity = 1.0
+            self._force_gain = 1.5
+        elif grade == 'L':
+            self._insertion_velocity = 2.0
+            self._force_gain = 2.0
+        elif grade == 'XL':
+            self._insertion_velocity = 5.0
+            self._force_gain = 3.0
+        else:  # XXL
+            self._insertion_velocity = 10.0
+            self._force_gain = 5.0
+
+        # 接触状态
+        self._last_force = 0.0
+        self._force_history: List[float] = []
+        self._collision_detected = False
+
+        # 统计
+        self._total_assemblies = 0
+        self._successful_assemblies = 0
+
+        print(f"[AssemblyController] Grade={grade}, tolerance={hole_tolerance}mm, "
+              f"depth={insertion_depth}mm, velocity={self._insertion_velocity}mm/s")
+
+    def start_assembly(
+        self,
+        target_position: np.ndarray,
+        phase: str = 'approach'
+    ):
+        """开始装配任务"""
+        self._target_position = target_position.astype(np.float32)
+        self._phase = self.AssemblyPhase(phase)
+        self._insertion_progress = 0.0
+        self._current_depth = 0.0
+        self._lateral_offset = np.zeros(2, dtype=np.float32)
+        self._search_count = 0
+        self._collision_detected = False
+        self._force_history = []
+
+        print(f"[Assembly] Started at {target_position}, phase={phase}")
+
+    def compute_search_motion(
+        self,
+        dt: float = 0.01
+    ) -> np.ndarray:
+        """
+        计算搜索运动 (试探找孔)
+
+        Returns:
+            末端位置增量 (3,) mm
+        """
+        if self._search_pattern == 'spiral':
+            # 螺旋搜索
+            angle = self._search_count * 0.3  # 弧度
+            r = self._search_radius * (0.5 + 0.5 * (self._search_count % 20) / 20)
+            dx = r * np.cos(angle)
+            dy = r * np.sin(angle)
+        elif self._search_pattern == 'raster':
+            # 光栅搜索
+            row = self._search_count // 10
+            col = self._search_count % 10
+            dx = (col - 5) * self._search_radius / 5
+            dy = (row % 2) * self._search_radius - self._search_radius / 2
+        else:
+            # 随机搜索
+            dx = (np.random.rand() - 0.5) * self._search_radius
+            dy = (np.random.rand() - 0.5) * self._search_radius
+
+        motion = np.array([
+            dx * self._search_speed * dt,
+            dy * self._search_speed * dt,
+            0.0
+        ], dtype=np.float32)
+
+        self._search_count += 1
+        return motion
+
+    def compute_insertion_control(
+        self,
+        current_force: float,
+        lateral_force: float,
+        dt: float = 0.01
+    ) -> np.ndarray:
+        """
+        插入阶段控制
+
+        力控策略:
+        - 实时监测侧向力和法向力
+        - 侧向力过大 → 暂停插入, 搜索校正
+        - 法向力过大 → 后退重插
+        - 正常 → 恒定速度插入
+
+        Args:
+            current_force: 当前法向力 (N)
+            lateral_force: 侧向力幅值 (N)
+            dt: 控制周期 (s)
+
+        Returns:
+            速度指令 (3,) mm/s
+        """
+        velocity = np.zeros(3, dtype=np.float32)
+
+        # 法向力过大检测
+        if current_force > self.max_insertion_force:
+            # 卡阻: 后退
+            velocity[2] = -self._insertion_velocity * 0.5
+            if self._phase != self.AssemblyPhase.SEARCH:
+                self._phase = self.AssemblyPhase.SEARCH
+                print(f"[Assembly] Force too high ({current_force:.1f}N), backoff to search")
+        # 侧向力过大检测 (表明未对准)
+        elif abs(lateral_force) > self.search_force * 3:
+            # 搜索校正
+            velocity[:2] = self.compute_search_motion(dt)[:2] * 1000
+            velocity[2] = self._insertion_velocity * 0.1  # 慢速插入
+        else:
+            # 正常插入
+            velocity[2] = self._insertion_velocity
+
+        # 更新深度
+        self._current_depth += velocity[2] * dt
+        self._insertion_progress = min(self._current_depth / self.insertion_depth, 1.0)
+
+        # 更新历史
+        self._force_history.append(current_force)
+        if len(self._force_history) > 100:
+            self._force_history.pop(0)
+
+        self._last_force = current_force
+        self._cycle_count += 1
+
+        return velocity
+
+    def compute_seating_control(
+        self,
+        contact_force: float,
+        dt: float = 0.01
+    ) -> np.ndarray:
+        """
+        压合阶段控制
+
+        到位后压合, 确保连接牢固
+        """
+        velocity = np.zeros(3, dtype=np.float32)
+
+        # 压合力阈值
+        seating_force = self.max_insertion_force * 0.8
+
+        if contact_force < seating_force:
+            velocity[2] = self._insertion_velocity * 0.5
+        else:
+            # 压合完成
+            velocity[2] = 0.0
+            if self._phase != self.AssemblyPhase.VERIFY:
+                self._phase = self.AssemblyPhase.VERIFY
+                print(f"[Assembly] Seating complete, progress={self._insertion_progress:.2f}")
+
+        return velocity
+
+    def update(
+        self,
+        current_position: np.ndarray,
+        current_force: float,
+        lateral_force: float,
+        dt: float = 0.01
+    ) -> Dict:
+        """
+        主更新: 根据当前阶段计算控制指令
+
+        Returns:
+            {
+                'phase': 当前阶段,
+                'velocity': 速度指令 (3,) mm/s,
+                'progress': 插入进度 0-1,
+                'should_stop': 是否应停止,
+                'message': 状态描述,
+            }
+        """
+        velocity = np.zeros(3, dtype=np.float32)
+        message = ""
+        should_stop = False
+
+        if self._phase == self.AssemblyPhase.APPROACH:
+            # 接近阶段: 移动到目标上方
+            direction = self._target_position - current_position
+            dist = np.linalg.norm(direction)
+            if dist > 1.0:  # mm
+                velocity = direction / dist * min(self._insertion_velocity * 2, dist / dt)
+            else:
+                self._phase = self.AssemblyPhase.SEARCH
+                message = "Reached approach position, starting search"
+
+        elif self._phase == self.AssemblyPhase.SEARCH:
+            # 搜索阶段
+            velocity[:2] = self.compute_search_motion(dt)[:2] * 1000
+            velocity[2] = self._insertion_velocity * 0.2  # 轻微下压
+            message = f"Searching... lateral_offset={self._lateral_offset}"
+
+            # 检测到进入孔内
+            if current_force < self.search_force * 0.5:
+                self._phase = self.AssemblyPhase.INSERT
+                message = "Found hole, starting insertion"
+
+        elif self._phase == self.AssemblyPhase.INSERT:
+            # 插入阶段
+            velocity = self.compute_insertion_control(current_force, lateral_force, dt)
+            message = f"Inserting: {self._insertion_progress*100:.1f}%, force={current_force:.1f}N"
+
+            # 插入完成
+            if self._insertion_progress >= 1.0:
+                self._phase = self.AssemblyPhase.SEAT
+                message = "Insertion complete, seating"
+
+            # 插入失败检测 (反复卡阻)
+            if len(self._force_history) > 50:
+                recent_forces = self._force_history[-50:]
+                high_force_count = sum(1 for f in recent_forces if f > self.max_insertion_force * 0.8)
+                if high_force_count > 30:
+                    self._phase = self.AssemblyPhase.FAILED
+                    message = "Insertion failed: repeated jams"
+                    should_stop = True
+
+        elif self._phase == self.AssemblyPhase.SEAT:
+            # 压合阶段
+            velocity = self.compute_seating_control(current_force, dt)
+            message = f"Seating: force={current_force:.1f}N"
+
+            if contact_force >= self.max_insertion_force * 0.8 and self._phase == self.AssemblyPhase.VERIFY:
+                self._phase = self.AssemblyPhase.VERIFY
+
+        elif self._phase == self.AssemblyPhase.VERIFY:
+            # 验证阶段: 确认装配质量
+            should_stop = True
+            message = "Verifying assembly..."
+
+            # 简单验证: 力在合理范围
+            if 0 < current_force < self.max_insertion_force * 1.5:
+                self._phase = self.AssemblyPhase.COMPLETE
+                self._successful_assemblies += 1
+                message = f"Assembly complete! Success rate={self._successful_assemblies/self._total_assemblies:.1%}"
+            else:
+                self._phase = self.AssemblyPhase.FAILED
+                message = "Assembly verification failed"
+
+        elif self._phase == self.AssemblyPhase.COMPLETE:
+            should_stop = True
+            message = "Assembly complete"
+
+        elif self._phase == self.AssemblyPhase.FAILED:
+            should_stop = True
+            message = "Assembly failed"
+
+        self._cycle_count += 1
+
+        return {
+            'phase': self._phase.value if hasattr(self._phase, 'value') else str(self._phase),
+            'velocity': velocity,
+            'progress': self._insertion_progress,
+            'should_stop': should_stop,
+            'message': message,
+        }
+
+    def get_stats(self) -> Dict:
+        """获取装配统计"""
+        success_rate = (
+            self._successful_assemblies / self._total_assemblies
+            if self._total_assemblies > 0 else 0.0
+        )
+        return {
+            'total_assemblies': self._total_assemblies,
+            'successful_assemblies': self._successful_assemblies,
+            'success_rate': success_rate,
+            'current_phase': self._phase.value if hasattr(self._phase, 'value') else str(self._phase),
+            'insertion_progress': self._insertion_progress,
+            'current_depth_mm': self._current_depth,
+            'cycle_count': self._cycle_count,
+        }
+
+    def reset(self):
+        """重置装配状态"""
+        self._phase = self.AssemblyPhase.IDLE
+        self._insertion_progress = 0.0
+        self._current_depth = 0.0
+        self._search_count = 0
+        self._force_history = []
+        self._collision_detected = False
+
+
+# ─────────────────────────────────────────────
 # 导出符号
 # ─────────────────────────────────────────────
 
@@ -1893,4 +2540,6 @@ __all__ = [
     'EmbodiedController',
     'EmbodiedTaskExecutor',
     'SensorHealthMonitor',
+    'SurfaceFollowingController',
+    'AssemblyController',
 ]

@@ -1121,10 +1121,199 @@ IMU原始数据          触觉原始数据         力觉原始数据
 | **XL** | 热备切换 | 自动切换备机 | 安全位置停止 |
 | **XXL** | 热备+无损转移 | 故障隔离继续运行 | 零速悬停 |
 
+## 16. 表面跟踪与装配控制器接口
+
+### 16.1 SurfaceFollowingController (表面跟踪控制器)
+
+触觉引导的表面跟踪控制，支持擦拭、打磨、抛光、扫描等任务。
+
+**位置**: `src/control/embodied_control.py`
+
+**构造函数参数**:
+```python
+SurfaceFollowingController(
+    grade='M',              # AGV五级等级
+    follow_mode='admittance',  # constant_force | admittance | impedance | adaptive
+    nominal_force=5.0,      # N, 期望法向接触力
+    nominal_velocity=0.05, # m/s, 标称跟踪速度
+    force_deadband=1.0,   # N, 力控制死区
+)
+```
+
+**核心方法**:
+```python
+# 主控制计算
+result = ctrl.compute_control(pressure_map, current_force, dt)
+# Returns: {velocity, normal_force_error, surface_normal, tangent_direction}
+
+# 表面法向估计 (基于压力梯度)
+normal = ctrl.estimate_surface_normal(pressure_map)
+
+# 接触质量评估
+quality = ctrl.compute_contact_quality(pressure_map)
+# Returns: {contact_ratio, uniformity, quality, is_good_contact}
+
+# 状态查询
+status = ctrl.get_status()
+# Returns: {is_following, total_distance_m, surface_normal, mode}
+```
+
+**控制模式对比**:
+
+| 模式 | 适用场景 | 特点 |
+|------|---------|------|
+| `constant_force` | S级AGV | 开环速度+固定下压力 |
+| `admittance` | M级AGV | 触觉反馈+导纳控制 |
+| `impedance` | L级AGV | 实时力位混合+阻抗控制 |
+| `adaptive` | XL/XXL级 | 自适应刚度+多模态融合 |
+
+**AGV五级表面跟踪能力**:
+
+| 等级 | 跟踪速度 | 力控制精度 | 表面适应性 |
+|------|---------|-----------|----------|
+| S | 0.02m/s | ±2N | 平面 |
+| M | 0.05m/s | ±1N | 平面+轻度曲面 |
+| L | 0.10m/s | ±0.5N | 曲面+不规则表面 |
+| XL | 0.20m/s | ±0.2N | 复杂曲面+自适应 |
+| XXL | 0.50m/s | ±0.1N | MPC预测+全适应性 |
+
+---
+
+### 16.2 AssemblyController (精密装配控制器)
+
+孔轴配合/插入装配控制，支持peg-in-hole、螺纹连接、卡扣装配等。
+
+**位置**: `src/control/embodied_control.py`
+
+**构造函数参数**:
+```python
+AssemblyController(
+    grade='M',                 # AGV五级等级
+    hole_tolerance=1.0,       # mm, 孔径公差
+    insertion_depth=10.0,      # mm, 插入深度
+    max_insertion_force=20.0, # N, 最大插入压力
+    search_force=3.0,          # N, 搜索时的法向力
+    search_pattern='spiral',   # spiral | raster | random
+)
+```
+
+**装配阶段** (AssemblyPhase枚举):
+```
+IDLE → APPROACH → SEARCH → INSERT → SEAT → VERIFY → COMPLETE
+                                              ↘ FAILED
+```
+
+**核心方法**:
+```python
+# 开始装配任务
+ctrl.start_assembly(target_position, phase='approach')
+
+# 主更新 (在控制循环中调用)
+result = ctrl.update(current_position, current_force, lateral_force, dt)
+# Returns: {phase, velocity, progress, should_stop, message}
+
+# 搜索运动计算
+motion = ctrl.compute_search_motion(dt)
+
+# 插入控制
+velocity = ctrl.compute_insertion_control(current_force, lateral_force, dt)
+
+# 压合控制
+velocity = ctrl.compute_seating_control(contact_force, dt)
+
+# 统计查询
+stats = ctrl.get_stats()
+# Returns: {total_assemblies, success_rate, current_phase, insertion_progress}
+```
+
+**AGV五级装配能力**:
+
+| 等级 | 定位精度 | 插入速度 | 力控精度 | 最大负载 |
+|------|---------|---------|---------|----------|
+| S | ±5mm | 0.5mm/s | ±3N | 5kg |
+| M | ±1mm | 1mm/s | ±2N | 20kg |
+| L | ±0.3mm | 2mm/s | ±1N | 50kg |
+| XL | ±0.1mm | 5mm/s | ±0.5N | 200kg |
+| XXL | ±0.01mm | 10mm/s | ±0.2N | 1000kg |
+
+**故障检测**:
+- 卡阻检测: 连续高力(>80% max)超过30个周期
+- 插入失败: 反复卡阻5次以上
+- 偏斜检测: 侧向力 > 3×search_force
+
+---
+
+## 17. AGV五级具身控制完整规格表
+
+### 17.1 具身感知规格
+
+| 感知模态 | S | M | L | XL | XXL |
+|---------|:--:|:--:|:--:|:--:|:--:|
+| **触觉阵列** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **触觉帧率** | 30Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **触觉延迟** | 50ms | 20ms | 10ms | 5ms | 2ms |
+| **力觉轴数** | 0 | 6轴 | 6轴 | 6轴+ | 6轴+冗余 |
+| **力觉量程** | — | ±200N | ±500N | ±1000N | ±5000N |
+| **力觉精度** | — | ±0.5N | ±0.2N | ±0.1N | ±0.05N |
+| **IMU等级** | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470×2 |
+| **IMU采样** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **姿态精度** | ±2° | ±0.5° | ±0.1° | ±0.05° | ±0.01° |
+
+### 17.2 具身控制规格
+
+| 控制特性 | S | M | L | XL | XXL |
+|---------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **控制延迟** | 50ms | 20ms | 10ms | 5ms | 2ms |
+| **力控制模式** | 固定值 | 导纳 | 阻抗 | 自适应阻抗 | MPC |
+| **表面跟踪** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **精密装配** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **抓取适应** | ✗ | 粗 | 中等 | 精细 | 超精细 |
+| **姿态稳定** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **滑移恢复** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **碰撞响应** | 100ms | 50ms | 20ms | 10ms | 5ms |
+
+### 17.3 具身任务执行规格
+
+| 任务类型 | S | M | L | XL | XXL |
+|---------|:--:|:--:|:--:|:--:|:--:|
+| **抓取-放置** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **推-拉操作** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **表面追踪** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **精密插入** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **表面抛光** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **螺纹连接** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **多指灵巧操作** | ✗ | ✗ | ✗ | ✓ | ✓ |
+| **MPC预测控制** | ✗ | ✗ | ✗ | ✗ | ✓ |
+
+### 17.4 健康监控与降级策略
+
+| 指标 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **触觉自检** | 启动时 | 周期 | 实时 | 实时 | 实时 |
+| **力觉自检** | — | 启动时 | 周期 | 实时 | 实时 |
+| **IMU自检** | 启动时 | 周期 | 实时 | 实时 | 实时 |
+| **降级模式** | 无 | 2级 | 3级 | 4级 | 全冗余 |
+| **故障隔离** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **热备切换** | ✗ | ✗ | ✗ | ✓ | ✓ |
+| **预测维护** | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+### 17.5 融合编码维度 (跨模态)
+
+| 融合阶段 | S | M | L | XL | XXL |
+|---------|:--:|:--:|:--:|:--:|:--:|
+| **Early Fusion** | 64d | 128d | 256d | 512d | 1024d |
+| **Mid Fusion** | 32d | 128d | 256d | 512d | 1024d |
+| **Late Fusion** | 16d | 64d | 128d | 256d | 512d |
+| **总融合维度** | 128d | 512d | 1024d | 2048d | 4096d |
+
+---
+
 ## 15. 版本历史
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v2.14.0 | 2026-04-09 | 新增SurfaceFollowingController(表面跟踪)与AssemblyController(精密装配)控制器；AGV五级具身控制完整规格表；76项新增测试全通过 |
 | v2.13.0 | 2026-04-09 | 完善SPEC.md接口使用示例(12章)、数据流与状态机(13章)、错误处理规范(14章)；触觉/力觉/IMU模块完善，378项传感器+融合测试全通过 |
 | v2.12.0 | 2026-04-09 | 版本同步，清理临时文件，1937项测试全通过 |
 | v2.11.0 | 2026-04-08 | 新增自主巡逻控制模块，多点巡逻+动态避障+传感器融合 |

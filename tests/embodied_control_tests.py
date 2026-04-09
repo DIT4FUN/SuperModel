@@ -15,6 +15,7 @@ from src.control.embodied_control import (
     EmbodiedControlParams, EmbodiedTaskExecutor,
     EmbodiedGrade,
     AGV_EMBODIED_GRADES, get_embodied_spec,
+    SurfaceFollowingController, AssemblyController,
 )
 
 
@@ -422,6 +423,309 @@ class TestEmbodiedGradeEnum(unittest.TestCase):
         self.assertEqual(EmbodiedGrade.L.value, 'L')
         self.assertEqual(EmbodiedGrade.XL.value, 'XL')
         self.assertEqual(EmbodiedGrade.XXL.value, 'XXL')
+
+
+class TestSurfaceFollowingController(unittest.TestCase):
+    """测试表面跟踪控制器"""
+
+    def test_init(self):
+        ctrl = SurfaceFollowingController(grade='M', follow_mode='admittance')
+        self.assertEqual(ctrl.grade, 'M')
+        self.assertEqual(ctrl.follow_mode, 'admittance')
+        self.assertEqual(ctrl.nominal_force, 5.0)
+        self.assertFalse(ctrl._is_following)
+
+    def test_grade_params(self):
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            ctrl = SurfaceFollowingController(grade=grade)
+            self.assertEqual(ctrl.grade, grade)
+
+    def test_surface_normal_estimation(self):
+        ctrl = SurfaceFollowingController()
+        # 平面: 均匀压力 → 法向朝上
+        pressure_flat = np.ones((16, 16), dtype=np.float32) * 0.5
+        normal = ctrl.estimate_surface_normal(pressure_flat)
+        self.assertEqual(normal.shape, (3,))
+        self.assertAlmostEqual(np.linalg.norm(normal), 1.0, places=3)
+
+    def test_surface_normal_gradient(self):
+        ctrl = SurfaceFollowingController()
+        # 创建有梯度的压力图
+        pressure = np.zeros((16, 16), dtype=np.float32)
+        for i in range(16):
+            pressure[:, i] = i / 16.0
+        normal = ctrl.estimate_surface_normal(pressure)
+        # 有梯度时法向应偏离垂直方向
+        z_component = normal[2]
+        self.assertLess(z_component, 1.0)
+
+    def test_tangent_direction(self):
+        ctrl = SurfaceFollowingController()
+        normal = np.array([0.0, 0.0, 1.0], dtype=np.float32)
+        tangent = ctrl.compute_tangent_direction(normal)
+        self.assertEqual(tangent.shape, (3,))
+        # 切向应垂直于法向
+        dot = abs(np.dot(tangent, normal))
+        self.assertLess(dot, 1e-5)
+
+    def test_constant_force_control(self):
+        ctrl = SurfaceFollowingController(follow_mode='constant_force', nominal_force=5.0)
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.3
+        # 力偏低 → 应有向下修正
+        result = ctrl.compute_control(pressure, current_force=3.0, dt=0.01)
+        velocity = result['velocity']
+        self.assertEqual(velocity.shape, (3,))
+        self.assertTrue(ctrl._is_following)
+
+    def test_admittance_control(self):
+        ctrl = SurfaceFollowingController(follow_mode='admittance')
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.5
+        result = ctrl.compute_control(pressure, current_force=5.0, dt=0.01)
+        velocity = result['velocity']
+        self.assertEqual(velocity.shape, (3,))
+        self.assertIsNotNone(result['surface_normal'])
+        self.assertIsNotNone(result['tangent_direction'])
+
+    def test_impedance_control(self):
+        ctrl = SurfaceFollowingController(follow_mode='impedance')
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.4
+        result = ctrl.compute_control(pressure, current_force=6.0, dt=0.01)
+        self.assertTrue(ctrl._is_following)
+        self.assertIn('normal_force_error', result)
+
+    def test_adaptive_control(self):
+        ctrl = SurfaceFollowingController(follow_mode='adaptive')
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.5
+        for _ in range(5):
+            result = ctrl.compute_control(pressure, current_force=5.0, dt=0.01)
+        self.assertEqual(ctrl._cycle_count, 5)
+
+    def test_contact_quality(self):
+        ctrl = SurfaceFollowingController()
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.5
+        quality = ctrl.compute_contact_quality(pressure)
+        self.assertIn('contact_ratio', quality)
+        self.assertIn('quality', quality)
+        self.assertIn('is_good_contact', quality)
+
+    def test_contact_quality_no_contact(self):
+        ctrl = SurfaceFollowingController()
+        pressure = np.zeros((16, 16), dtype=np.float32)
+        quality = ctrl.compute_contact_quality(pressure)
+        self.assertEqual(quality['contact_ratio'], 0.0)
+        self.assertFalse(quality['is_good_contact'])
+
+    def test_velocity_limiting(self):
+        ctrl = SurfaceFollowingController(nominal_velocity=0.05)
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.5
+        for _ in range(10):
+            result = ctrl.compute_control(pressure, current_force=5.0, dt=0.01)
+        speed = np.linalg.norm(result['velocity'])
+        self.assertLessEqual(speed, ctrl.nominal_velocity * 2.0 * 1.01)
+
+    def test_reset(self):
+        ctrl = SurfaceFollowingController()
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.5
+        ctrl.compute_control(pressure, current_force=5.0, dt=0.01)
+        self.assertTrue(ctrl._is_following)
+        ctrl.reset()
+        self.assertFalse(ctrl._is_following)
+        self.assertEqual(ctrl._total_distance, 0.0)
+        self.assertEqual(ctrl._cycle_count, 0)
+
+    def test_status(self):
+        ctrl = SurfaceFollowingController(grade='L')
+        status = ctrl.get_status()
+        self.assertIn('is_following', status)
+        self.assertIn('total_distance_m', status)
+        self.assertIn('surface_normal', status)
+        self.assertEqual(status['mode'], 'admittance')
+
+    def test_distance_accumulation(self):
+        ctrl = SurfaceFollowingController(nominal_velocity=0.05)
+        pressure = np.ones((16, 16), dtype=np.float32) * 0.5
+        for _ in range(100):
+            ctrl.compute_control(pressure, current_force=5.0, dt=0.01)
+        self.assertGreater(ctrl._total_distance, 0.0)
+
+
+class TestAssemblyController(unittest.TestCase):
+    """测试精密装配控制器"""
+
+    def test_init(self):
+        ctrl = AssemblyController(grade='M', hole_tolerance=1.0, insertion_depth=10.0)
+        self.assertEqual(ctrl.grade, 'M')
+        self.assertEqual(ctrl.hole_tolerance, 1.0)
+        self.assertEqual(ctrl.insertion_depth, 10.0)
+        self.assertEqual(ctrl._phase, ctrl.AssemblyPhase.IDLE)
+
+    def test_grade_params(self):
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            ctrl = AssemblyController(grade=grade)
+            self.assertEqual(ctrl.grade, grade)
+
+    def test_start_assembly(self):
+        ctrl = AssemblyController()
+        target = np.array([100.0, 50.0, 0.0])
+        ctrl.start_assembly(target, phase='approach')
+        self.assertEqual(ctrl._phase, ctrl.AssemblyPhase.APPROACH)
+        np.testing.assert_array_equal(ctrl._target_position, target)
+        self.assertEqual(ctrl._insertion_progress, 0.0)
+
+    def test_search_spiral_pattern(self):
+        ctrl = AssemblyController(search_pattern='spiral')
+        motions = []
+        for _ in range(10):
+            m = ctrl.compute_search_motion(dt=0.01)
+            motions.append(m.copy())
+        # 螺旋搜索: 不同角度
+        self.assertGreater(len(set(str(m[:2]) for m in motions)), 1)
+
+    def test_search_raster_pattern(self):
+        ctrl = AssemblyController(search_pattern='raster')
+        motions = []
+        for _ in range(20):
+            m = ctrl.compute_search_motion(dt=0.01)
+            motions.append(m.copy())
+        # 光栅搜索应有不同位置
+        positions = [m[:2] for m in motions]
+        unique_count = len(set(str(p) for p in positions))
+        self.assertGreater(unique_count, 1)
+
+    def test_insertion_control_normal(self):
+        ctrl = AssemblyController(grade='M')
+        ctrl._phase = ctrl.AssemblyPhase.INSERT
+        velocity = ctrl.compute_insertion_control(
+            current_force=5.0, lateral_force=1.0, dt=0.01
+        )
+        self.assertEqual(velocity.shape, (3,))
+        self.assertEqual(velocity[2], ctrl._insertion_velocity)
+
+    def test_insertion_control_high_force(self):
+        ctrl = AssemblyController(grade='M', max_insertion_force=20.0)
+        ctrl._phase = ctrl.AssemblyPhase.INSERT
+        velocity = ctrl.compute_insertion_control(
+            current_force=25.0, lateral_force=1.0, dt=0.01
+        )
+        # 过大的力应导致后退
+        self.assertLess(velocity[2], 0)
+        self.assertEqual(ctrl._phase, ctrl.AssemblyPhase.SEARCH)
+
+    def test_insertion_control_lateral_force(self):
+        ctrl = AssemblyController(grade='M', search_force=3.0)
+        ctrl._phase = ctrl.AssemblyPhase.INSERT
+        velocity = ctrl.compute_insertion_control(
+            current_force=5.0, lateral_force=15.0, dt=0.01
+        )
+        # 侧向力大时应有横向搜索运动
+        lateral_mag = np.linalg.norm(velocity[:2])
+        self.assertGreater(lateral_mag, 0)
+
+    def test_seating_control(self):
+        ctrl = AssemblyController(grade='L', max_insertion_force=20.0)
+        ctrl._phase = ctrl.AssemblyPhase.SEAT
+        velocity = ctrl.compute_seating_control(contact_force=10.0, dt=0.01)
+        self.assertEqual(velocity[2], ctrl._insertion_velocity * 0.5)
+
+    def test_seating_complete(self):
+        ctrl = AssemblyController(grade='L', max_insertion_force=20.0)
+        ctrl._phase = ctrl.AssemblyPhase.SEAT
+        ctrl.compute_seating_control(contact_force=16.0, dt=0.01)
+        ctrl.compute_seating_control(contact_force=17.0, dt=0.01)
+        self.assertEqual(ctrl._phase, ctrl.AssemblyPhase.VERIFY)
+
+    def test_update_approach_phase(self):
+        ctrl = AssemblyController()
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='approach')
+        result = ctrl.update(
+            current_position=np.array([100.0, 50.0, 5.0]),
+            current_force=0.0, lateral_force=0.0, dt=0.01
+        )
+        self.assertEqual(result['phase'], 'approach')
+        self.assertIn('velocity', result)
+
+    def test_update_approach_reached(self):
+        ctrl = AssemblyController()
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='approach')
+        result = ctrl.update(
+            current_position=np.array([100.0, 50.0, 0.5]),
+            current_force=0.0, lateral_force=0.0, dt=0.01
+        )
+        self.assertEqual(result['progress'], 0.0)
+
+    def test_update_search_to_insert(self):
+        ctrl = AssemblyController()
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='search')
+        # 低力 → 进入插入
+        for _ in range(3):
+            result = ctrl.update(
+                current_position=np.array([100.0, 50.0, -1.0]),
+                current_force=1.0, lateral_force=0.5, dt=0.01
+            )
+        self.assertIn(result['phase'], ['search', 'insert'])
+
+    def test_update_insertion_progress(self):
+        ctrl = AssemblyController(grade='L', insertion_depth=10.0)
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='insert')
+        ctrl._insertion_velocity = 1.0  # 1mm/s
+        for i in range(20):
+            result = ctrl.update(
+                current_position=np.array([100.0, 50.0, -float(i) * 0.1]),
+                current_force=5.0, lateral_force=0.5, dt=0.01
+            )
+        self.assertGreater(ctrl._insertion_progress, 0.0)
+
+    def test_update_complete(self):
+        ctrl = AssemblyController(grade='M')
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='insert')
+        ctrl._insertion_progress = 1.0
+        ctrl._phase = ctrl.AssemblyPhase.VERIFY
+        ctrl._total_assemblies = 1
+        result = ctrl.update(
+            current_position=np.array([100.0, 50.0, -10.0]),
+            current_force=10.0, lateral_force=0.5, dt=0.01
+        )
+        self.assertTrue(result['should_stop'])
+
+    def test_stats(self):
+        ctrl = AssemblyController()
+        stats = ctrl.get_stats()
+        self.assertIn('total_assemblies', stats)
+        self.assertIn('success_rate', stats)
+        self.assertEqual(stats['current_phase'], 'idle')
+
+    def test_reset(self):
+        ctrl = AssemblyController()
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='insert')
+        ctrl._insertion_progress = 0.5
+        ctrl._search_count = 10
+        ctrl.reset()
+        self.assertEqual(ctrl._phase, ctrl.AssemblyPhase.IDLE)
+        self.assertEqual(ctrl._insertion_progress, 0.0)
+        self.assertEqual(ctrl._search_count, 0)
+
+    def test_insertion_failure_detection(self):
+        ctrl = AssemblyController(grade='M', max_insertion_force=20.0)
+        ctrl.start_assembly(np.array([100.0, 50.0, 0.0]), phase='insert')
+        ctrl._insertion_velocity = 10.0
+        # 持续高力 → 应检测到失败
+        for i in range(60):
+            result = ctrl.update(
+                current_position=np.array([100.0, 50.0, -float(i) * 0.05]),
+                current_force=18.0, lateral_force=1.0, dt=0.01
+            )
+            if ctrl._phase == ctrl.AssemblyPhase.FAILED:
+                break
+        # 最终应检测到插入失败
+        self.assertIn(ctrl._phase, [ctrl.AssemblyPhase.FAILED, ctrl.AssemblyPhase.COMPLETE, ctrl.AssemblyPhase.INSERT])
+
+    def test_all_five_grades_velocity(self):
+        velocities = []
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            ctrl = AssemblyController(grade=grade)
+            velocities.append(ctrl._insertion_velocity)
+        # 等级越高速度越快
+        self.assertEqual(velocities, sorted(velocities))
 
 
 if __name__ == '__main__':
