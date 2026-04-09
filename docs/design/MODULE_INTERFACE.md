@@ -5601,3 +5601,259 @@ path = rrt.plan(start=(0, 0), goal=(3, 4), obstacles=[(1.5, 2.0, 0.5)])
 ---
 
 *附录版本: v1.76.0 | 补充日期: 2026-04-08*
+
+---
+
+## 附录H: 导航控制模块接口规范 v1.97.0
+
+> **补充时间**: 2026-04-09
+> **补充内容**: NavigationController 全局路径规划 (A*/Dijkstra) + 轨迹跟踪完整接口
+
+### H.1 导航子系统架构
+
+```
+NavigationController
+├── OccupancyGrid          # 地图管理 (栅格地图 + 障碍物管理)
+├── DijkstraPlanner        # Dijkstra最短路径规划
+├── AStarPlanner           # A* 启发式路径规划
+├── PID 轨迹跟踪           # 位姿误差 PID 控制
+└── NavigationState        # 状态机 (IDLE / PLANNING / NAVIGATING / AVOIDING / ARRIVED / FAILED)
+```
+
+### H.2 核心数据结构
+
+#### PlannerType (规划器类型枚举)
+```python
+class PlannerType(Enum):
+    DIJKSTRA = "dijkstra"    # Dijkstra 广度优先搜索
+    A_STAR = "astar"         # A* 启发式搜索 (默认)
+```
+
+#### NavigationState (导航状态枚举)
+```python
+class NavigationState(Enum):
+    IDLE        = "idle"         # 空闲，无任务
+    PLANNING    = "planning"     # 正在规划路径
+    NAVIGATING  = "navigating"   # 正常导航中
+    AVOIDING    = "avoiding"     # 局部避障中
+    ARRIVED     = "arrived"      # 到达目标
+    FAILED      = "failed"       # 规划失败
+```
+
+#### OccupancyGrid (占据栅格地图)
+| 方法 | 参数 | 返回 | 说明 |
+|------|------|------|------|
+| `world_to_grid(wx, wy)` | float, float | (int, int) | 世界坐标→栅格坐标 |
+| `grid_to_world(gx, gy)` | int, int | (float, float) | 栅格坐标→世界坐标 |
+| `set_obstacle(wx, wy, radius)` | float, float, float | None | 设置障碍物 (圆形) |
+| `is_free(wx, wy)` | float, float | bool | 查询是否可通行 |
+| `get_nearby_obstacles(wx, wy, radius)` | float, float, float | List[(int,int)] | 获取附近障碍物 |
+
+### H.3 规划器接口
+
+#### DijkstraPlanner (Dijkstra最短路径)
+```python
+class DijkstraPlanner:
+    def __init__(self, grid: OccupancyGrid):
+        """初始化 Dijkstra 规划器"""
+
+    def plan(self, start: Tuple[float, float], goal: Tuple[float, float]) -> Optional[Path]:
+        """
+        规划从起点到终点的最短路径
+
+        Args:
+            start: (x, y) 起点世界坐标
+            goal:  (x, y) 终点世界坐标
+
+        Returns:
+            Path 对象，或 None (无法到达)
+        """
+```
+
+#### AStarPlanner (A* 启发式路径规划)
+```python
+class AStarPlanner(DijkstraPlanner):
+    def __init__(
+        self,
+        grid: OccupancyGrid,
+        heuristic_type: str = "euclidean"  # "euclidean" | "manhattan"
+    ):
+        """初始化 A* 规划器"""
+
+    def plan(self, start: Tuple[float, float], goal: Tuple[float, float]) -> Optional[Path]:
+        """与 DijkstraPlanner 相同接口，默认使用欧几里得启发式"""
+```
+
+### H.4 NavigationController 完整接口
+
+```python
+class NavigationController:
+    """
+    AGV 导航控制器
+
+    功能:
+    - 全局路径规划 (A* / Dijkstra)
+    - PID 轨迹跟踪
+    - 地图管理与定位
+    - 状态机管理
+    """
+
+    def __init__(
+        self,
+        grid: OccupancyGrid,
+        planner_type: PlannerType = PlannerType.A_STAR,
+        max_speed: float = 1.0,        # 最大线速度 (m/s)
+        max_accel: float = 1.0,       # 最大加速度 (m/s²)
+        goal_tolerance: float = 0.1,   # 位置容差 (m)
+        angle_tolerance: float = 0.1,  # 角度容差 (rad)
+        kp_dist: float = 2.0,          # 距离 PID P 参数
+        kp_angle: float = 3.0,          # 角度 PID P 参数
+        integral_limit: float = 0.5,    # 积分限幅
+    ):
+
+    # === 路径设置 ===
+    def set_global_path(self, path: Path) -> None:
+        """手动设置全局路径 (绕过规划器)"""
+
+    def plan_to_goal(self, start: np.ndarray, goal: np.ndarray) -> bool:
+        """
+        从起点规划到终点
+
+        Args:
+            start: [x, y, theta] 起始位姿
+            goal:  [x, y, theta] 目标位姿
+
+        Returns:
+            bool: 规划是否成功
+        """
+
+    # === 轨迹跟踪 ===
+    def update(self, current_pose: np.ndarray, dt: float) -> np.ndarray:
+        """
+        导航控制更新 (调用频率 ≥ 10Hz)
+
+        Args:
+            current_pose: [x, y, theta] 当前位姿
+            dt: 时间步长 (s)
+
+        Returns:
+            np.ndarray: [vx, vy, omega] 速度指令
+        """
+
+    # === 状态查询 ===
+    @property
+    def state(self) -> NavigationState:
+        """当前导航状态"""
+
+    @property
+    def current_path(self) -> Optional[Path]:
+        """当前规划路径"""
+
+    @property
+    def progress(self) -> float:
+        """导航进度 (0.0 ~ 1.0)"""
+
+    # === 控制 ===
+    def stop(self) -> None:
+        """停止导航，切换到 IDLE"""
+
+    def pause(self) -> None:
+        """暂停导航"""
+
+    def resume(self) -> None:
+        """恢复导航"""
+
+    def reset(self) -> None:
+        """重置所有状态"""
+```
+
+### H.5 五级AGV导航规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **规划算法** | Dijkstra | A* | A* | A* + 动态重规划 | A* + 增量D* |
+| **全局规划周期** | 1Hz | 2Hz | 5Hz | 10Hz | 20Hz |
+| **局部跟踪周期** | 10Hz | 20Hz | 50Hz | 100Hz | 200Hz |
+| **最大速度** | 0.5m/s | 1.0m/s | 1.5m/s | 2.0m/s | 3.0m/s |
+| **定位精度** | ±50mm | ±20mm | ±10mm | ±5mm | ±1mm |
+| **路径重规划** | 手动 | 按需 | 按需+定时 | 实时 | 预测式 |
+| **地图分辨率** | 0.2m | 0.1m | 0.05m | 0.02m | 0.01m |
+| **障碍物检测半径** | 0.5m | 0.3m | 0.2m | 0.15m | 0.1m |
+| **安全停车距离** | 1.0m | 0.5m | 0.3m | 0.2m | 0.1m |
+
+### H.6 使用示例
+
+```python
+import numpy as np
+from control.navigation import (
+    NavigationController, OccupancyGrid,
+    PlannerType, NavigationState,
+    DijkstraPlanner, AStarPlanner
+)
+
+# 1. 创建地图
+grid = OccupancyGrid(
+    width=20.0, height=20.0, resolution=0.1,
+    origin=(0.0, 0.0)
+)
+
+# 添加静态障碍物
+grid.set_obstacle(5.0, 5.0, radius=0.5)
+grid.set_obstacle(8.0, 3.0, radius=0.3)
+grid.set_obstacle(3.0, 10.0, radius=0.4)
+
+# 2. 直接使用规划器
+planner = AStarPlanner(grid)
+path = planner.plan(start=(1.0, 1.0), goal=(15.0, 15.0))
+if path:
+    print(f"路径长度: {path.length:.2f}m, 航点数: {len(path.waypoints)}")
+
+# 3. 使用导航控制器
+nav = NavigationController(
+    grid=grid,
+    planner_type=PlannerType.A_STAR,
+    max_speed=1.0,
+    goal_tolerance=0.1
+)
+
+# 规划路径
+start_pose = np.array([1.0, 1.0, 0.0])
+goal_pose  = np.array([15.0, 15.0, 0.0])
+success = nav.plan_to_goal(start_pose, goal_pose)
+
+if success:
+    # 仿真跟踪循环
+    current_pose = start_pose.copy()
+    dt = 0.1  # 100ms 控制周期
+
+    for step in range(500):
+        vel = nav.update(current_pose, dt)
+        vx, vy, omega = vel
+
+        # 简易运动学积分 (差速驱动)
+        current_pose[0] += vx * np.cos(current_pose[2]) * dt
+        current_pose[1] += vx * np.sin(current_pose[2]) * dt
+        current_pose[2] += omega * dt
+
+        if nav.state == NavigationState.ARRIVED:
+            print(f"到达目标! 步数: {step}, 位置: {current_pose}")
+            break
+        elif nav.state == NavigationState.FAILED:
+            print("路径规划失败!")
+            break
+```
+
+### H.7 五级导航控制规格速查
+
+| 功能 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| 全局规划器 | Dijkstra | A* | A* | A* | A*+D*Lite |
+| 局部避障 | 被动检测 | DWA | DWA+APF | APF+TCM | 预测避障 |
+| 轨迹跟踪 | PID | PID | PurePursuit | PurePursuit+Stanley | 自适应MPC |
+| 重规划触发 | 手动 | 碰撞后 | 碰撞后 | 预测式 | 实时增量 |
+| 多目标导航 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 动态障碍跟踪 | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+---
+
+*附录版本: v1.97.0 | 补充日期: 2026-04-09*
