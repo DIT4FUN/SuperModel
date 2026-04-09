@@ -126,6 +126,65 @@ with imu:
 
 ---
 
+### 2.7 偏置补偿 (Bias Compensation)
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **加速度计偏置限制** | ±0.5 m/s² | ±0.3 m/s² | ±0.2 m/s² | ±0.1 m/s² | ±0.05 m/s² |
+| **陀螺仪偏置限制** | ±0.1 rad/s | ±0.05 rad/s | ±0.02 rad/s | ±0.01 rad/s | ±0.005 rad/s |
+| **力偏置限制** | ±10 N | ±5 N | ±2 N | ±1 N | ±0.5 N |
+| **力矩偏置限制** | ±1 N·m | ±0.5 N·m | ±0.2 N·m | ±0.1 N·m | ±0.05 N·m |
+| **偏置适应率** | 0.005 | 0.01 | 0.02 | 0.05 | 0.1 |
+| **静止检测窗口** | 3.0 s | 2.0 s | 1.5 s | 1.0 s | 0.5 s |
+| **静止加速度阈值** | 0.05 m/s² | 0.05 m/s² | 0.05 m/s² | 0.05 m/s² | 0.05 m/s² |
+| **静止角速度阈值** | 0.02 rad/s | 0.02 rad/s | 0.02 rad/s | 0.02 rad/s | 0.02 rad/s |
+| **温度补偿** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **漂移率限制** | 0.001 N/s | 0.001 N/s | 0.0005 N/s | 0.0002 N/s | 0.0001 N/s |
+| **触觉偏置限制** | ±0.1 | ±0.1 | ±0.05 | ±0.02 | ±0.01 |
+| **支持IMU** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **支持力传感器** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **支持触觉传感器** | ✗ | ✓ | ✓ | ✓ | ✓ |
+
+**代码示例**:
+```python
+from src.control.bias_compensation import (
+    MultiSensorBiasCompensator, IMUBiasEstimator, ForceBiasEstimator,
+    get_agv_bias_spec_table
+)
+
+# 获取五级规格
+specs = get_agv_bias_spec_table()
+
+# 创建M级补偿器
+comp = MultiSensorBiasCompensator(grade='M')
+comp.initialize_tactile((16, 16))
+
+# IMU偏置更新与补偿
+g = np.array([0.0, 0.0, 9.81])
+accel_bias = np.array([0.05, -0.03, 0.02])
+comp.imu_estimator.accel_bias = accel_bias.copy()
+
+raw_accel = g + accel_bias  # 含偏置的读数
+comp_accel, comp_gyro = comp.compensate_imu(raw_accel, np.zeros(3))
+
+# 力传感器偏置更新与补偿
+comp.force_estimator.force_bias = np.array([1.0, -0.5, 0.2])
+comp.force_estimator.torque_bias = np.array([0.05, -0.02, 0.01])
+comp_f, comp_t = comp.compensate_force(
+    np.array([1.0, -0.5, 0.2]),
+    np.array([0.05, -0.02, 0.01]),
+    dt=0.0
+)
+assert np.linalg.norm(comp_f) < 0.001  # 应补偿至接近零
+
+# 获取统计信息
+stats = comp.step()
+print(f"Total bias magnitude: {stats['total_bias_mag']:.4f}")
+print(f"Average bias: {stats['avg_bias_mag']:.4f}")
+```
+
+---
+
 ## 三、控制子系统规格
 
 | 参数 | S | M | L | XL | XXL |

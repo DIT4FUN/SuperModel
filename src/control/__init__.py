@@ -139,6 +139,12 @@ from .sensor_fusion_control import (
     FusionControlGrade, get_fusion_control_spec,
     AGV_FUSION_CONTROL_GRADES,
 )
+from .bias_compensation import (
+    IMUBiasEstimator, ForceBiasEstimator, TactileBiasEstimator,
+    MultiSensorBiasCompensator, IMUBiasState, ForceBiasState, TactileBiasState,
+    BiasCompensationConfig, AGV_BIAS_COMPENSATION_GRADES,
+    get_bias_compensation_spec, get_agv_bias_spec_table,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -226,4 +232,9 @@ __all__ = [
     'Inverter', 'RepeatUntil', 'RetryUntil', 'Timeout', 'RateLimiter',
     'BTGrade', 'AGV_BT_GRADES',
     'create_for_grade', 'create_safe_selector', 'create_action_sequence',
+    # bias_compensation
+    'IMUBiasEstimator', 'ForceBiasEstimator', 'TactileBiasEstimator',
+    'MultiSensorBiasCompensator', 'IMUBiasState', 'ForceBiasState', 'TactileBiasState',
+    'BiasCompensationConfig', 'AGV_BIAS_COMPENSATION_GRADES',
+    'get_bias_compensation_spec', 'get_agv_bias_spec_table',
 ]
