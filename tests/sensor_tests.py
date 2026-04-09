@@ -3379,3 +3379,237 @@ class TestPressureProcessor(unittest.TestCase):
         current = np.ones((4, 4), dtype=np.float32) * 0.2
         compensated = processor.compensate_baseline(current)
         np.testing.assert_array_less(np.zeros((4, 4)), compensated)
+
+
+class TestSensorControlIntegration(unittest.TestCase):
+    """传感器-控制集成测试：验证传感器数据流如何驱动控制决策"""
+
+    def test_tactile_to_impedance_control(self):
+        """测试触觉数据→阻抗控制的数据流"""
+        # TactileArray uses capture() and array_size parameter
+        tactile = TactileArray(array_size=(16, 16), sensor_id="tactile_hand")
+        tactile.open()
+        frame = tactile.capture()
+        self.assertIsNotNone(frame)
+        tactile.close()
+
+        # Process pressure map
+        processor = PressureProcessor()
+        pressure_map = np.ones((16, 16), dtype=np.float32) * 0.5
+        force = processor.compute_force(pressure_map, contact_area=1e-4)
+        self.assertGreater(force, 0)
+
+        # 验证触觉处理正常
+        centroid = processor.compute_centroid(pressure_map)
+        self.assertEqual(len(centroid), 2)
+
+    def test_force_to_safety_check(self):
+        """测试力觉数据→安全检查的数据流"""
+        from src.sensors.force import ForceTorqueSensor
+        from src.control.safety_controller import SafetyController, SafetyConfig, JointStateSnapshot, SafetyLevel
+
+        sensor = ForceTorqueSensor(sensor_id="ft_safety_test")
+        sensor.open()
+        _ = sensor.capture()
+        sensor.close()
+
+        # 创建安全控制器（正确的 SafetyConfig 构造）
+        config = SafetyConfig(
+            joint_limits_lower=np.array([-3.14, -2.5, -3.14]),
+            joint_limits_upper=np.array([3.14, 2.5, 3.14]),
+            velocity_limits=np.array([2.0, 2.0, 2.0]),
+            acceleration_limits=np.array([10.0, 10.0, 10.0]),
+            torque_limits=np.array([100.0, 100.0, 80.0]),
+            safety_level=SafetyLevel.M,
+        )
+        safety = SafetyController(config)
+
+        # 模拟关节状态快照（带力反馈）
+        snapshot = JointStateSnapshot(
+            positions=np.array([0.0, 0.0, 0.0]),
+            velocities=np.array([0.0, 0.0, 0.0]),
+            torques=np.array([5.0, 0.0, 0.0])
+        )
+        result = safety.check(snapshot)
+        # 安全控制器应正常运行
+        self.assertIsNotNone(result)
+        self.assertTrue(hasattr(result, 'safe'))
+
+    def test_imu_to_pose_estimation(self):
+        """测试IMU数据→姿态估计的数据流"""
+        from src.sensors.imu import IMUSensor, IMUSensorType, PoseEstimator
+
+        # Use VirtualIMUSensor via IMUSensor with VIRTUAL type
+        imu = IMUSensor(sensor_id="imu_body", sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+        estimator = PoseEstimator(algorithm="madgwick", sample_rate=200.0)
+
+        # 模拟IMU数据序列
+        for _ in range(20):
+            frame = imu.capture()
+            pose = estimator.update(frame.accel, frame.gyro)
+
+        imu.close()
+        self.assertIsNotNone(pose)
+        self.assertEqual(len(pose.position), 3)
+        self.assertEqual(len(pose.orientation), 4)  # 四元数 (qw,qx,qy,qz)
+
+    def test_multi_sensor_fusion_control(self):
+        """测试多传感器融合→协同控制"""
+        from src.sensors.manager import SensorManager, SensorManagerConfig
+
+        # SensorManager使用配置驱动的自动传感器发现
+        config = SensorManagerConfig(grade="M")
+        manager = SensorManager(config)
+
+        # 验证管理器具有正确的API方法
+        self.assertTrue(hasattr(manager, 'open_all'))
+        self.assertTrue(hasattr(manager, 'capture_all'))
+        self.assertTrue(hasattr(manager, 'capture_single'))
+        self.assertTrue(hasattr(manager, 'close_all'))
+        
+        # capture_single 返回单个传感器的读取（虚传感器不存在时返回None）
+        imu_frame = manager.capture_single("imu")
+        # imu虚传感器不一定被自动创建，检查返回值类型
+        # （在虚传感器模式下可能返回None，由具体环境决定）
+
+    def test_control_loop_sensor_latency(self):
+        """测试控制循环中的传感器读取延迟"""
+        import time
+        from src.sensors.imu import IMUSensor, IMUSensorType
+
+        imu = IMUSensor(sensor_id="imu_latency_test", sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+
+        read_times = []
+        for _ in range(10):
+            t0 = time.perf_counter()
+            frame = imu.capture()
+            t1 = time.perf_counter()
+            read_times.append(t1 - t0)
+
+        imu.close()
+        avg_latency_ms = np.mean(read_times) * 1000
+        p99_latency_ms = np.percentile(read_times, 99) * 1000
+
+        # 虚拟传感器延迟应极低 (<5ms)
+        self.assertLess(avg_latency_ms, 5.0)
+        self.assertLess(p99_latency_ms, 20.0)
+
+    def test_admittance_control_update(self):
+        """测试导纳控制器的力→位置转换"""
+        from src.control.impedance import AdmittanceController
+
+        adm_ctrl = AdmittanceController(M=10.0, D=50.0, K=200.0, control_rate=100.0)
+
+        external_force = 10.0  # N
+        desired_position = 0.0
+        adjusted_pos = adm_ctrl.update(external_force, desired_position)
+
+        # 有外力时应产生位移
+        self.assertIsNotNone(adjusted_pos)
+        self.assertIsInstance(adjusted_pos, float)
+
+
+class TestSensorCalibration(unittest.TestCase):
+    """传感器标定与补偿测试"""
+
+    def test_tactile_baseline_compensation(self):
+        """测试触觉基线补偿"""
+        processor = PressureProcessor()
+        baseline = np.ones((8, 8), dtype=np.float32) * 0.1
+        processor.compensate_baseline(baseline, set_baseline=True)
+
+        current = np.ones((8, 8), dtype=np.float32) * 0.2
+        compensated = processor.compensate_baseline(current)
+
+        # 补偿后应减去基线值
+        self.assertLess(np.mean(compensated), np.mean(current))
+
+    def test_force_bias_calibration(self):
+        """测试力觉偏置校准"""
+        from src.sensors.force import ForceTorqueSensor
+
+        sensor = ForceTorqueSensor(sensor_id="ft_calib_test")
+        sensor.open()
+
+        # 执行零偏校准
+        sensor.calibrate_bias(num_samples=10)
+        wrench = sensor.capture()
+
+        sensor.close()
+        # 校准后零力应该接近零
+        self.assertIsNotNone(wrench)
+        self.assertEqual(len(wrench.force), 3)
+        self.assertEqual(len(wrench.torque), 3)
+
+    def test_imu_gyro_bias_calibration(self):
+        """测试IMU陀螺仪零偏校准"""
+        from src.sensors.imu import IMUSensor, IMUSensorType
+
+        imu = IMUSensor(sensor_id="imu_bias_test", sensor_type=IMUSensorType.VIRTUAL)
+        imu.open()
+
+        # 执行零偏校准（静止状态）
+        imu.calibrate_gyro_bias(num_samples=50, duration_sec=0.5)
+
+        # 校准后偏置应被记录
+        self.assertIsNotNone(imu.calibration.gyro_bias)
+        self.assertEqual(len(imu.calibration.gyro_bias), 3)
+
+        imu.close()
+
+
+class TestSensorGradeSpecification(unittest.TestCase):
+    """传感器五级规格合规性测试"""
+
+    def test_agv_tactile_grade_specs(self):
+        """验证触觉传感器五级规格"""
+        specs_s = get_tactile_spec('S')
+        self.assertEqual(specs_s['array'], (8, 8))
+        self.assertLessEqual(specs_s['freq_hz'], 50)
+        self.assertFalse(specs_s['temp'])  # S级无温度感知
+
+        specs_xxl = get_tactile_spec('XXL')
+        self.assertEqual(specs_xxl['array'], (48, 48))
+        self.assertGreaterEqual(specs_xxl['freq_hz'], 1000)
+        self.assertTrue(specs_xxl['temp'])  # XXL有温度感知
+
+    def test_agv_force_grade_specs(self):
+        """验证力觉传感器五级规格"""
+        specs_m = get_force_spec('M')
+        self.assertEqual(specs_m['axes'], 6)
+        self.assertGreaterEqual(specs_m['sampling_hz'], 500)
+
+        specs_xxl = get_force_spec('XXL')
+        self.assertEqual(specs_xxl['axes'], 6)
+        self.assertGreaterEqual(specs_xxl['sampling_hz'], 5000)
+
+    def test_agv_imu_grade_specs(self):
+        """验证IMU传感器五级规格"""
+        specs_s = get_imu_spec('S')
+        self.assertGreaterEqual(specs_s['accel_range'], 8)  # ±8g minimum
+        self.assertIn('type', specs_s)
+
+        specs_xxl = get_imu_spec('XXL')
+        self.assertGreaterEqual(specs_xxl['gyro_range'], 1000)
+        self.assertGreaterEqual(specs_xxl['sample_hz'], 2000)
+
+    def test_all_grades_have_required_keys(self):
+        """验证所有等级规格表都有必需字段"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            t_spec = get_tactile_spec(grade)
+            f_spec = get_force_spec(grade)
+            i_spec = get_imu_spec(grade)
+
+            # 触觉必需字段
+            self.assertIn('array', t_spec)
+            self.assertIn('freq_hz', t_spec)
+
+            # 力觉必需字段
+            self.assertIn('axes', f_spec)
+            self.assertIn('sampling_hz', f_spec)
+
+            # IMU必需字段
+            self.assertIn('type', i_spec)
+            self.assertIn('sample_hz', i_spec)

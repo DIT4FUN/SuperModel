@@ -5857,3 +5857,165 @@ if success:
 ---
 
 *附录版本: v1.97.0 | 补充日期: 2026-04-09*
+
+---
+
+## 附录 I: 五级传感器-控制联动规格速查表 (v1.99.1)
+
+> 本附录将传感器规格与控制策略按五级体系对应，便于快速查阅联动关系。
+
+### I.1 传感器采样率 ↔ 控制频率联动表
+
+| AGV等级 | 触觉采样率 | 力觉采样率 | IMU采样率 | 推荐控制频率 | 融合策略 |
+|---------|-----------|-----------|----------|------------|---------|
+| S | 50 Hz | 100 Hz | 100 Hz | 50 Hz | LATE |
+| M | 100 Hz | 500 Hz | 200 Hz | 100 Hz | HYBRID |
+| L | 200 Hz | 1000 Hz | 500 Hz | 200 Hz | HYBRID |
+| XL | 500 Hz | 2000 Hz | 1000 Hz | 500 Hz | EARLY+HYBRID |
+| XXL | 1000 Hz | 5000 Hz | 2000 Hz | 1000 Hz | EARLY+HYBRID+LATE |
+
+### I.2 传感器-控制接口矩阵
+
+| 传感器 | 提供数据 | 控制模块消费 | 控制模式 |
+|--------|---------|------------|---------|
+| TactileArray | taxel_data, centroid, force | ImpedanceControl, SafetyController | 柔顺控制、安全限制 |
+| ForceTorqueSensor | wrench (Fx,Fy,Fz,Mx,My,Mz) | ForceControl, ImpedanceControl, MPC | 力位混合控制、导纳控制 |
+| IMUSensor | accel, gyro, pose | PoseEstimator, NavigationController | 姿态稳定、SLAM融合 |
+| Encoders | joint_positions, velocities | MotorController, TrajectoryPlanner | 轨迹跟踪、速度控制 |
+| VisionSensor | rgb, depth, features | Planner, ObstacleAvoidance, Navigation | 感知建图、避障决策 |
+
+### I.3 传感器模态接口统一抽象 (SensorInterface ABC)
+
+```python
+class SensorInterface(ABC):
+    """所有传感器模块的通用接口抽象"""
+    
+    @abstractmethod
+    def read(self) -> SensorFrame:
+        """同步读取传感器数据帧"""
+        pass
+    
+    @abstractmethod
+    async def read_async(self) -> SensorFrame:
+        """异步读取传感器数据帧"""
+        pass
+    
+    @property
+    @abstractmethod
+    def frame_type(self) -> Type[SensorFrame]:
+        """返回数据帧类型"""
+        pass
+    
+    @property
+    def sampling_rate(self) -> float:
+        """标称采样率 (Hz)"""
+        return self._nominal_rate
+    
+    def health_check(self) -> SensorHealth:
+        """传感器自检，返回健康状态"""
+        pass
+    
+    def calibrate(self, calibration_data: dict) -> None:
+        """加载标定参数"""
+        pass
+```
+
+### I.4 控制模块依赖传感器一览
+
+| 控制模块 | 主要依赖传感器 | 次要依赖 | 融合方式 |
+|---------|------------|--------|--------|
+| MotorController | Encoders | — | 编码器直接反馈 |
+| ForceControl | ForceTorqueSensor | TactileArray | 力信号低通滤波 |
+| ImpedanceControl | ForceTorqueSensor, TactileArray | Encoders | 导纳方程融合 |
+| PoseEstimator | IMUSensor | Encoders | 扩展卡尔曼滤波 |
+| NavigationController | VisionSensor, IMUSensor | ForceTorqueSensor | SLAM+IMU融合 |
+| ObstacleAvoidance | VisionSensor | TactileArray | 视觉语义+触觉物理 |
+| SafetyController | All sensors | — | 多模态投票/熔断 |
+| Supervisor | All sensors | Control loops | 层级监控 |
+
+### I.5 五级控制-传感器协同模式
+
+| 模式 | S级 | M级 | L级 | XL级 | XXL级 |
+|------|-----|-----|-----|------|------|
+| 感知→控制延迟目标 | <50ms | <20ms | <10ms | <5ms | <1ms |
+| 传感器数据缓冲 | 无 | 双缓冲 | 环形缓冲×3 | 实时队列 | FPGA预取 |
+| 控制周期抖动容忍 | ±10ms | ±5ms | ±2ms | ±1ms | ±0.1ms |
+| 故障传感器降级 | 忽略 | 忽略 | 降级模式 | 多模态备份 | 冗余切换 |
+| 传感器时间同步 | NTP | PTP | PTP+硬件触发 | FPGA同步 | FPGA+原子钟 |
+
+---
+
+*附录I版本: v1.99.1 | 补充日期: 2026-04-09*
+
+---
+
+## 附录 J: 控制模块五级能力矩阵
+
+> 汇总所有控制子模块的五级能力规格，便于快速选型。
+
+### J.1 各控制模块五级能力总览
+
+| 模块 | S级能力 | M级能力 | L级能力 | XL级能力 | XXL级能力 |
+|------|--------|--------|--------|---------|----------|
+| **MotorController** | 开环速度控制，50Hz | 闭环PID，100Hz | 电流环+速度环，200Hz | 磁场定向+前馈，500Hz | 自适应伺服，1000Hz |
+| **SafetyController** | 阈值硬限制 | 速度相关限制 | 位置+速度限制 | 多模态预测 | N=3冗余熔断 |
+| **ImpedanceControl** | 固定刚度 | 可变刚度 | 方向阻抗 | 自适应阻抗 | AI预测阻抗 |
+| **ForceControl** | 单轴力跟踪 | 6轴力跟踪 | 混合力位 | 任务优先级力控 | 冗余力控 |
+| **NavigationController** | Dijkstra+PID | A*+PurePursuit | A*+Stanley | A*+MPC | A*+D*Lite+MPC |
+| **ObstacleAvoidance** | 阈值检测 | DWA | DWA+APF | APF+TCM | 预测式避障 |
+| **Planner** | 单一目标 | 多目标序贯 | 多目标并行 | 任务分配 | 分布式任务 |
+| **MPC** | 线性MPC，N=10 | 非线性MPC，N=20 | 鲁棒MPC，N=30 | 自适应MPC，N=50 | 分布式MPC，N=100 |
+| **Supervisor** | 被动监控 | 告警分级 | 主动干预 | 自主决策 | 多级仲裁 |
+
+### J.2 五级控制响应时间规格
+
+| 指标 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 控制周期 | 20ms | 10ms | 5ms | 2ms | 1ms |
+| 紧急停机响应 | <100ms | <50ms | <20ms | <10ms | <1ms |
+| 传感器→执行延迟 | <50ms | <20ms | <10ms | <5ms | <1ms |
+| 路径重规划时间 | >2s | 0.5-2s | 0.1-0.5s | 10-100ms | <10ms |
+| 故障检测延迟 | <500ms | <200ms | <100ms | <50ms | <5ms |
+
+### J.3 触觉-控制五级能力
+
+| 触觉功能 | S | M | L | XL | XXL |
+|---------|---|---|---|---|-----|
+| 压力检测 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 滑移检测 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 质心跟踪 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 温度补偿 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 接近觉 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 柔顺控制触发 | ✗ | 基础 | 导纳 | 阻抗 | 自适应阻抗 |
+| 抓取稳定性评估 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 纹理识别 | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+### J.4 力觉-控制五级能力
+
+| 力觉功能 | S | M | L | XL | XXL |
+|---------|---|---|---|---|-----|
+| 3轴力检测 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 6轴力矩检测 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 力限控制 | 固定阈值 | 速度相关 | 位置+速度 | 自适应 | AI预测 |
+| 导纳控制 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 阻抗控制 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 混合力位控制 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 碰撞检测 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 装配引导 | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+### J.5 IMU-控制五级能力
+
+| IMU功能 | S | M | L | XL | XXL |
+|--------|---|---|---|---|-----|
+| 姿态角输出 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 角速度输出 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 加速度输出 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 航向角融合 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| EKF姿态估计 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| SLAM融合 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 外部磁力计融合 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 故障检测与隔离 | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+---
+
+*附录J版本: v1.99.1 | 补充日期: 2026-04-09*
