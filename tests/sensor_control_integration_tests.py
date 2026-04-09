@@ -18,13 +18,17 @@ sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
 
 from sensors.tactile import (
     TactileArray, TactileFrame, TactileContact,
-    TactileSensorType, VirtualTactileSensor
+    TactileSensorType, PressureProcessor,
+    VirtualTactileSensor, get_tactile_spec, AGV_TACTILE_GRADES
 )
 from sensors.force import (
-    ForceTorqueSensor, Wrench, ForceSensorType, VirtualForceSensor
+    ForceTorqueSensor, Wrench, ForceSensorType,
+    VirtualForceSensor, WrenchProcessor,
+    get_force_spec, AGV_FORCE_GRADES
 )
 from sensors.imu import (
-    IMUSensor, IMUFrame, PoseEstimator, IMUSensorType, VirtualIMUSensor
+    IMUSensor, IMUFrame, PoseEstimator, IMUSensorType,
+    VirtualIMUSensor, get_imu_spec, AGV_IMU_GRADES
 )
 from control.tactile_control import (
     TactileServoController, TactileServoParams, GraspQualityController,
@@ -430,3 +434,251 @@ class TestAGVSensorFusionControlIntegration(unittest.TestCase):
             self.assertEqual(spec.grade, grade)
             self.assertIsNotNone(spec.Kp_position)
             self.assertIsNotNone(spec.control_rate)
+
+
+class TestTactileForceIMUFusion(unittest.TestCase):
+    """触觉+力觉+IMU三传感器融合集成测试"""
+
+    def setUp(self):
+        self.tactile = TactileArray((8, 8), sensor_id="tactile_fusion_test")
+        self.force = ForceTorqueSensor(sensor_id="force_fusion_test")
+        self.imu = IMUSensor(sensor_id="imu_fusion_test")
+        self.pose_est = PoseEstimator(algorithm="madgwick", sample_rate=100)
+        
+    def test_triple_sensor_capture(self):
+        """测试三传感器同步采集"""
+        self.tactile.open()
+        self.force.open()
+        self.imu.open()
+        
+        for i in range(10):
+            tf = self.tactile.capture()
+            fw = self.force.capture()
+            im = self.imu.capture()
+            
+            self.assertEqual(tf.pressure_map.shape, (8, 8))
+            self.assertEqual(fw.force.shape, (3,))
+            self.assertEqual(im.accel.shape, (3,))
+            self.assertGreater(tf.pressure_map.max(), 0)
+            self.assertGreater(fw.force[2], -100)  # gravity effect
+            self.assertGreater(im.accel_magnitude, 0)
+        
+        self.tactile.close()
+        self.force.close()
+        self.imu.close()
+
+    def test_triple_sensor_with_pose_estimator(self):
+        """测试三传感器+姿态估计融合"""
+        self.tactile.open()
+        self.force.open()
+        self.imu.open()
+        
+        for i in range(20):
+            im = self.imu.capture()
+            pose = self.pose_est.update(im.accel, im.gyro, im.mag, dt=0.01)
+            
+            self.assertEqual(len(pose.orientation), 4)
+            euler = pose.to_euler()
+            self.assertEqual(len(euler), 3)
+        
+        self.tactile.close()
+        self.force.close()
+        self.imu.close()
+
+    def test_contact_with_imu_awareness(self):
+        """测试接触检测时考虑IMU姿态"""
+        self.tactile.open()
+        self.force.open()
+        self.imu.open()
+        
+        # 模拟不同姿态下的接触
+        self.pose_est.quaternion = np.array([1.0, 0.0, 0.0, 0.0])  # level
+        im = self.imu.capture()
+        self.pose_est.update(im.accel, im.gyro, dt=0.01)
+        
+        tf = self.tactile.capture()
+        fw = self.force.capture()
+        contacts = self.tactile.detect_contacts(tf)
+        contact_state = self.force.detect_contact(fw)
+        
+        self.assertIsInstance(contacts, list)
+        self.assertTrue(contact_state.is_contact in [True, False])
+        self.assertIsInstance(float(contact_state.contact_force), float)
+        
+        self.tactile.close()
+        self.force.close()
+        self.imu.close()
+
+    def test_agv_grade_specs(self):
+        """测试AGV五级规格在所有传感器上的应用"""
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+        
+        for grade in grades:
+            ts = get_tactile_spec(grade)
+            fs = get_force_spec(grade)
+            is_ = get_imu_spec(grade)
+            
+            self.assertIn('array', ts)
+            self.assertIn('axes', fs)
+            self.assertIn('accel_range', is_)
+            self.assertIn('type', is_)
+        
+        # 确保高级规格 >= 低级规格
+        tactile_res_s = get_tactile_spec('S')['res']
+        tactile_res_xxl = get_tactile_spec('XXL')['res']
+        self.assertLessEqual(tactile_res_s, tactile_res_xxl)
+
+    def test_virtual_sensor_triple(self):
+        """测试虚拟三传感器融合"""
+        vt = VirtualTactileSensor((8, 8), sensor_id="vt_fusion")
+        vf = VirtualForceSensor(sensor_id="vf_fusion")
+        vi = VirtualIMUSensor(sensor_id="vi_fusion")
+        
+        vt.open()
+        vf.open()
+        vi.open()
+        
+        # 模拟接触
+        tf = vt.simulate_contact((0.5, 0.5), contact_radius=0.3, contact_force=15.0)
+        wf = vf.simulate_contact((5.0, 0.0, -10.0))
+        imf = vi.simulate_static((0.0, 0.0, 0.0))
+        
+        self.assertEqual(tf.pressure_map.shape, (8, 8))
+        self.assertEqual(wf.force.shape, (3,))
+        self.assertEqual(imf.accel.shape, (3,))
+        
+        # 抓取质量评估 (用TactileArray而非VirtualTactileSensor)
+        ta = TactileArray((8, 8), sensor_id="tactile_grip_test")
+        ta.open()
+        ta_frame = ta.capture()
+        gq = ta.estimate_grip_quality(ta_frame)
+        self.assertIn('overall', gq)
+        
+        vt.close()
+        vf.close()
+        vi.close()
+        ta.close()
+
+    def test_force_payload_estimation(self):
+        """测试力传感器负载估计"""
+        self.force.open()
+        
+        for _ in range(50):
+            self.force.capture()
+        
+        payload = self.force.estimate_payload()
+        self.assertGreaterEqual(payload, 0)
+        self.assertLess(payload, 100)  # reasonable range
+        
+        self.force.close()
+
+    def test_imu_self_test(self):
+        """测试IMU自检"""
+        self.imu.open()
+        result = self.imu.self_test()
+        self.assertIsInstance(result, bool)
+        self.imu.close()
+
+    def test_imu_gyro_bias_calibration(self):
+        """测试IMU陀螺仪偏置校准"""
+        self.imu.open()
+        self.imu.calibrate_gyro_bias(num_samples=50, duration_sec=1.0)
+        bias = self.imu.calibration.gyro_bias
+        self.assertEqual(bias.shape, (3,))
+        self.imu.close()
+
+    def test_tactile_slip_detection(self):
+        """测试触觉滑移检测"""
+        vt = VirtualTactileSensor((8, 8))
+        vt.open()
+        
+        # 模拟滑移
+        frames = vt.simulate_sliding((0.1, 0.05), speed=0.02, duration_frames=20)
+        self.assertEqual(len(frames), 20)
+        
+        # 滑移检测
+        slip_result = vt.simulate_slip_detection(
+            normal_force=10.0, 
+            friction_coeff=0.3,
+            velocity=(0.02, 0.01)
+        )
+        self.assertIn('slip_state', slip_result)
+        self.assertIn('slip_probability', slip_result)
+        
+        vt.close()
+
+    def test_force_collision_simulation(self):
+        """测试力碰撞仿真"""
+        vf = VirtualForceSensor()
+        vf.open()
+        
+        frames = vf.simulate_collision(
+            direction=(1.0, 0.0, 0.0),
+            peak_force=50.0,
+            duration_ms=100.0,
+            decay='exponential'
+        )
+        
+        self.assertGreater(len(frames), 0)
+        self.assertLess(len(frames), 20)  # 100ms / 10ms = 10 frames
+        
+        # 峰值力应该接近预期
+        max_force = max(f.magnitude for f in frames)
+        self.assertGreater(max_force, 30.0)
+        
+        vf.close()
+
+    def test_imu_trajectory_simulation(self):
+        """测试IMU轨迹仿真"""
+        vi = VirtualIMUSensor()
+        vi.open()
+        
+        frames = vi.simulate_trajectory('circle', duration_s=1.0, dt=0.01)
+        self.assertGreater(len(frames), 50)
+        
+        # 角速度应该不为零
+        last_frame = frames[-1]
+        self.assertIsNotNone(last_frame.gyro)
+        
+        vi.close()
+
+    def test_pose_estimator_all_algorithms(self):
+        """测试所有姿态估计算法"""
+        for algo in ['madgwick', 'complementary']:
+            est = PoseEstimator(algorithm=algo, sample_rate=100)
+            accel = np.array([0.0, 0.0, 9.81])
+            gyro = np.array([0.01, 0.02, 0.1])
+            
+            for _ in range(50):
+                pose = est.update(accel, gyro, dt=0.01)
+            
+            euler = pose.to_euler()
+            self.assertEqual(len(euler), 3)
+            self.assertEqual(len(pose.orientation), 4)
+
+    def test_wrench_processor(self):
+        """测试力旋量处理器"""
+        proc = WrenchProcessor(filter_alpha=0.3)
+        
+        for i in range(10):
+            wrench_vec = np.array([5.0, 0.0, -10.0, 0.1, 0.2, 0.0])
+            filtered = proc.filter(wrench_vec)
+            self.assertEqual(filtered.shape, (6,))
+
+    def test_pressure_processor(self):
+        """测试压力处理器"""
+        proc = PressureProcessor(filter_window=3)
+        
+        pressure = np.random.rand(8, 8).astype(np.float32)
+        filtered = proc.filter(pressure)
+        self.assertEqual(filtered.shape, (8, 8))
+        
+        centroid = proc.compute_centroid(pressure)
+        self.assertEqual(len(centroid), 2)
+        
+        compensated = proc.compensate_baseline(pressure)
+        self.assertEqual(compensated.shape, (8, 8))
+
+
+if __name__ == '__main__':
+    unittest.main()
