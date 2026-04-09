@@ -2,6 +2,29 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.30.0] - 2026-04-10
+
+### Added
+- src/hardware/predictive_maintenance.py: 新增预测性维护模块 (约900行)
+  - MotorHealthMonitor: 电机轴承磨损检测 (电流signature分析)、绕组温度预测、堵转风险评估
+  - BatterySOHEstimator: 电池SOH估计 (循环衰减+日历衰减+温度补偿)、内阻增长模型、剩余循环预估
+  - WheelHealthMonitor: 车轮打滑检测、对中误差检测、里程计漂移估计
+  - PredictiveMaintenanceSystem: 整体AGV健康管理系统 (加权评分、故障收集、维护建议生成、趋势分析)
+  - AGV五级预测性维护规格 (S:100Hz采样 → XXL:2000Hz采样)
+- src/hardware/__init__.py: 新增 predictive_maintenance 模块导出
+- tests/predictive_maintenance_tests.py: 新增 45 项预测性维护测试
+  - MotorHealthMonitor: 创建/正常工况/过流/温升/轴承磨损/指标边界 6项
+  - BatterySOHEstimator: 创建/SOH衰减/循环计数/温度影响/内阻/剩余循环/健康等级 7项
+  - WheelHealthMonitor: 创建/正常滚动/打滑检测/对中误差/里程计漂移/边界 6项
+  - PredictiveMaintenanceSystem: 创建/报告生成/评分计算/等级赋值/故障收集/建议生成/趋势分析 7项
+  - AGV五级规格: 5级定义/结构/递进/规格查询 4项
+  - 工厂函数: S/M/L/XL/XXL 5级创建测试
+  - 集成测试: 完整生命周期/多等级一致性 2项
+
+### Changed
+- sensor+fusion+pred_main tests: 450项全通过 (较上次+45项)
+- src/__init__.py: 版本更新 2.20.0 → 2.30.0
+
 ## [2.29.0] - 2026-04-10
 
 ### Added

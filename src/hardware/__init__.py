@@ -22,6 +22,13 @@ from .digu_robot import (
 )
 from .gpio import GPIOController, PinMode, PinState
 from .nnpu import NPUAccelerator, NPUPlugin, get_npu_context
+from .predictive_maintenance import (
+    PredictiveMaintenanceSystem, MotorHealthMonitor, BatterySOHEstimator, WheelHealthMonitor,
+    HealthLevel, FaultType, AGVHealthReport,
+    MotorHealthMetrics, BatteryHealthMetrics, WheelHealthMetrics,
+    get_predictive_maintenance_spec, AGV_PREDICTIVE_MAINTENANCE_GRADES,
+    create_predictive_maintenance_system
+)
 
 __all__ = [
     # 基础抽象
@@ -37,4 +44,10 @@ __all__ = [
     'GPIOController', 'PinMode', 'PinState',
     # NPU 加速
     'NPUAccelerator', 'NPUPlugin', 'get_npu_context',
+    # 预测性维护
+    'PredictiveMaintenanceSystem', 'MotorHealthMonitor', 'BatterySOHEstimator', 'WheelHealthMonitor',
+    'HealthLevel', 'FaultType', 'AGVHealthReport',
+    'MotorHealthMetrics', 'BatteryHealthMetrics', 'WheelHealthMetrics',
+    'get_predictive_maintenance_spec', 'AGV_PREDICTIVE_MAINTENANCE_GRADES',
+    'create_predictive_maintenance_system',
 ]

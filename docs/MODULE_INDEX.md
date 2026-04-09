@@ -1,4 +1,5 @@
 # SuperModel 模块索引 / Module Index
+- **v2.30.0** (2026-04-10): 新增预测性维护模块(predictive_maintenance.py, 900行) + 45项测试; 电机轴承磨损/电池SOH/车轮打滑检测; sensor+fusion+pred_main 450项全部通过
 - **v2.29.0** (2026-04-10): 传感器模块完善(tactile/force/imu)+控制模块深化; sensor_tests 332项/fusion_tests 73项全部通过; AGV五级规格文档完整
 - **v2.28.0** (2026-04-10): 新增自适应增益测试模块(24项) + AGV五级规格补充章节(v1.40.0); 429项测试全通过
 - **v2.09.0** (2026-04-09): 具身任务执行器扩展 (push/pull/surface_trace/insert/polish); 新增embodied_task_tests.py (41项); 修复SensorHealthMonitor bug; 421项测试全通过
@@ -6,7 +7,7 @@
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.29.0
+> **版本**: v2.30.0
 > **更新**: 2026-04-10
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
