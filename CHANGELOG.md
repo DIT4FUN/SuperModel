@@ -2,7 +2,7 @@
 
 All notable changes to SuperModel will be documented in this file.
 
-## [2.22.0] - 2026-04-10
+## [2.29.0] - 2026-04-10
 
 ### Added
 - src/simulation/gym_env.py: 新增 AGV 五级 Gymnasium 环境规格表 (AGV_GYM_GRADE_SPEC)
