@@ -2,6 +2,47 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.16.0] - 2026-04-09
+
+### Added
+- docs/DESIGN.md: 新增附录I 传感器模块完整接口规范 (tactile/force/IMU)
+  - TactileArray: capture(), detect_contacts(), get_slip_signal(), estimate_grip_quality()
+  - ForceTorqueSensor: capture(), detect_contact(), estimate_payload(), calibrate_bias()
+  - IMUSensor: capture(), self_test(), calibrate_gyro_bias(), calibrate_accel()
+  - PoseEstimator: update(), get_pose(), get_euler(), integrate_velocity(), reset()
+  - VirtualTactileSensor: simulate_contact/sliding/multi_contact/slip_detection
+  - VirtualForceSensor: simulate_contact/payload/collision/surface_contact/friction
+  - VirtualIMUSensor: simulate_static/motion/trajectory/AGV_motion/human_walking
+  - AGV五级触觉规格表 (8×8→48×48, 50Hz→1000Hz)
+  - AGV五级力觉规格表 (3轴100N→6轴5000N, 100Hz→5000Hz)
+  - AGV五级IMU规格表 (MPU6050 100Hz→ADIS16470 2kHz)
+  - 触觉/力觉/IMU联合使用典型流程代码示例
+  - 完整模块导出接口清单 (__init__.py)
+
+- tests/sensor_tests.py: 传感器模块完整测试 (378项全通过)
+  - TactileArray: 创建/上下文/捕获/接触检测/滑移/抓取质量/标定/序列
+  - VirtualTactileSensor: 接触/滑动/多点/滑移检测仿真
+  - ForceTorqueSensor: 创建/上下文/捕获/接触检测/负载估计/工具中心/标定
+  - Wrench: 创建/幅值/向量转换/坐标变换
+  - VirtualForceSensor: 接触/负载/碰撞/表面接触/摩擦仿真
+  - IMUSensor: 创建/上下文/捕获/自检/陀螺仪标定/加速度标定
+  - Pose/PoseEstimator: 单位/欧拉角/矩阵转换/收敛性/积分/重置
+  - VirtualIMUSensor: 静止/运动/轨迹/AGV运动/人类步行仿真
+  - AGV五级规格: 触觉/力觉/IMU全部等级验证
+  - 跨模态: 触觉/IMU时序同步, 力觉/IMU重力补偿, 全虚拟传感器并发
+  - 传感器退化/故障注入/边缘场景/长时间稳定性测试
+
+- tests/fusion_tests.py: 传感器融合模块测试 (全部通过)
+  - ComplementaryFilter: 初始化/更新/重置/收敛/漂移抑制
+  - ExtendedKalmanFilter: 初始化/预测/校正/协方差/雅可比/正定性
+  - MultiSensorFusion: 添加方法/多传感器更新/加权平均
+  - 真实传感器融合: IMU互补滤波, FT传感器EKF, 触觉-IMU融合
+  - 融合稳定性: EKF长时间运行/互补滤波漂移/加权平均
+  - 鲁棒性: 加速度饱和/陀螺仪饱和/NaN输入/Inf输入/零加速度
+  - 跨模态: 力/位置混合融合, 滑移预测, 速度估计, 抓取质量, 接触检测
+  - 延迟预算: EKF更新延迟(<10ms P99), 互补滤波延迟(<1ms)
+  - 跨模态注意力: 注意力权重分布/梯度流
+
 ## [2.14.0] - 2026-04-09
 
 ### Added

@@ -1213,3 +1213,748 @@ profiler = VelocityProfiler(
 )
 positions, velocities = profiler.plan(distance=1.0, v0=0.0, v1=0.0)
 ```
+
+---
+
+## 附录I: 传感器模块完整接口规范 (v2.16.0)
+
+> 本附录详细定义触觉、力觉、IMU三大新增传感器模块的完整接口，
+> 包括类结构、核心方法、输入输出格式、AGV五级规格对照。
+
+---
+
+### I.1 触觉传感器模块 (tactile.py)
+
+#### I.1.1 类层次结构
+
+```
+TactileArray                    # 主类：电子皮肤触觉阵列
+├── TactileFrame                # 数据结构：触觉帧
+├── TactileContact              # 数据结构：接触事件
+├── TactileCalibration          # 数据结构：标定参数
+├── PressureProcessor           # 信号处理器
+├── VirtualTactileSensor       # 仿真传感器
+└── AGV_TACTILE_GRADES         # 五级规格表
+```
+
+#### I.1.2 TactileArray 主类
+
+```python
+class TactileArray:
+    """
+    电子皮肤触觉阵列接口
+    
+    参数:
+        array_size: (rows, cols) - 触觉阵列尺寸
+        sensor_type: TactileSensorType (RESISTIVE/CAPACITIVE/PIEZOELECTRIC/OPTICAL)
+        sensor_id: 传感器标识符
+        calibration: TactileCalibration 标定参数
+    """
+    
+    # === 生命周期 ===
+    def open() -> bool:
+        """打开传感器，建立连接（I2C/SPI/USB/CAN）"""
+        # 仿真模式：初始化模拟状态
+        # 硬件模式：建立真实传感器连接
+        return True
+    
+    def close():
+        """关闭传感器连接"""
+    
+    def __enter__() -> "TactileArray": ...
+    def __exit__(self, exc_type, exc_val, exc_tb): ...
+    
+    # === 数据采集 ===
+    def capture() -> TactileFrame:
+        """
+        捕获一帧触觉数据
+        Returns: TactileFrame
+            - pressure_map: np.ndarray (H×W), 归一化压力 0-1
+            - temperature_map: Optional[np.ndarray] (H×W), 摄氏度
+            - proximity: Optional[np.ndarray] (H×W), 接近距离(m)
+            - slip_signal: Optional[np.ndarray] (H×W), 滑移信号
+            - timestamp: float
+            - frame_id: int
+            - sensor_id: str
+        """
+    
+    # === 接触检测 ===
+    def detect_contacts(frame: Optional[TactileFrame] = None) -> List[TactileContact]:
+        """
+        检测接触区域
+        Returns: List[TactileContact]
+            - center: (row, col) 接触中心
+            - area: int 接触面积(像素数)
+            - peak_pressure: float 峰值压力
+            - mean_pressure: float 平均压力
+            - centroid: (row, col) 压力质心
+            - contact_force: float 估计接触力(N)
+            - slip_probability: float 滑移概率
+            - temperature: Optional[float] 接触区温度
+        """
+    
+    # === 滑移检测 ===
+    def get_slip_signal(frame: Optional[TactileFrame] = None) -> np.ndarray:
+        """
+        计算滑移信号（多尺度滑移检测）
+        - 压力梯度变化检测
+        - 高频振动成分检测
+        - 多帧历史分析
+        Returns: np.ndarray (H×W) 归一化滑移信号 0-1
+        """
+    
+    # === 抓取质量评估 ===
+    def estimate_grip_quality(frame: Optional[TactileFrame] = None) -> Dict[str, float]:
+        """
+        估计抓取质量
+        Returns: {
+            'overall': float,      # 综合评分 0-1
+            'contact_area': float, # 接触面积评分
+            'uniformity': float,   # 均匀性评分
+            'stability': float     # 稳定性评分
+        }
+        """
+    
+    # === 标定 ===
+    def calibrate(
+        zero_pressure: Optional[np.ndarray] = None,
+        known_weights: Optional[List[float]] = None
+    ):
+        """传感器标定（零压力基准 + 力-电压标定）"""
+```
+
+#### I.1.3 TactileSensorType 枚举
+
+```python
+class TactileSensorType(Enum):
+    RESISTIVE    = "resistive"    # 电阻式 - I2C@0x18, 12bit ADC
+    CAPACITIVE   = "capacitive"   # 电容式 - SPI@50MHz, 14bit ADC, 支持接近觉
+    PIEZOELECTRIC = "piezoelectric" # 压电式 - USB HID, 14bit, 高频振动
+    OPTICAL      = "optical"      # 光学式 - USB3.0, 16bit, 最高精度
+```
+
+#### I.1.4 VirtualTactileSensor 仿真类
+
+```python
+class VirtualTactileSensor:
+    """仿真触觉传感器，用于仿真环境和算法验证"""
+    
+    def open() -> bool: ...
+    def close(): ...
+    
+    def simulate_contact(
+        contact_pos: Tuple[float, float],  # 归一化 (0-1)
+        contact_radius: float = 0.3,       # 归一化
+        contact_force: float = 10.0,        # N
+        noise_level: float = 0.05
+    ) -> TactileFrame:
+        """模拟接触事件（高斯压力分布）"""
+    
+    def simulate_sliding(
+        direction: Tuple[float, float],   # (dx, dy) 归一化
+        speed: float = 0.1,               # 归一化/帧
+        duration_frames: int = 30
+    ) -> List[TactileFrame]:
+        """模拟滑移动作"""
+    
+    def simulate_multi_contact(
+        contacts: List[Tuple[position, force, radius]],
+        noise_level: float = 0.05
+    ) -> TactileFrame:
+        """模拟多点接触"""
+    
+    def simulate_slip_detection(
+        normal_force: float,              # N
+        friction_coeff: float,             # 摩擦系数
+        velocity: Tuple[float, float]      # 滑移速度
+    ) -> Dict[str, float]:
+        """
+        模拟滑移检测
+        Returns: {
+            'slip_state': 'stick' | 'micro_slip' | 'sliding',
+            'slip_probability': float,
+            'friction_force': float,
+            'velocity_magnitude': float,
+            'max_static_friction': float
+        }
+        """
+```
+
+#### I.1.5 触觉传感器 AGV 五级规格表
+
+```python
+AGV_TACTILE_GRADES = {
+    'S':   {'array': (8, 8),    'res': 12, 'range_kpa': (0, 500),    'freq_hz': 50,   'temp': False},
+    'M':   {'array': (16, 16),  'res': 12, 'range_kpa': (0, 1000),   'freq_hz': 100,  'temp': True},
+    'L':   {'array': (24, 24),  'res': 14, 'range_kpa': (0, 2000),   'freq_hz': 200,  'temp': True},
+    'XL':  {'array': (32, 32),  'res': 14, 'range_kpa': (0, 5000),   'freq_hz': 500,  'temp': True},
+    'XXL': {'array': (48, 48),  'res': 16, 'range_kpa': (0, 10000),  'freq_hz': 1000, 'temp': True},
+}
+# 用法: spec = get_tactile_spec('M') → {'array': (16, 16), 'res': 12, ...}
+```
+
+---
+
+### I.2 力觉传感器模块 (force.py)
+
+#### I.2.1 类层次结构
+
+```
+ForceTorqueSensor               # 主类：六维力矩传感器
+├── Wrench                      # 数据结构：力旋量 (F, T)
+├── ForceCalibration            # 数据结构：标定参数
+├── ContactState                # 数据结构：接触状态
+├── WrenchProcessor             # 信号处理器
+├── VirtualForceSensor          # 仿真传感器
+└── AGV_FORCE_GRADES           # 五级规格表
+```
+
+#### I.2.2 Wrench 力旋量数据结构
+
+```python
+@dataclass
+class Wrench:
+    """
+    力旋量 (力与力矩的组合)
+    
+    属性:
+        force: np.ndarray (3,) - 力向量 [Fx, Fy, Fz] 单位: N
+        torque: np.ndarray (3,) - 力矩向量 [Tx, Ty, Tz] 单位: N·m
+        timestamp: float
+        frame_id: int
+        sensor_id: str
+    """
+    
+    @property
+    def magnitude(self) -> float:
+        """力向量大小 ||F|| = sqrt(Fx²+Fy²+Fz²)"""
+    
+    @property
+    def torque_magnitude(self) -> float:
+        """力矩大小 ||T||"""
+    
+    def to_vector(self) -> np.ndarray:
+        """转换为6维向量 [Fx, Fy, Fz, Tx, Ty, Tz]"""
+    
+    @classmethod
+    def from_vector(cls, vec: np.ndarray, **kwargs) -> "Wrench":
+        """从6维向量创建"""
+    
+    def transform(self, rotation: np.ndarray, translation: np.ndarray) -> "Wrench":
+        """
+        坐标变换（传感器坐标系 → 世界坐标系）
+        - new_force = R @ force
+        - new_torque = R @ torque + translation × new_force
+        """
+```
+
+#### I.2.3 ForceTorqueSensor 主类
+
+```python
+class ForceTorqueSensor:
+    """
+    六维力矩传感器接口（ATI风格）
+    
+    参数:
+        sensor_type: ForceSensorType (SIX_AXIS/THREE_AXIS/JOINT_TORQUE/FINGER_TIP)
+        sensor_id: 传感器标识符
+        calibration: ForceCalibration 标定参数
+        ip_address: 网口传感器IP (如 ATI Net F/T)
+        ethernet_type: "UDP" | "TCP"
+    """
+    
+    # === 生命周期 ===
+    def open() -> bool:
+        """打开传感器（网络/USB HID/CAN总线）"""
+        # 仿真模式：初始化模拟状态
+        # 硬件模式：建立真实传感器连接
+        return True
+    
+    def close(): ...
+    
+    # === 数据采集 ===
+    def capture() -> Wrench:
+        """
+        采集一帧力数据（基于物理模型仿真）
+        - 重力补偿
+        - 工具中心偏移力矩
+        - 环境扰动
+        - 传感器噪声
+        - 温漂
+        """
+    
+    def get_wrench() -> Optional[Wrench]:
+        """获取最新力数据"""
+    
+    # === 接触检测 ===
+    def detect_contact(
+        wrench: Optional[Wrench] = None,
+        threshold: Optional[float] = None  # 默认 2.0 N
+    ) -> ContactState:
+        """
+        Returns: ContactState
+            - is_contact: bool
+            - contact_force: float
+            - contact_point: Optional[np.ndarray] (3D)
+            - normal_vector: Optional[np.ndarray]
+            - slip_probability: float
+        """
+    
+    # === 负载估计 ===
+    def estimate_payload(wrench: Optional[Wrench] = None) -> float:
+        """基于静止状态重力分量估计负载重量 (kg)"""
+    
+    # === 工具中心设置 ===
+    def set_tool_center(tool_mass: float, tool_com: np.ndarray):
+        """
+        设置工具中心参数（用于重力补偿）
+        tool_mass: 工具质量 kg
+        tool_com: 工具质心在传感器坐标系中的位置 m
+        """
+    
+    # === 标定 ===
+    def calibrate_bias(num_samples: int = 100):
+        """偏置校准（无负载状态采集零点）"""
+```
+
+#### I.2.4 VirtualForceSensor 仿真类
+
+```python
+class VirtualForceSensor:
+    """仿真力觉传感器"""
+    
+    def open() -> bool: ...
+    def close(): ...
+    
+    def simulate_contact(
+        force: Tuple[float, float, float],      # (Fx, Fy, Fz) N
+        torque: Tuple[float, float, float] = (0,0,0), # (Tx, Ty, Tz) N·m
+        add_noise: bool = True
+    ) -> Wrench:
+        """模拟接触力"""
+    
+    def simulate_payload(
+        mass: float = 1.0,                          # kg
+        com_offset: Tuple[float, float, float] = (0,0,0), # m
+        gravity: float = 9.81                        # m/s²
+    ) -> Wrench:
+        """模拟负载重力: Fz=-mg, Tx=mg*dy, Ty=-mg*dx"""
+    
+    def simulate_collision(
+        direction: Tuple[float, float, float],  # 碰撞方向(归一化)
+        peak_force: float = 50.0,               # N
+        duration_ms: float = 100.0,              # 毫秒
+        decay: str = "exponential"               # 'exponential' | 'linear'
+    ) -> List[Wrench]:
+        """模拟碰撞事件（峰值→衰减过程）"""
+    
+    def simulate_surface_contact(
+        surface_normal: Tuple[float, float, float] = (0,0,1),
+        contact_point: Tuple[float, float, float] = (0,0,0),
+        penetration_depth: float = 0.001,        # m
+        stiffness: float = 1000.0,               # N/m
+        damping: float = 50.0                   # N·s/m
+    ) -> Wrench:
+        """模拟表面接触（弹簧阻尼模型）"""
+    
+    def simulate_friction_contact(
+        normal_force: float,
+        velocity: Tuple[float, float, float],
+        friction_coeff: float = 0.3,
+        object_mass: float = 1.0
+    ) -> Wrench:
+        """模拟摩擦力（库仑摩擦模型）"""
+```
+
+#### I.2.5 WrenchProcessor 信号处理器
+
+```python
+class WrenchProcessor:
+    """力旋量信号处理器"""
+    
+    def __init__(self, filter_alpha: float = 0.3, outlier_threshold: float = 3.0):
+        """
+        filter_alpha: 指数移动平均系数
+        outlier_threshold: 异常值倍数(标准差)
+        """
+    
+    def filter(wrench: np.ndarray, return_wrench: bool = False):
+        """指数移动平均滤波"""
+    
+    def remove_outliers(wrench: np.ndarray, history: List[np.ndarray]) -> np.ndarray:
+        """基于历史数据去除异常值"""
+    
+    def estimate_covariance(history: List[np.ndarray]) -> np.ndarray:
+        """估计测量协方差矩阵 (6×6)"""
+    
+    def compute_force_direction(wrench: np.ndarray) -> np.ndarray:
+        """计算归一化力向量方向"""
+    
+    def compute_equivalent_wrench_at(wrench: np.ndarray, translation: np.ndarray) -> np.ndarray:
+        """计算等效到指定点的力旋量: T' = T + r × F"""
+```
+
+#### I.2.6 力觉传感器 AGV 五级规格表
+
+```python
+AGV_FORCE_GRADES = {
+    'S':   {'axes': 3, 'force_range': 100,   'torque_range': 10,    'resolution': 0.1,   'sampling_hz': 100},
+    'M':   {'axes': 6, 'force_range': 200,   'torque_range': 20,    'resolution': 0.05,  'sampling_hz': 500},
+    'L':   {'axes': 6, 'force_range': 500,   'torque_range': 50,    'resolution': 0.02,  'sampling_hz': 1000},
+    'XL':  {'axes': 6, 'force_range': 1000,  'torque_range': 100,  'resolution': 0.01,  'sampling_hz': 2000},
+    'XXL': {'axes': 6, 'force_range': 5000,  'torque_range': 500,  'resolution': 0.005, 'sampling_hz': 5000},
+}
+```
+
+---
+
+### I.3 IMU传感器模块 (imu.py)
+
+#### I.3.1 类层次结构
+
+```
+IMUSensor                        # 主类：惯性测量单元
+├── IMUFrame                     # 数据结构：IMU数据帧
+├── IMUCalibration               # 数据结构：标定参数
+├── Pose                         # 数据结构：位姿
+├── PoseEstimator                # 姿态估计器
+├── VirtualIMUSensor             # 仿真传感器
+└── AGV_IMU_GRADES              # 五级规格表
+```
+
+#### I.3.2 IMUFrame 数据帧
+
+```python
+@dataclass
+class IMUFrame:
+    """
+    IMU数据帧
+    
+    属性:
+        accel: np.ndarray (3,) - 加速度 m/s²
+        gyro: np.ndarray (3,)  - 角速度 rad/s
+        mag: Optional[np.ndarray] (3,) - 磁力计 μT
+        temperature: float - 摄氏度
+        timestamp: float
+        frame_id: int
+        sensor_id: str
+    """
+    
+    @property
+    def accel_magnitude(self) -> float:
+        """加速度向量模长 ||accel||"""
+    
+    @property
+    def gyro_magnitude(self) -> float:
+        """角速度向量模长 ||gyro||"""
+```
+
+#### I.3.3 Pose 位姿数据结构
+
+```python
+@dataclass
+class Pose:
+    position: np.ndarray    # (3,) 位置 m
+    orientation: np.ndarray  # (4,) 四元数 [qw, qx, qy, qz]
+    
+    @classmethod
+    def identity(cls) -> "Pose":
+        """单位位姿: position=(0,0,0), orientation=(1,0,0,0)"""
+    
+    def to_euler(self) -> np.ndarray:
+        """转欧拉角 [roll, pitch, yaw] rad"""
+    
+    def to_matrix(self) -> np.ndarray:
+        """转4×4变换矩阵"""
+    
+    @classmethod
+    def from_euler(cls, position: np.ndarray, rpy: np.ndarray) -> "Pose":
+        """从欧拉角创建姿态"""
+```
+
+#### I.3.4 IMUSensor 主类
+
+```python
+class IMUSensor:
+    """
+    IMU传感器接口（BMI088/MPU6050/MPU9250/ADIS16470）
+    
+    参数:
+        sensor_type: IMUSensorType
+        sensor_id: 传感器标识符
+        calibration: IMUCalibration 标定参数
+        accel_range: int 加速度量程 (g)
+        gyro_range: int 陀螺仪量程 (deg/s)
+        sample_rate: int 采样频率 Hz
+    """
+    
+    # === 生命周期 ===
+    def open() -> bool:
+        """打开传感器（I2C/SPI/USB/ROS串口）"""
+        return True
+    
+    def close(): ...
+    
+    # === 数据采集 ===
+    def capture() -> IMUFrame:
+        """
+        采集一帧IMU数据（基于物理模型仿真）
+        - 重力向量（传感器坐标系）
+        - 运动引起的比力
+        - 角度变化趋势
+        - 传感器噪声（符合各型号规格）
+        - 偏置稳定性（慢漂移）
+        - 温度（环境+自发热）
+        - 磁力计（MPU9250/9轴IMU）
+        """
+    
+    # === 自检 ===
+    def self_test() -> bool:
+        """
+        传感器自检
+        - 检查加速度范围（应接近1g）
+        - 检查角速度范围（应接近0）
+        """
+    
+    # === 标定 ===
+    def calibrate_gyro_bias(num_samples: int = 500, duration_sec: float = 5.0):
+        """陀螺仪偏置校准（静止状态采集）"""
+    
+    def calibrate_accel(known_orientation: str = "level"):
+        """
+        加速度计标定
+        known_orientation: "level"|"up"|"down"|"left"|"right"|"front"|"back"
+        """
+```
+
+#### I.3.5 PoseEstimator 姿态估计器
+
+```python
+class PoseEstimator:
+    """
+    姿态估计器
+    
+    参数:
+        algorithm: "madgwick" | "complementary" | "kalman"
+        sample_rate: float Hz
+        beta: float Madgwick滤波器增益
+    """
+    
+    def update(
+        self,
+        accel: np.ndarray,
+        gyro: np.ndarray,
+        mag: Optional[np.ndarray] = None,
+        dt: Optional[float] = None
+    ) -> Pose:
+        """更新姿态估计"""
+    
+    def get_pose(self) -> Pose:
+        """获取当前姿态"""
+    
+    def get_euler(self) -> np.ndarray:
+        """获取当前欧拉角 [roll, pitch, yaw] rad"""
+    
+    def get_rotation_matrix(self) -> np.ndarray:
+        """获取当前旋转矩阵 (3×3)"""
+    
+    def integrate_velocity(
+        self, accel: np.ndarray, dt: float, remove_gravity: bool = True
+    ) -> Tuple[np.ndarray, np.ndarray]:
+        """
+        积分加速度获得速度/位置
+        Warning: 漂移严重，仅短时间有效
+        Returns: (velocity, position)
+        """
+    
+    def reset():
+        """重置积分状态（速度/位置/四元数）"""
+```
+
+#### I.3.6 VirtualIMUSensor 仿真类
+
+```python
+class VirtualIMUSensor:
+    """仿真IMU传感器"""
+    
+    def open() -> bool: ...
+    def close(): ...
+    
+    def simulate_static(
+        orientation: Tuple[float, float, float] = (0,0,0)  # roll, pitch, yaw rad
+    ) -> IMUFrame:
+        """模拟静止状态（重力对齐加速度）"""
+    
+    def simulate_motion(
+        linear_accel: Tuple[float, float, float],
+        angular_vel: Tuple[float, float, float],
+        dt: float = 0.01
+    ) -> IMUFrame:
+        """模拟运动状态"""
+    
+    def simulate_trajectory(
+        trajectory_type: str = "circle",  # "circle"|"figure8"|"linear"|"sine"
+        duration_s: float = 2.0,
+        dt: float = 0.01
+    ) -> List[IMUFrame]:
+        """模拟典型轨迹"""
+    
+    def simulate_agv_motion(
+        linear_velocity: Tuple[float, float] = (0,0),  # (vx, vy) m/s
+        angular_velocity: float = 0.0,               # rad/s
+        dt: float = 0.01,
+        grade: str = "M"                            # "S"|"M"|"L"|"XL"|"XXL"
+    ) -> IMUFrame:
+        """模拟AGV运动（考虑不同等级IMU噪声特性）"""
+    
+    def simulate_human_walking(
+        step_frequency: float = 1.5,  # Hz
+        walk_speed: float = 1.0,       # m/s
+        duration_s: float = 5.0,
+        dt: float = 0.01
+    ) -> List[IMUFrame]:
+        """模拟人类步行运动"""
+```
+
+#### I.3.7 IMU AGV 五级规格表
+
+```python
+AGV_IMU_GRADES = {
+    'S':   {'type': 'MPU6050',   'accel_range': 8,    'gyro_range': 1000,  'sample_hz': 100,  'noise_density': 400},
+    'M':   {'type': 'BMI088',    'accel_range': 16,   'gyro_range': 2000,  'sample_hz': 200,  'noise_density': 120},
+    'L':   {'type': 'BMI088',    'accel_range': 24,   'gyro_range': 4000,  'sample_hz': 500,  'noise_density': 60},
+    'XL':  {'type': 'ADIS16470', 'accel_range': 40,   'gyro_range': 4000,  'sample_hz': 1000, 'noise_density': 20},
+    'XXL': {'type': 'ADIS16470', 'accel_range': 80,   'gyro_range': 8000,  'sample_hz': 2000, 'noise_density': 10},
+}
+```
+
+---
+
+### I.4 触觉/力觉/IMU 五级综合规格速查表
+
+| 规格项 | S级 | M级 | L级 | XL级 | XXL级 |
+|--------|:---:|:---:|:---:|:---:|:---:|
+| **触觉阵列** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **触觉ADC** | 12bit | 12bit | 14bit | 14bit | 16bit |
+| **触觉采样** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **力觉轴数** | 3轴 | 6轴 | 6轴 | 6轴 | 6轴 |
+| **力觉范围** | ±100N | ±200N | ±500N | ±1000N | ±5000N |
+| **力觉采样** | 100Hz | 500Hz | 1000Hz | 2000Hz | 5000Hz |
+| **IMU型号** | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| **IMU采样** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **IMU噪声** | 400μg/√Hz | 120μg/√Hz | 60μg/√Hz | 20μg/√Hz | 10μg/√Hz |
+| **融合编码器** | 128d | 256d | 512d | 768d | 1024d |
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **闭环延迟** | <200ms | <80ms | <35ms | <15ms | <7ms |
+
+---
+
+### I.5 典型使用流程
+
+```python
+# === 触觉 + 力觉 + IMU 联合使用 ===
+from src.sensors.tactile import TactileArray, TactileSensorType, get_tactile_spec
+from src.sensors.force import ForceTorqueSensor, ForceSensorType, get_force_spec
+from src.sensors.imu import IMUSensor, IMUSensorType, get_imu_spec, PoseEstimator
+
+AGV_GRADE = 'M'
+
+# 1. 读取五级规格
+t_spec = get_tactile_spec(AGV_GRADE)  # {'array': (16,16), 'freq_hz': 100, ...}
+f_spec = get_force_spec(AGV_GRADE)
+i_spec = get_imu_spec(AGV_GRADE)
+
+# 2. 创建传感器
+tactile = TactileArray(array_size=t_spec['array'], sensor_type=TactileSensorType.CAPACITIVE)
+force   = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS)
+imu     = IMUSensor(sensor_type=IMUSensorType.BMI088, sample_rate=i_spec['sample_hz'])
+
+# 3. 打开传感器
+tactile.open()
+force.open()
+imu.open()
+
+# 4. 标定
+imu.calibrate_gyro_bias(num_samples=100)
+imu.calibrate_accel(known_orientation="level")
+force.calibrate_bias(num_samples=50)
+force.set_tool_center(tool_mass=0.5, tool_com=np.array([0, 0, 0.1]))
+
+# 5. 创建姿态估计器
+pose_est = PoseEstimator(algorithm='madgwick', sample_rate=i_spec['sample_hz'])
+
+# 6. 主循环
+import time
+while True:
+    t = time.time()
+    
+    # 触觉数据
+    t_frame = tactile.capture()
+    contacts = tactile.detect_contacts(t_frame)
+    slip = tactile.get_slip_signal(t_frame)
+    grip_quality = tactile.estimate_grip_quality(t_frame)
+    
+    # 力觉数据
+    wrench = force.capture()
+    contact_state = force.detect_contact(wrench)
+    
+    # IMU数据
+    i_frame = imu.capture()
+    pose = pose_est.update(i_frame.accel, i_frame.gyro, i_frame.mag)
+    euler = pose.to_euler()
+    
+    print(f"t={t:.3f} | 触觉:{len(contacts)}接触 | "
+          f"力觉:{wrench.magnitude:.1f}N | "
+          f"姿态:r={euler[0]:.2f}p={euler[1]:.2f}y={euler[2]:.2f}")
+    
+    time.sleep(1.0 / t_spec['freq_hz'])
+
+# 7. 清理
+tactile.close()
+force.close()
+imu.close()
+```
+
+---
+
+### I.6 传感器模块对外导出接口
+
+```python
+# src/sensors/__init__.py 导出清单
+from .tactile import (
+    TactileArray,           # 触觉阵列主类
+    TactileFrame,           # 触觉帧数据结构
+    TactileContact,         # 接触事件数据结构
+    TactileCalibration,     # 标定参数数据结构
+    TactileSensorType,      # 传感器类型枚举
+    PressureProcessor,       # 压力信号处理器
+    VirtualTactileSensor,   # 仿真传感器
+    get_tactile_spec,       # AGV五级规格查询
+    AGV_TACTILE_GRADES,     # 五级规格表常量
+)
+
+from .force import (
+    ForceTorqueSensor,      # 六维力矩传感器主类
+    Wrench,                 # 力旋量数据结构
+    ForceCalibration,       # 标定参数数据结构
+    ContactState,           # 接触状态数据结构
+    ForceSensorType,        # 传感器类型枚举
+    WrenchProcessor,        # 力旋量信号处理器
+    VirtualForceSensor,     # 仿真传感器
+    get_force_spec,         # AGV五级规格查询
+    AGV_FORCE_GRADES,       # 五级规格表常量
+)
+
+from .imu import (
+    IMUSensor,              # IMU传感器主类
+    IMUFrame,               # IMU数据帧数据结构
+    Pose,                   # 位姿数据结构
+    PoseEstimator,          # 姿态估计器
+    IMUCalibration,         # 标定参数数据结构
+    IMUSensorType,          # 传感器类型枚举
+    VirtualIMUSensor,       # 仿真传感器
+    get_imu_spec,           # AGV五级规格查询
+    AGV_IMU_GRADES,         # 五级规格表常量
+)
+```
+
