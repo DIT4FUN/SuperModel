@@ -1,639 +1,453 @@
-# SuperModel AGV五级部署实战指南
+# SuperModel 具身智能实机部署指南
 
-> **文档版本**: v1.0.0
-> **更新**: 2026-04-07
-> **项目**: SuperModel 超模态机器人具身智能大脑
-
-本文档提供 SuperModel 从传感器选型到完整部署的实战指南，按 AGV 五级 (S/M/L/XL/XXL) 分级说明。
+> 实用指南：SuperModel 超模态大模型机器人的实机部署流程、校准步骤和运行检查清单
+> 版本: v2.35.0 | 更新: 2026-04-10
 
 ---
 
-## 1. 部署概览
+## 目录
 
-```
-部署流程:
-  ① 选型定级 → ② 硬件连接 → ③ 传感器配置 → ④ 融合调参 → ⑤ 控制调参 → ⑥ 仿真验证 → ⑦ 实机部署
-```
-
-### AGV五级选型决策树
-
-| 需求 | 推荐等级 | 理由 |
-|------|:-------:|------|
-| 教学/科研，预算 < ¥15K | S | MPU6050 + 单目，ROS2 Humble |
-| 标准室内AGV，¥15-50K | M | 双目D435i + 6轴力矩，BMI088 |
-| 精密装配/力控，¥50-150K | L | 双目D455 + 24×24触觉，阻抗+MPC |
-| 重载/高速，¥150-500K | XL | 事件相机 + ADIS16470，500Hz控制 |
-| 全功能旗舰，>¥500K | XXL | 多目+LiDAR + 48×48触觉，具身智能 |
+1. [概述](#1-概述)
+2. [实机部署流程](#2-实机部署流程)
+3. [传感器校准](#3-传感器校准)
+4. [控制模块配置](#4-控制模块配置)
+5. [五级规格对照表](#5-五级规格对照表)
+6. [运行检查清单](#6-运行检查清单)
+7. [故障排查](#7-故障排查)
 
 ---
 
-## 2. 硬件连接
+## 1. 概述
 
-### 2.1 传感器接线 (M级示例)
+SuperModel 超模态机器人具身智能大脑支持 S/M/L/XL/XXL 五级配置，从低成本单传感器到全模态高精密系统均可用同一代码库部署。
 
-```
-AGV-M 传感器连接图:
+### 部署前提
 
-  [双目相机D435i] ── USB3.0 ──┐
-                               │
-  [IMU BMI088]     ── SPI ────┼── [RK3588 NPU] ── Ethernet ── 上位机
-                               │
-  [六轴力矩]       ── USB ────┤
-                               │
-  [触觉阵列16×16] ── SPI ────┘
-```
+| 组件 | 最低要求 | 推荐配置 |
+|------|---------|---------|
+| Python | 3.10+ | 3.12+ |
+| 操作系统 | Linux (Ubuntu 22.04+) | Linux + RT 内核 |
+| 计算平台 | RK3588 / x86_64 | RK3588 + NPU / x86_64 + GPU |
+| 内存 | 4GB | 8GB+ |
+| 存储 | 16GB | 32GB+ SSD |
 
-### 2.2 各级传感器接口速查
-
-| 等级 | 触觉接口 | 力觉接口 | IMU接口 | 主控接口 |
-|------|:-------:|:-------:|:-------:|:--------:|
-| S | I2C | USB HID | I2C | Raspberry Pi USB |
-| M | SPI | CAN | SPI/I2C | RK3588 USB |
-| L | SPI | EtherCAT | SPI | Jetson Orin USB/Ethernet |
-| XL | USB3.0 | EtherCAT | SPI | Jetson Orin AGX |
-| XXL | USB3.0 | Ethernet UDP | SPI×2 | Orin AGX×2 + GPU |
-
----
-
-## 3. 各级传感器配置
-
-### 3.1 S级 (教学级)
+### 支持的五级配置
 
 ```python
-"""
-S级配置: 低成本快速部署
-- IMU: MPU6050 I2C@100kHz, ±8g, ±1000°/s, 100Hz
-- 触觉: 8×8 电阻式, 12bit, 0-500kPa, 50Hz
-- 力觉: 3轴 ±100N, 100Hz
-- 融合: LATE融合, 128d
-"""
-
-from src.sensors.imu import IMUSensor, IMUSensorType
-from src.sensors.tactile import TactileArray, TactileSensorType
-from src.sensors.force import ForceTorqueSensor, ForceSensorType
-
-# IMU配置
-imu = IMUSensor(
-    sensor_type=IMUSensorType.MPU6050,
-    sensor_id="imu_0",
-    accel_range=8,
-    gyro_range=1000,
-    sample_rate=100
-)
-imu.open()
-imu.calibrate_gyro_bias(num_samples=200)
-imu.self_test()
-
-# 触觉配置
-tactile = TactileArray(
-    array_size=(8, 8),
-    sensor_type=TactileSensorType.RESISTIVE,
-    sensor_id="tactile_0"
-)
-tactile.open()
-
-# 力觉配置
-force = ForceTorqueSensor(
-    sensor_type=ForceSensorType.THREE_AXIS,
-    sensor_id="force_0"
-)
-force.open()
-force.calibrate_bias(num_samples=100)
-
-print("S级传感器初始化完成")
+AGV_GRADE = 'M'  # 可选: S / M / L / XL / XXL
 ```
 
-### 3.2 M级 (标准工业级)
+---
+
+## 2. 实机部署流程
+
+### 2.1 传感器连接检查
 
 ```python
-"""
-M级配置: 标准AGV配置
-- IMU: BMI088 SPI, ±16g, ±2000°/s, 200Hz
-- 触觉: 16×16 电容式, 12bit, 0-1000kPa, 100Hz
-- 力觉: 6轴 ±200N/±20N·m, 500Hz
-- 融合: HYBRID融合, 256d
-"""
+# === 视觉 ===
+from src.sensors.vision import BinocularCamera
+camera = BinocularCamera(left_id=0, right_id=1)
+assert camera.open(), "双目相机连接失败"
 
-from src.sensors.imu import IMUSensor, IMUSensorType
+# === 触觉 (电子皮肤) ===
 from src.sensors.tactile import TactileArray, TactileSensorType
-from src.sensors.force import ForceTorqueSensor, ForceSensorType
-
-# IMU: BMI088 双6轴
-imu = IMUSensor(
-    sensor_type=IMUSensorType.BMI088,
-    sensor_id="imu_0",
-    accel_range=16,
-    gyro_range=2000,
-    sample_rate=200
-)
-imu.open()
-imu.calibrate_gyro_bias(num_samples=500)
-imu.calibrate_accel(known_orientation="level")
-
-# 触觉: 电子皮肤
 tactile = TactileArray(
     array_size=(16, 16),
     sensor_type=TactileSensorType.CAPACITIVE,
     sensor_id="tactile_0"
 )
-tactile.open()
-tactile.calibrate()
+assert tactile.open(), "触觉传感器连接失败"
 
-# 六轴力矩: ATI风格
-force = ForceTorqueSensor(
+# === 力觉 (六维力矩传感器) ===
+from src.sensors.force import ForceTorqueSensor, ForceSensorType
+ft_sensor = ForceTorqueSensor(
     sensor_type=ForceSensorType.SIX_AXIS,
     sensor_id="ft_0",
-    ip_address="192.168.1.100"  # Net F/T UDP
+    ip_address="192.168.1.100"  # ATI Net F/T
 )
-force.open()
-force.set_tool_center(tool_mass=0.5, tool_com=np.array([0, 0, 0.05]))
-force.calibrate_bias(num_samples=200)
+assert ft_sensor.open(), "力觉传感器连接失败"
 
-# 姿态估计: Madgwick
-pose_estimator = PoseEstimator(
-    algorithm="madgwick",
-    sample_rate=200.0,
-    beta=0.1
-)
-
-print("M级传感器初始化完成")
-```
-
-### 3.3 L级 (精密工业级)
-
-```python
-"""
-L级配置: 精密操作
-- IMU: BMI088 + 磁力计, ±24g, ±4000°/s, 500Hz
-- 触觉: 24×24 压电式, 14bit, 0-2000kPa, 200Hz + 温度 + 接近觉
-- 力觉: 6轴 ±500N/±50N·m, 1000Hz EtherCAT
-- 融合: HYBRID融合, 512d
-- 控制: 阻抗控制 + RRT*规划, 200Hz
-"""
-
-from src.sensors.imu import IMUSensor, IMUSensorType, PoseEstimator
-from src.sensors.tactile import TactileArray, TactileSensorType
-from src.sensors.force import ForceTorqueSensor, ForceSensorType
-from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig
-
-# IMU: 高性能6轴+磁力计
+# === IMU ===
+from src.sensors.imu import IMUSensor, IMUSensorType
 imu = IMUSensor(
-    sensor_type=IMUSensorType.MPU9250,  # 9轴版本
-    sensor_id="imu_0",
-    accel_range=24,
-    gyro_range=4000,
-    sample_rate=500
+    sensor_type=IMUSensorType.BMI088,
+    sensor_id="imu_0"
 )
-imu.open()
-imu.calibrate_gyro_bias(num_samples=500)
-imu.calibrate_accel(known_orientation="level")
-
-# 触觉: 高分辨率电子皮肤
-tactile = TactileArray(
-    array_size=(24, 24),
-    sensor_type=TactileSensorType.PIEZOELECTRIC,
-    sensor_id="tactile_0"
-)
-tactile.open()
-
-# 六轴力矩: EtherCAT接口
-force = ForceTorqueSensor(
-    sensor_type=ForceSensorType.SIX_AXIS,
-    sensor_id="ft_0",
-    ip_address="192.168.1.101",
-    ethernet_type="TCP"
-)
-force.open()
-force.set_tool_center(tool_mass=1.0, tool_com=np.array([0, 0, 0.1]))
-force.calibrate_bias(num_samples=500)
-
-# 姿态估计: 卡尔曼滤波
-pose_estimator = PoseEstimator(
-    algorithm="kalman",
-    sample_rate=500.0
-)
-
-# 融合配置
-fusion_config = FusionConfig(
-    fusion_strategy="hybrid",
-    hidden_dim=512,
-    num_heads=6,
-    num_layers=3
-)
-fusion = CrossModalFusion(fusion_config)
-
-print("L级传感器和融合初始化完成")
+assert imu.open(), "IMU传感器连接失败"
 ```
 
-### 3.4 XL级 (高性能工业级)
+### 2.2 快速启动模板
 
 ```python
+#!/usr/bin/env python3
 """
-XL级配置: 高性能/高速
-- IMU: ADIS16470×1, ±40g, ±4000°/s, 1000Hz
-- 触觉: 32×32 光学式, 14bit, 0-5000kPa, 500Hz
-- 力觉: 6轴 ±1000N/±100N·m, 2000Hz
-- 融合: EARLY+HYBRID, 768d
-- 控制: MPC + RRT*, 500Hz
+SuperModel 实机启动模板
 """
-
-from src.sensors.imu import IMUSensor, IMUSensorType, PoseEstimator
-from src.sensors.tactile import TactileArray, TactileSensorType
-from src.sensors.force import ForceTorqueSensor, ForceSensorType
-from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig
-
-imu = IMUSensor(
-    sensor_type=IMUSensorType.ADIS16470,
-    sensor_id="imu_0",
-    accel_range=40,
-    gyro_range=4000,
-    sample_rate=1000
-)
-imu.open()
-
-tactile = TactileArray(
-    array_size=(32, 32),
-    sensor_type=TactileSensorType.OPTICAL,
-    sensor_id="tactile_0"
-)
-tactile.open()
-
-force = ForceTorqueSensor(
-    sensor_type=ForceSensorType.SIX_AXIS,
-    sensor_id="ft_0",
-    ip_address="192.168.1.102",
-    ethernet_type="UDP"
-)
-force.open()
-
-pose_estimator = PoseEstimator(
-    algorithm="madgwick",
-    sample_rate=1000.0,
-    beta=0.05
-)
-
-fusion_config = FusionConfig(
-    fusion_strategy="early",
-    hidden_dim=768,
-    num_heads=8,
-    num_layers=4
-)
-fusion = CrossModalFusion(fusion_config)
-
-print("XL级配置完成")
-```
-
-### 3.5 XXL级 (旗舰全功能)
-
-```python
-"""
-XXL级配置: 全功能旗舰
-- IMU: ADIS16470×2 (冗余), ±80g, ±8000°/s, 2000Hz
-- 触觉: 48×48 光学式, 16bit, 0-10000kPa, 1000Hz
-- 力觉: 6轴 ±5000N/±500N·m, 5000Hz
-- 融合: EARLY+HYBRID+LATE, 1024d
-- 控制: MPC + 多次RRT*, 1000Hz
-"""
-
-from src.sensors.imu import IMUSensor, IMUSensorType, PoseEstimator
-from src.sensors.tactile import TactileArray, TactileSensorType
-from src.sensors.force import ForceTorqueSensor, ForceSensorType
-from src.fusion.cross_modal_fusion import CrossModalFusion, FusionConfig
-
-# 双IMU冗余配置
-imu_primary = IMUSensor(
-    sensor_type=IMUSensorType.ADIS16470,
-    sensor_id="imu_0",
-    accel_range=80,
-    gyro_range=8000,
-    sample_rate=2000
-)
-imu_secondary = IMUSensor(
-    sensor_type=IMUSensorType.ADIS16470,
-    sensor_id="imu_1",
-    accel_range=80,
-    gyro_range=8000,
-    sample_rate=2000
-)
-imu_primary.open()
-imu_secondary.open()
-
-# 高分辨率触觉
-tactile = TactileArray(
-    array_size=(48, 48),
-    sensor_type=TactileSensorType.OPTICAL,
-    sensor_id="tactile_0"
-)
-tactile.open()
-
-# 重载力矩
-force = ForceTorqueSensor(
-    sensor_type=ForceSensorType.SIX_AXIS,
-    sensor_id="ft_0",
-    ip_address="192.168.1.103",
-    ethernet_type="UDP"
-)
-force.open()
-
-# 高性能融合
-fusion_config = FusionConfig(
-    fusion_strategy="early",
-    hidden_dim=1024,
-    num_heads=12,
-    num_layers=6
-)
-fusion = CrossModalFusion(fusion_config)
-
-print("XXL级配置完成")
-```
-
----
-
-## 4. 传感器-控制集成流水线
-
-### 4.1 M级完整闭环示例
-
-```python
-"""
-M级: 传感器采集 → 融合 → 控制 → 执行 完整闭环
-控制频率: 100Hz, 闭环延迟 < 70ms
-"""
-
 import numpy as np
-import time
-import sys
-sys.path.insert(0, 'src')
+from src.sensors.tactile import TactileArray, TactileSensorType
+from src.sensors.force import ForceTorqueSensor, ForceSensorType
+from src.sensors.imu import IMUSensor, IMUSensorType
+from src.control.tactile_control import TactileServoController, TactileServoParams
+from src.control.force_control import ForceController, ForceControlParams
+from src.control.imu_control import AttitudeStabilizer, IMUControlParams
+from src.control.sensor_fusion_control import SensorFusionController, FusionControlConfig
+from src.hardware.rk3588 import RK3588Platform
 
-from sensors.imu import IMUSensor, IMUSensorType, PoseEstimator
-from sensors.tactile import TactileArray, TactileSensorType
-from sensors.force import ForceTorqueSensor, ForceSensorType
-from fusion.cross_modal_fusion import CrossModalFusion, FusionConfig, MultimodalInput
-from control.imu_control import AttitudeStabilizer
-from control.tactile_control import TactileServoController
-from control.force_control import ForceController
+GRADE = 'M'  # S/M/L/XL/XXL
 
-# --- 初始化 ---
-imu = IMUSensor(IMUSensorType.BMI088, sensor_id="imu_0", sample_rate=200)
-imu.open()
+def create_agents(grade: str):
+    """根据AGV等级创建具身控制器"""
+    
+    # 触觉控制
+    tactile = TactileArray(array_size=(16, 16), sensor_id="t0")
+    tactile_ctrl = TactileServoController(TactileServoParams(grade=grade))
+    
+    # 力觉控制
+    force = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS, sensor_id="f0")
+    force_ctrl = ForceController(ForceControlParams(grade=grade))
+    
+    # IMU控制
+    imu = IMUSensor(sensor_type=IMUSensorType.BMI088, sensor_id="i0")
+    imu_ctrl = AttitudeStabilizer(IMUControlParams(grade=grade))
+    
+    # 融合控制
+    fusion_cfg = FusionControlConfig(grade=grade)
+    fusion_ctrl = SensorFusionController(fusion_cfg)
+    
+    return {
+        'tactile': (tactile, tactile_ctrl),
+        'force': (force, force_ctrl),
+        'imu': (imu, imu_ctrl),
+        'fusion': (fusion_ctrl),
+    }
 
-tactile = TactileArray((16, 16), TactileSensorType.CAPACITIVE, sensor_id="tactile_0")
-tactile.open()
+def main():
+    # 初始化平台
+    platform = RK3588Platform()
+    platform.set_power_mode('performance')
+    
+    # 创建控制器
+    agents = create_agents(GRADE)
+    
+    # 打开所有传感器
+    for name, (sensor, ctrl) in agents.items():
+        if name != 'fusion':
+            sensor.open()
+    
+    # 运行控制循环
+    print(f"[SuperModel] 启动 {GRADE} 级具身智能大脑...")
+    
+    for step in range(1000):
+        # 采集
+        t_frame = agents['tactile'][0].capture()
+        f_wrench = agents['force'][0].capture()
+        i_frame = agents['imu'][0].capture()
+        
+        # 融合控制
+        ctrl_input = {
+            'tactile': t_frame,
+            'force': f_wrench,
+            'imu': i_frame,
+        }
+        ctrl_output = agents['fusion'].update(ctrl_input)
+        
+        # 执行
+        if ctrl_output.command is not None:
+            platform.send_motor_command(ctrl_output.command)
+        
+        if step % 100 == 0:
+            print(f"Step {step}: "
+                  f"T={t_frame.pressure_map.mean():.3f}, "
+                  f"F={f_wrench.magnitude:.2f}N, "
+                  f"IMU={i_frame.accel_magnitude:.2f}m/s²")
+    
+    # 清理
+    for name, (sensor, _) in agents.items():
+        if name != 'fusion':
+            sensor.close()
+    
+    print("[SuperModel] 具身智能大脑关闭")
 
-force = ForceTorqueSensor(ForceSensorType.SIX_AXIS, sensor_id="ft_0")
-force.open()
-
-pose_est = PoseEstimator("madgwick", sample_rate=200.0)
-attitude_ctrl = AttitudeStabilizer(kp=2.0, ki=0.1, kd=0.5)
-tactile_ctrl = TactileServoController(kp=1.5)
-force_ctrl = ForceController(force_threshold=20.0)
-
-fusion = CrossModalFusion(FusionConfig(hidden_dim=256, num_heads=4))
-
-# --- 主循环: 100Hz ---
-dt = 0.01  # 10ms
-rate_hz = 100
-
-print("启动传感器-控制闭环...")
-for step in range(500):
-    loop_start = time.time()
-    
-    # 1. 传感器采集
-    imu_frame = imu.capture()
-    tactile_frame = tactile.capture()
-    force_wrench = force.capture()
-    
-    # 2. 姿态估计
-    pose = pose_est.update(
-        imu_frame.accel,
-        imu_frame.gyro,
-        imu_frame.mag
-    )
-    euler = pose.to_euler()
-    
-    # 3. 接触检测
-    contact = force.detect_contact(force_wrench)
-    contacts = tactile.detect_contacts(tactile_frame)
-    slip = tactile.get_slip_signal(tactile_frame)
-    grip_quality = tactile.estimate_grip_quality(tactile_frame)
-    
-    # 4. 传感器融合
-    multimodal = MultimodalInput(
-        vision=None,
-        audio=None,
-        tactile=tactile_frame.pressure_map.flatten(),
-        force=force_wrench.to_vector(),
-        imu=np.concatenate([imu_frame.accel, imu_frame.gyro]),
-        language=None,
-        timestamp=time.time()
-    )
-    fused = fusion.fuse(multimodal)
-    
-    # 5. 控制器计算
-    # 姿态稳定控制
-    attitude_cmd = attitude_ctrl.compute(
-        current_rpy=euler,
-        target_rpy=np.array([0.0, 0.0, 0.0]),  # 保持水平
-        current_angular_vel=imu_frame.gyro
-    )
-    
-    # 力觉响应
-    if contact.is_contact:
-        force_response = force_ctrl.compute(contact)
-    else:
-        force_response = np.zeros(3)
-    
-    # 触觉伺服
-    tactile_cmd = tactile_ctrl.compute(
-        tactile_frame,
-        target_force=5.0,
-        grip_quality=grip_quality
-    )
-    
-    # 6. 安全检查
-    # - 速度限制
-    # - 边界限制
-    # - 力限幅
-    safety_ok = (
-        np.linalg.norm(attitude_cmd) < 10.0 and
-        contact.contact_force < 50.0 and
-        grip_quality['overall'] > 0.3
-    )
-    
-    if not safety_ok:
-        attitude_cmd = np.zeros(3)
-        print(f"[警告] 安全触发! step={step}, grip={grip_quality['overall']:.2f}")
-    
-    # 7. 执行 (实际部署时发送到电机驱动)
-    # motor_driver.send_velocity(attitude_cmd)
-    
-    # 8. 周期控制
-    elapsed = time.time() - loop_start
-    sleep_time = dt - elapsed
-    if sleep_time > 0:
-        time.sleep(sleep_time)
-    
-    if step % 100 == 0:
-        print(f"Step {step}: rpy={[f'{x:.3f}' for x in euler]}, "
-              f"force={force_wrench.magnitude:.2f}N, "
-              f"grip={grip_quality['overall']:.2f}, "
-              f"fused_dim={fused.state.shape}, "
-              f"loop_time={elapsed*1000:.1f}ms")
-
-print("闭环运行完成")
-imu.close()
-tactile.close()
-force.close()
+if __name__ == '__main__':
+    main()
 ```
 
 ---
 
-## 5. 仿真验证流程
+## 3. 传感器校准
 
-### 5.1 使用PyBullet验证
+### 3.1 IMU 校准
 
 ```python
-"""
-部署前: 在PyBullet仿真中验证控制器
-"""
+from src.sensors.imu import IMUSensor, IMUSensorType, IMUCalibration
+from src.control.bias_compensation import IMUBiasCompensator
 
-from src.simulation.pybullet_sim import PyBulletSimulator
-
-# 创建仿真环境
-sim = PyBulletSimulator(gui=True)
-
-# 加载AGV URDF
-sim.load_agv(
-    urdf_path="sim_demos/urdf/agv_m.urdf",
-    base_position=[0, 0, 0],
-    grade='M'
-)
-
-# 运行传感器-控制闭环
-for step in range(200):
-    # 获取仿真IMU数据
-    imu_sim = sim.get_imu_data()
+def calibrate_imu(imu: IMUSensor, duration: int = 5):
+    """IMU 静态校准"""
+    imu.open()
     
-    # 运行控制器
-    cmd = attitude_ctrl.compute(...)
+    # 自检
+    assert imu.self_test(), "IMU 自检失败"
     
-    # 发送控制指令
-    sim.send_joint_velocity(cmd)
+    # 陀螺仪偏置校准 (静止状态)
+    imu.calibrate_gyro_bias(num_samples=500)
     
-    # 步进仿真
-    sim.step()
+    # 加速度计标定 (水平放置)
+    imu.calibrate_accel(known_orientation="level")
     
-    # 检查碰撞
-    if sim.check_collision():
-        print("碰撞检测!")
-        break
+    # 在线偏置补偿
+    compensator = IMUBiasCompensator(imu_type='bmi088', grade='M')
+    
+    for _ in range(100):
+        frame = imu.capture()
+        compensated = compensator.compensate(frame)
+    
+    return imu.calibration
 
-sim.close()
+# AGV五级IMU校准规格
+IMU_CALIBRATION_GRADES = {
+    'S':  {'bias_samples': 200,  'duration_s': 2,   'method': 'static'},
+    'M':  {'bias_samples': 500,  'duration_s': 5,   'method': 'static'},
+    'L':  {'bias_samples': 1000, 'duration_s': 10,  'method': 'static+temp'},
+    'XL': {'bias_samples': 2000, 'duration_s': 20,  'method': 'adaptive'},
+    'XXL': {'bias_samples': 5000,'duration_s': 30,  'method': 'adaptive+temp'},
+}
 ```
 
-### 5.2 五级性能基准测试
+### 3.2 力觉传感器校准
 
 ```python
-"""
-验证各级性能是否满足规格
-"""
+from src.sensors.force import ForceTorqueSensor, ForceCalibration
 
-from src.simulation.real_time_monitor import RealTimeMonitor
+def calibrate_force(ft: ForceTorqueSensor):
+    """力觉零点校准"""
+    ft.open()
+    
+    # 偏置校准 (无负载状态)
+    ft.calibrate_bias(num_samples=100)
+    
+    # 设置工具中心参数 (用于重力补偿)
+    ft.set_tool_center(
+        tool_mass=0.55,       # kg
+        tool_com=np.array([0, 0, 0.05])  # m, TCP偏移
+    )
+    
+    return ft.calibration
 
-grades = ['S', 'M', 'L', 'XL', 'XXL']
+# 校准后验证
+wrench = ft.capture()
+assert abs(wrench.force[2]) < 1.0, f"力觉零点偏移过大: {wrench.force}"
+print(f"力觉零点校准完成: {ft.calibration.bias}")
+```
 
-for grade in grades:
-    print(f"\n{'='*50}")
-    print(f"测试 {grade} 级性能基准")
-    print(f"{'='*50}")
+### 3.3 触觉传感器校准
+
+```python
+from src.sensors.tactile import TactileArray, TactileCalibration
+
+def calibrate_tactile(tactile: TactileArray):
+    """触觉传感器标定"""
+    tactile.open()
     
-    monitor = RealTimeMonitor(grade=grade)
-    results = monitor.run_benchmark(num_samples=100)
+    # 采集零点压力
+    frames = [tactile.capture() for _ in range(50)]
+    zero_pressure = np.mean([f.pressure_map for f in frames], axis=0)
     
-    # 验证延迟
-    target_latency = {
-        'S': 0.200, 'M': 0.070, 'L': 0.035, 'XL': 0.015, 'XXL': 0.007
-    }[grade]
+    # 设置标定参数
+    calibration = TactileCalibration(
+        pressure_min=0.0,
+        pressure_max=1.0,
+        force_scale=100.0,  # N 满量程
+        offset_map=zero_pressure
+    )
     
-    actual_latency = results['sensor_to_control_latency_p95']
-    passed = actual_latency < target_latency
+    tactile.calibrate(zero_pressure=zero_pressure)
+    print(f"触觉标定完成: scale={calibration.force_scale}N")
     
-    print(f"目标延迟: {target_latency*1000:.1f}ms")
-    print(f"实际延迟: {actual_latency*1000:.1f}ms")
-    print(f"通过: {'✅' if passed else '❌'}")
+    return calibration
 ```
 
 ---
 
-## 6. 实机部署检查清单
+## 4. 控制模块配置
+
+### 4.1 五级控制参数
+
+```python
+# AGV五级控制参数速查
+AGV_CONTROL_PARAMS = {
+    'S': {
+        'control_rate': 50,        # Hz
+        'tactile_rate': 50,        # Hz
+        'force_rate': 100,         # Hz
+        'imu_rate': 100,           # Hz
+        'fusion_rate': 50,         # Hz
+        'pid_kp': 1.0,
+        'pid_ki': 0.1,
+        'pid_kd': 0.05,
+        'impedance_stiffness': 100,
+        'max_velocity': 1.0,       # m/s
+        'safety_distance': 0.5,     # m
+    },
+    'M': {
+        'control_rate': 100,
+        'tactile_rate': 100,
+        'force_rate': 500,
+        'imu_rate': 200,
+        'fusion_rate': 100,
+        'pid_kp': 1.5,
+        'pid_ki': 0.15,
+        'pid_kd': 0.08,
+        'impedance_stiffness': 200,
+        'max_velocity': 1.5,
+        'safety_distance': 0.3,
+    },
+    'L': {
+        'control_rate': 200,
+        'tactile_rate': 200,
+        'force_rate': 1000,
+        'imu_rate': 500,
+        'fusion_rate': 200,
+        'pid_kp': 2.0,
+        'pid_ki': 0.2,
+        'pid_kd': 0.1,
+        'impedance_stiffness': 400,
+        'max_velocity': 2.0,
+        'safety_distance': 0.2,
+    },
+    'XL': {
+        'control_rate': 500,
+        'tactile_rate': 500,
+        'force_rate': 2000,
+        'imu_rate': 1000,
+        'fusion_rate': 500,
+        'pid_kp': 2.5,
+        'pid_ki': 0.25,
+        'pid_kd': 0.12,
+        'impedance_stiffness': 600,
+        'max_velocity': 2.5,
+        'safety_distance': 0.15,
+    },
+    'XXL': {
+        'control_rate': 1000,
+        'tactile_rate': 1000,
+        'force_rate': 5000,
+        'imu_rate': 2000,
+        'fusion_rate': 1000,
+        'pid_kp': 3.0,
+        'pid_ki': 0.3,
+        'pid_kd': 0.15,
+        'impedance_stiffness': 800,
+        'max_velocity': 3.0,
+        'safety_distance': 0.1,
+    },
+}
+```
+
+### 4.2 融合控制五级规格
+
+```python
+# 传感器融合控制五级规格表
+FUSION_CONTROL_SPECS = {
+    'S':  {'fused_modalities': 2,  'rate': 50,   'filter': 'complementary', '闭环延迟': '<100ms'},
+    'M':  {'fused_modalities': 3,  'rate': 100,  'filter': 'EKF',          '闭环延迟': '<50ms'},
+    'L':  {'fused_modalities': 4,  'rate': 200,  'filter': 'adaptive_EKF', '闭环延迟': '<20ms'},
+    'XL': {'fused_modalities': 5,  'rate': 500,  'filter': 'neural',       '闭环延迟': '<10ms'},
+    'XXL':{'fused_modalities': 6,  'rate': 1000, 'filter': 'GNN',          '闭环延迟': '<5ms'},
+}
+```
+
+---
+
+## 5. 五级规格对照表
+
+### 5.1 感知子系统
+
+| 感知参数 | S级 | M级 | L级 | XL级 | XXL级 |
+|---------|-----|-----|-----|------|-------|
+| 触觉阵列 | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| 触觉采样率 | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| 力觉轴数 | 3轴 | 6轴 | 6轴 | 6轴 | 6轴 |
+| 力觉采样率 | 100Hz | 500Hz | 1000Hz | 2000Hz | 5000Hz |
+| IMU型号 | MPU6050 | BMI088 | BMI088×2 | ADIS16470×2 | ADIS16470×4 |
+| IMU采样率 | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| 相机 | 单目 | 双目 | 双目+深度 | 双目+深度+广角 | 多目+深度 |
+
+### 5.2 控制子系统
+
+| 控制参数 | S级 | M级 | L级 | XL级 | XXL级 |
+|---------|-----|-----|-----|------|-------|
+| 控制频率 | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| 控制策略 | PID | 阻抗 | 力位混合 | 自适应阻抗 | 预测控制 |
+| 力控带宽 | — | 5Hz | 10Hz | 20Hz | 50Hz |
+| 触觉反馈 | — | 接触检测 | 滑移检测 | 抓取质量 | 精细操作 |
+| 故障容错 | 单传感器 | 双冗余 | 三冗余 | 多模态容错 | 智能切换 |
+
+### 5.3 计算子系统
+
+| 计算参数 | S级 | M级 | L级 | XL级 | XXL级 |
+|---------|-----|-----|-----|------|-------|
+| 计算平台 | RK3588 | RK3588+NPU | RK3588+NPU | x86+GPU | x86+GPU集群 |
+| TOPS | 6 | 6+8 | 6+16 | 16+32 | 64+256 |
+| 内存 | 4GB | 8GB | 16GB | 32GB | 128GB |
+| 通信 | CAN | CAN+以太网 | EtherCAT | EtherCAT+光纤 | 多路光纤 |
+
+---
+
+## 6. 运行检查清单
 
 ### 部署前检查
 
-- [ ] 传感器连接测试 (IMU/触觉/力觉/相机)
-- [ ] 传感器标定 (IMU零偏、触觉零点、力矩偏置)
-- [ ] 通信测试 (ROS2话题/服务/动作)
-- [ ] 安全控制器测试 (急停、碰撞检测)
-- [ ] 边界测试 (关节限位、速度限制)
+```bash
+# 1. 硬件连接检查
+ls /dev/video*        # 相机
+ls /dev/i2c-*        # I2C设备
+ip link show         # 网络接口
 
-### S级部署检查项
+# 2. 传感器连接测试
+python -c "
+from src.sensors.tactile import TactileArray
+from src.sensors.force import ForceTorqueSensor
+from src.sensors.imu import IMUSensor
+# 测试各传感器连接
+"
 
-```
-[ ] MPU6050 I2C 通信正常
-[ ] 单目相机USB连接正常
-[ ] ROS2 Humble 节点启动
-[ ] 50Hz 控制循环稳定
-[ ] 安全限速配置 (<0.5m/s)
-```
-
-### M级部署检查项
-
-```
-[ ] BMI088 SPI 通信正常 (200Hz采样)
-[ ] 双目D435i USB3.0连接
-[ ] 六轴力矩 USB/CAN 连接
-[ ] 16×16触觉 SPI 连接
-[ ] RK3588 NPU 推理延迟 <5ms
-[ ] 100Hz 控制循环稳定
-[ ] 激光导航建图完成
-[ ] 安全力限幅配置 (±50N)
+# 3. 校准数据加载
+ls ~/.supermodel/calibration/
+# 应包含: imu_calibration.yaml, force_calibration.yaml, tactile_calibration.yaml
 ```
 
-### L级部署检查项
+### 运行时检查
 
-```
-[ ] ADIS/BMI088 高精度IMU 校准
-[ ] 双目D455 立体校正
-[ ] EtherCAT 实时通信 (1000Hz同步)
-[ ] 24×24触觉 标定完成
-[ ] 阻抗控制参数整定 (K=500, B=50)
-[ ] RRT* 路径规划测试
-[ ] 200Hz 控制循环稳定
-[ ] ISO 3691-4 安全认证
-```
+```python
+# 运行时状态监控
+from src.control.sensor_fusion_control import SensorFusionController
 
-### XL级部署检查项
-
-```
-[ ] ADIS16470 双IMU 冗余验证
-[ ] 事件相机 1000Hz 低延迟测试
-[ ] EtherCAT 2000Hz 同步
-[ ] MPC 参数调优 (预测时域=0.5s)
-[ ] 500Hz 控制循环稳定 (RT-PREEMPT)
-[ ] 多层避障 DWA+APF 测试
-[ ] IEC 61508 SIL2 功能安全
-```
-
-### XXL级部署检查项
-
-```
-[ ] ADIS16470×2 冗余切换测试
-[ ] 多目相机+3D LiDAR 外参标定
-[ ] 48×48触觉 高速采集验证
-[ ] 6轴±5000N 力矩 校准
-[ ] MPC+RRT* 多次规划测试
-[ ] 1000Hz 控制 (Xenomai+FPGA)
-[ ] 多AGV 20台协同测试
-[ ] IEC 61508 SIL3 功能安全
-[ ] 端到端 <5ms 延迟验证
+def health_check(controller: SensorFusionController):
+    """运行时健康检查"""
+    issues = []
+    
+    # 检查传感器帧率
+    if controller.fps < controller.target_fps * 0.8:
+        issues.append(f"FPS过低: {controller.fps:.1f} < {controller.target_fps}")
+    
+    # 检查力觉偏置
+    if controller.last_wrench and controller.last_wrench.magnitude > 50.0:
+        issues.append(f"力觉偏置异常: {controller.last_wrench.magnitude:.1f}N")
+    
+    # 检查IMU温度
+    if controller.last_imu and controller.last_imu.temperature > 45.0:
+        issues.append(f"IMU温度过高: {controller.last_imu.temperature:.1f}°C")
+    
+    # 检查触觉接触
+    contacts = controller.last_tactile_contacts
+    if len(contacts) > 20:
+        issues.append(f"触觉噪声过多: {len(contacts)}个接触点")
+    
+    if issues:
+        print(f"[警告] 健康检查发现问题: {issues}")
+        return False
+    return True
 ```
 
 ---
@@ -642,29 +456,42 @@ for grade in grades:
 
 ### 常见问题
 
-| 问题 | 可能原因 | 解决方案 |
+| 症状 | 可能原因 | 解决方案 |
 |------|---------|---------|
-| IMU数据全是零 | I2C地址错误 | 检查0x68/0x69地址配置 |
-| 触觉数据噪声大 | SPI信号干扰 | 添加CRC校验，降低采样率 |
-| 力矩偏置漂移 | 温度漂移 | 启用温度补偿，每小时重新标定 |
-| 融合延迟过高 | GPU内存不足 | 降低hidden_dim或减少融合层数 |
-| 控制响应慢 | 实时性不足 | 启用Xenomai/RT-PREEMPT内核 |
+| 触觉数据全零 | I2C未连接 | 检查接线/地址(0x18) |
+| 力觉偏置漂移 | 未进行零点校准 | 运行calibrate_bias() |
+| IMU姿态跳动 | 陀螺仪偏置未补偿 | 运行calibrate_gyro_bias() |
+| 融合控制震荡 | PID参数过大 | 降低kp/ki，增设kd |
+| 控制延迟 > 100ms | 计算负载过高 | 降低融合模态数量 |
+| 触觉噪声过大 | 传感器线缆干扰 | 屏蔽线缆/降低采样率 |
+| 力觉饱和 | 碰撞/过载 | 检查物理约束 |
 
-### 调试工具
+### 偏置补偿故障排查
 
 ```python
-# 使用实时监控器调试
-from src.simulation.real_time_monitor import RealTimeMonitor
+from src.control.bias_compensation import BiasCompensationSystem
 
-monitor = RealTimeMonitor(grade='M', verbose=True)
-monitor.run_diagnostic(num_samples=50)
-# 输出: 传感器延迟、抖动、吞吐量、融合各阶段延迟
+def diagnose_bias_issues():
+    """偏置补偿问题诊断"""
+    system = BiasCompensationSystem()
+    
+    # 检查各传感器偏置状态
+    for sensor in ['tactile', 'force', 'imu']:
+        status = system.get_status(sensor)
+        print(f"{sensor}: bias_drift={status['bias_drift']:.4f}, "
+              f"drift_rate={status['drift_rate']:.4f}/s, "
+              f"confidence={status['confidence']:.2f}")
+        
+        if status['confidence'] < 0.5:
+            print(f"  → 建议: 重新校准 {sensor}")
+        if abs(status['drift_rate']) > 0.1:
+            print(f"  → 警告: {sensor} 漂移率过高")
 ```
 
 ---
 
-## 8. 版本记录
+## 版本历史
 
-| 版本 | 日期 | 更新内容 |
-|------|------|---------|
-| v1.0.0 | 2026-04-07 | 初始版本，包含S/M/L/XL/XXL五级部署指南 |
+- **v2.35.0** (2026-04-10): 新增实机部署指南; 包含传感器连接检查/校准流程/五级参数配置/运行检查清单/故障排查
+- **v2.34.0** (2026-04-10): 具身智能大脑集成测试; 2215项测试全通过
+- **v2.33.0** (2026-04-10): 传感器偏置补偿模块; AGV五级规格表完善
