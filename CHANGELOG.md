@@ -2,6 +2,26 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.05.0] - 2026-04-09
+
+### Added
+- docs/design/SENSOR_CONTROL_INTERFACE_SPEC.md: 新增传感器-控制模块详细接口规范文档
+  - 触觉传感器完整接口 (TactileSensor基类 + TactileFrame数据结构 + TactileArray实现)
+  - 力觉传感器完整接口 (ForceSensor基类 + Wrench数据结构 + ForceTorqueSensor实现)
+  - IMU传感器完整接口 (IMUSensor基类 + IMUFrame数据结构 + 姿态估计接口)
+  - 控制器完整接口 (Controller基类 + MotorController + MotionController + TactileServoController)
+  - 传感器-控制器桥接器 (SensorControllerBridge) 接口设计
+  - AGV五级规格对照表 (S/M/L/XL/XXL)
+  - 集成流水线时序图和完整示例代码
+
+### Documentation
+- MODULE_INDEX.md: 更新至 v2.05.0，新增设计文档导航
+- AGV_SPEC.md: 持续完善AGV五级规格总表
+
+### Testing
+- sensor_tests.py: 368项全部通过
+- 全项目测试: 1835项全部通过 (49.53s)
+
 ## [2.03.0] - 2026-04-09
 
 ### Added
