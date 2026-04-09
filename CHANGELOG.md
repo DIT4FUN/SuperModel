@@ -2,6 +2,29 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.32.0] - 2026-04-10
+
+### Added
+- **行为树模块 (behavior_tree.py)** - 21876字节全新模块
+  - 完整BT节点类型: Selector/Sequence/Parallel/Condition/Action/SubTree
+  - 装饰器: Inverter/RepeatUntil/RetryUntil/Timeout/RateLimiter
+  - BTContext黑板系统: 传感器/状态/黑板数据访问
+  - AGV五级规格: S(3层/16节点/10Hz) → XXL(16层/4096节点/500Hz)
+  - BehaviorTree管理器: tick循环/状态重置/性能统计
+  - 工厂函数: create_for_grade/create_safe_selector/create_action_sequence
+- **行为树测试 (behavior_tree_tests.py)** - 17142字节, 51项测试全通过
+  - 覆盖所有节点类型、装饰器、AGV五级规格、状态追踪
+
+### Fixed
+- RepeatUntil装饰器: 修复多次tick后重复调用child问题
+- RetryUntil装饰器: 修复RUNNING状态处理逻辑
+
+### Test Results
+- sensor_tests.py: 332项通过
+- fusion_tests.py: 73项通过
+- behavior_tree_tests.py: 51项新增通过
+- 合计: 456项全部通过
+
 ## [2.31.0] - 2026-04-10
 
 ### Added

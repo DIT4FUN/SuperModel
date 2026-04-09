@@ -219,4 +219,11 @@ __all__ = [
     # sensor_fusion_control
     'SensorFusionController', 'SensorFusionControlState', 'FusionControlConfig',
     'FusionControlGrade', 'get_fusion_control_spec', 'AGV_FUSION_CONTROL_GRADES',
+    # behavior_tree
+    'BehaviorTree', 'BTNode', 'BTContext', 'NodeState',
+    'Selector', 'Sequence', 'Parallel',
+    'Condition', 'Action', 'SubTree',
+    'Inverter', 'RepeatUntil', 'RetryUntil', 'Timeout', 'RateLimiter',
+    'BTGrade', 'AGV_BT_GRADES',
+    'create_for_grade', 'create_safe_selector', 'create_action_sequence',
 ]
