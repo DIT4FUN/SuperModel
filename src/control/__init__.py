@@ -122,6 +122,12 @@ from .navigation import (
     DijkstraPlanner, AStarPlanner,
     create_navigation_grid,
 )
+from .patrol_control import (
+    PatrolController, PatrolRoute, PatrolPoint, PatrolState,
+    Obstacle, PatrolGrade, PatrolSpec,
+    create_patrol_controller, run_patrol_benchmark, get_patrol_spec,
+    PatrolMetrics, PatrolEvent,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -190,4 +196,9 @@ __all__ = [
     'PlannerType', 'NavigationState',
     'DijkstraPlanner', 'AStarPlanner',
     'create_navigation_grid',
+    # patrol_control
+    'PatrolController', 'PatrolRoute', 'PatrolPoint', 'PatrolState',
+    'Obstacle', 'PatrolGrade', 'PatrolSpec',
+    'create_patrol_controller', 'run_patrol_benchmark', 'get_patrol_spec',
+    'PatrolMetrics', 'PatrolEvent',
 ]
