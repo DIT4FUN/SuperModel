@@ -4033,5 +4033,212 @@ class TestAGVFiveGradeSpecs(unittest.TestCase):
         self.assertLessEqual(specs_s['freq_hz'], specs_xxl['freq_hz'])
 
 
+class TestVirtualSensors(unittest.TestCase):
+    """虚拟传感器功能测试"""
+
+    def test_virtual_tactile_contact(self):
+        """测试虚拟触觉接触模拟"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        vt = VirtualTactileSensor(array_size=(16, 16))
+        vt.open()
+        frame = vt.simulate_contact((0.5, 0.5), 0.3, 10.0)
+        self.assertEqual(frame.pressure_map.shape, (16, 16))
+        self.assertGreater(np.max(frame.pressure_map), 0)
+        vt.close()
+
+    def test_virtual_tactile_multi_contact(self):
+        """测试虚拟触觉多点接触"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        vt = VirtualTactileSensor(array_size=(16, 16))
+        vt.open()
+        contacts = [((0.3, 0.3), 10.0, 0.2), ((0.7, 0.7), 8.0, 0.2)]
+        frame = vt.simulate_multi_contact(contacts)
+        self.assertEqual(frame.pressure_map.shape, (16, 16))
+        vt.close()
+
+    def test_virtual_tactile_sliding(self):
+        """测试虚拟触觉滑移模拟"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        vt = VirtualTactileSensor(array_size=(16, 16))
+        vt.open()
+        vt._last_contact_pos = (0.5, 0.5)
+        frames = vt.simulate_sliding((0.1, 0.0), 0.05, 5)
+        self.assertEqual(len(frames), 5)
+        self.assertNotEqual(frames[0].pressure_map.mean(), frames[4].pressure_map.mean())
+        vt.close()
+
+    def test_virtual_tactile_slip_detection_stick(self):
+        """测试虚拟触觉静止状态滑移检测"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        vt = VirtualTactileSensor()
+        result = vt.simulate_slip_detection(10.0, 0.3, (0.0, 0.0))
+        self.assertEqual(result['slip_state'], 'stick')
+        self.assertEqual(result['slip_probability'], 0.0)
+
+    def test_virtual_tactile_slip_detection_sliding(self):
+        """测试虚拟触觉滑动状态滑移检测"""
+        from src.sensors.tactile import VirtualTactileSensor
+        
+        vt = VirtualTactileSensor()
+        result = vt.simulate_slip_detection(10.0, 0.3, (0.5, 0.0))
+        self.assertIn(result['slip_state'], ['micro_slip', 'sliding'])
+        self.assertGreater(result['slip_probability'], 0.0)
+
+    def test_virtual_force_contact(self):
+        """测试虚拟力觉接触模拟"""
+        from src.sensors.force import VirtualForceSensor
+        
+        vf = VirtualForceSensor()
+        vf.open()
+        wrench = vf.simulate_contact((10.0, 0.0, 5.0), (0.0, 0.0, 1.0))
+        self.assertEqual(wrench.force.shape, (3,))
+        self.assertEqual(wrench.torque.shape, (3,))
+        self.assertGreater(wrench.force[0], 0)
+        vf.close()
+
+    def test_virtual_force_collision(self):
+        """测试虚拟力觉碰撞模拟"""
+        from src.sensors.force import VirtualForceSensor
+        
+        vf = VirtualForceSensor()
+        vf.open()
+        result = vf.simulate_collision(direction=(0.0, 0.0, 1.0), peak_force=50.0)
+        self.assertIsInstance(result, list)
+        self.assertGreater(len(result), 0)
+        self.assertEqual(result[0].force.shape, (3,))
+        vf.close()
+
+    def test_virtual_force_payload(self):
+        """测试虚拟力觉负载估计"""
+        from src.sensors.force import VirtualForceSensor
+        
+        vf = VirtualForceSensor()
+        vf.open()
+        wrench = vf.simulate_payload(mass=10.0)
+        self.assertAlmostEqual(wrench.force[2], -98.1, delta=5.0)
+        vf.close()
+
+    def test_virtual_force_surface_contact(self):
+        """测试虚拟力觉表面接触"""
+        from src.sensors.force import VirtualForceSensor
+        
+        vf = VirtualForceSensor()
+        vf.open()
+        wrench = vf.simulate_surface_contact(
+            surface_normal=(0.0, 0.0, 1.0),
+            contact_point=(0.0, 0.0, 0.0),
+            penetration_depth=0.001,
+            stiffness=1000.0,
+            damping=50.0
+        )
+        self.assertEqual(wrench.force.shape, (3,))
+        vf.close()
+
+    def test_virtual_imu_static(self):
+        """测试虚拟IMU静态模拟"""
+        from src.sensors.imu import VirtualIMUSensor
+        
+        vi = VirtualIMUSensor()
+        vi.open()
+        frame = vi.simulate_static()
+        self.assertEqual(frame.accel.shape, (3,))
+        self.assertEqual(frame.gyro.shape, (3,))
+        gyro_norm = float(np.linalg.norm(frame.gyro))
+        self.assertLessEqual(gyro_norm, 0.1)
+        vi.close()
+
+    def test_virtual_imu_motion(self):
+        """测试虚拟IMU运动模拟"""
+        from src.sensors.imu import VirtualIMUSensor
+        
+        vi = VirtualIMUSensor()
+        vi.open()
+        frame = vi.simulate_motion([0.0, 0.0, 0.0], [0.0, 0.0, 0.1])
+        self.assertGreater(np.abs(frame.gyro[2]), 0)
+        vi.close()
+
+    def test_virtual_imu_trajectory(self):
+        """测试虚拟IMU轨迹模拟"""
+        from src.sensors.imu import VirtualIMUSensor
+        
+        vi = VirtualIMUSensor()
+        vi.open()
+        frames = vi.simulate_trajectory(trajectory_type='circle', duration_s=0.5)
+        self.assertIsInstance(frames, list)
+        self.assertGreater(len(frames), 0)
+        vi.close()
+
+    def test_virtual_imu_agv_motion(self):
+        """测试虚拟IMU AGV运动模拟"""
+        from src.sensors.imu import VirtualIMUSensor
+        
+        vi = VirtualIMUSensor()
+        vi.open()
+        frame = vi.simulate_agv_motion(linear_velocity=(0.5, 0.0), angular_velocity=0.1)
+        self.assertEqual(frame.accel.shape, (3,))
+        self.assertEqual(frame.gyro.shape, (3,))
+        vi.close()
+
+    def test_virtual_imu_human_walking(self):
+        """测试虚拟IMU人体行走模拟"""
+        from src.sensors.imu import VirtualIMUSensor
+        
+        vi = VirtualIMUSensor()
+        vi.open()
+        frames = vi.simulate_human_walking(duration_s=1.0)
+        self.assertIsInstance(frames, list)
+        self.assertGreater(len(frames), 0)
+        self.assertEqual(frames[0].accel.shape, (3,))
+        vi.close()
+
+
+class TestGymEnvAGVSpecs(unittest.TestCase):
+    """Gymnasium 环境 AGV 五级规格测试"""
+
+    def test_gym_grade_spec_complete(self):
+        """测试五级规格完整性"""
+        from src.simulation.gym_env import AGV_GYM_GRADE_SPEC
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = AGV_GYM_GRADE_SPEC[grade]
+            self.assertEqual(spec['grade'], grade)
+            self.assertIn('payload_kg', spec)
+            self.assertIn('max_speed_mps', spec)
+            self.assertIn('control_freq_hz', spec)
+            self.assertIn('processor', spec)
+            self.assertIn('ai_tops', spec)
+
+    def test_gym_grade_progression(self):
+        """测试五级规格递增"""
+        from src.simulation.gym_env import AGV_GYM_GRADE_SPEC
+        prev_freq = 0
+        prev_tops = 0
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            spec = AGV_GYM_GRADE_SPEC[grade]
+            self.assertGreater(spec['control_freq_hz'], prev_freq)
+            self.assertGreater(spec['ai_tops'], prev_tops)
+            prev_freq = spec['control_freq_hz']
+            prev_tops = spec['ai_tops']
+
+    def test_gym_spec_get_grade_spec(self):
+        """测试获取单级规格"""
+        from src.simulation.gym_env import get_agv_grade_spec
+        spec = get_agv_grade_spec('M')
+        self.assertEqual(spec['grade'], 'M')
+        self.assertEqual(spec['payload_kg'], 100)
+
+    def test_create_agv_env_specs_injected(self):
+        """测试 create_agv_env 注入五级规格"""
+        from src.simulation.gym_env import create_agv_env
+        env = create_agv_env(scenario='reach', grade='M')
+        spec = getattr(env.unwrapped, '_grade_spec', None)
+        self.assertIsNotNone(spec)
+        self.assertEqual(spec['grade'], 'M')
+        env.close()
+
+
 if __name__ == '__main__':
     unittest.main()

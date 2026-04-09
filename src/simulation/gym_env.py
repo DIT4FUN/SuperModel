@@ -685,3 +685,190 @@ def get_gym_spec(grade: str = 'M') -> Dict[str, Any]:
         }
     }
     return specs.get(grade, specs['M'])
+
+
+# =============================================================================
+# AGV 五级 Gymnasium 环境规格表
+# =============================================================================
+
+AGV_GYM_GRADE_SPEC = {
+    'S': {
+        'grade': 'S', 'grade_desc': '小型AGV',
+        'payload_kg': 30, 'max_speed_mps': 0.5,
+        'dt': 0.02, 'sim_dt': 0.002, 'control_freq_hz': 50,
+        'obs_noise': 0.01, 'episode_length': 500,
+        'reward_tracking': 1.0, 'reward_smooth': 0.005,
+        'reward_energy': 0.001, 'reward_contact': 0.05,
+        'reward_collision': -1.0, 'max_torque_nm': 50,
+        'processor': 'RPi 4B', 'ai_tops': 5,
+        'imu_type': 'MPU6050', 'imu_hz': 100,
+        'camera': '单目640x480', 'audio_ch': 1,
+        'tactile_array': '8x8', 'force_axis': '3轴±100N',
+        'localization_mm': 10, 'collision_response_ms': 100,
+        'posture_stable_ms': 500,
+    },
+    'M': {
+        'grade': 'M', 'grade_desc': '中型AGV',
+        'payload_kg': 100, 'max_speed_mps': 1.5,
+        'dt': 0.01, 'sim_dt': 0.001, 'control_freq_hz': 100,
+        'obs_noise': 0.005, 'episode_length': 1000,
+        'reward_tracking': 1.0, 'reward_smooth': 0.01,
+        'reward_energy': 0.0005, 'reward_contact': 0.1,
+        'reward_collision': -2.0, 'max_torque_nm': 100,
+        'processor': 'RK3588/Nano', 'ai_tops': 20,
+        'imu_type': 'BMI088', 'imu_hz': 200,
+        'camera': '双目D435i 720p', 'audio_ch': 2,
+        'tactile_array': '16x16', 'force_axis': '6轴±200N',
+        'localization_mm': 5, 'collision_response_ms': 50,
+        'posture_stable_ms': 200,
+    },
+    'L': {
+        'grade': 'L', 'grade_desc': '大型AGV',
+        'payload_kg': 300, 'max_speed_mps': 2.0,
+        'dt': 0.005, 'sim_dt': 0.0005, 'control_freq_hz': 200,
+        'obs_noise': 0.002, 'episode_length': 1000,
+        'reward_tracking': 2.0, 'reward_smooth': 0.02,
+        'reward_energy': 0.0002, 'reward_contact': 0.2,
+        'reward_collision': -5.0, 'max_torque_nm': 200,
+        'processor': 'Orin NX', 'ai_tops': 100,
+        'imu_type': 'BMI088', 'imu_hz': 500,
+        'camera': '双目D455 60fps', 'audio_ch': 4,
+        'tactile_array': '24x24', 'force_axis': '6轴±500N',
+        'localization_mm': 3, 'collision_response_ms': 20,
+        'posture_stable_ms': 100,
+    },
+    'XL': {
+        'grade': 'XL', 'grade_desc': '超大型AGV',
+        'payload_kg': 600, 'max_speed_mps': 2.5,
+        'dt': 0.002, 'sim_dt': 0.0002, 'control_freq_hz': 500,
+        'obs_noise': 0.001, 'episode_length': 2000,
+        'reward_tracking': 5.0, 'reward_smooth': 0.05,
+        'reward_energy': 0.0001, 'reward_contact': 0.5,
+        'reward_collision': -10.0, 'max_torque_nm': 500,
+        'processor': 'Orin AGX', 'ai_tops': 300,
+        'imu_type': 'ADIS16470', 'imu_hz': 1000,
+        'camera': '双目+事件相机', 'audio_ch': 6,
+        'tactile_array': '32x32', 'force_axis': '6轴±1000N',
+        'localization_mm': 1, 'collision_response_ms': 10,
+        'posture_stable_ms': 50,
+    },
+    'XXL': {
+        'grade': 'XXL', 'grade_desc': '重型AGV',
+        'payload_kg': 1200, 'max_speed_mps': 3.0,
+        'dt': 0.001, 'sim_dt': 0.0001, 'control_freq_hz': 1000,
+        'obs_noise': 0.0005, 'episode_length': 5000,
+        'reward_tracking': 10.0, 'reward_smooth': 0.1,
+        'reward_energy': 0.00005, 'reward_contact': 1.0,
+        'reward_collision': -20.0, 'max_torque_nm': 1000,
+        'processor': 'Orin AGX x2+GPU', 'ai_tops': 500,
+        'imu_type': 'ADIS16470', 'imu_hz': 2000,
+        'camera': '多目+3D LiDAR', 'audio_ch': 8,
+        'tactile_array': '48x48', 'force_axis': '6轴±5000N',
+        'localization_mm': 0.5, 'collision_response_ms': 5,
+        'posture_stable_ms': 20,
+    },
+}
+
+
+def create_agv_env(
+    scenario: str = "reach",
+    grade: str = "M",
+    render_mode: Optional[str] = None,
+    seed: Optional[int] = None,
+    config_overrides: Optional[Dict[str, Any]] = None,
+) -> gym.Env:
+    """
+    创建 SuperModel AGV Gymnasium 环境 (推荐入口)
+
+    这是推荐使用的环境创建函数，相比 make_env 增加了:
+    - AGV 五级规格自动注入
+    - 配置覆盖支持
+    - 完整的场景预设
+
+    Args:
+        scenario: 场景类型
+            - "reach": 到达目标场景
+            - "track": 轨迹跟踪场景
+            - "grasp": 抓取操作场景
+            - "warehouse": 仓库物流场景
+            - "patrol": 巡逻巡检场景
+        grade: AGV 等级 ("S", "M", "L", "XL", "XXL")
+        render_mode: 渲染模式 ("rgb_array", "human", None)
+        seed: 随机种子
+        config_overrides: GymEnvConfig 配置覆盖字典
+
+    Returns:
+        env: 配置好的 Gymnasium 环境
+
+    AGV 五级规格速查:
+        S  : 小型AGV  30kg   50Hz  RPi  5 TOPS
+        M  : 中型AGV  100kg  100Hz RK3588 20 TOPS
+        L  : 大型AGV  300kg  200Hz Orin NX 100 TOPS
+        XL : 超大型AGV 600kg 500Hz Orin AGX 300 TOPS
+        XXL: 重型AGV  1200kg 1000Hz Orin AGX x2+GPU 500+ TOPS
+    """
+    register_gym_envs()
+
+    if grade not in AGV_GYM_GRADE_SPEC:
+        raise ValueError(
+            f"Unknown grade '{grade}'. "
+            f"Valid grades: {list(AGV_GYM_GRADE_SPEC.keys())}"
+        )
+
+    grade_spec = AGV_GYM_GRADE_SPEC[grade]
+
+    # 从五级规格构建 GymEnvConfig
+    config = GymEnvConfig(
+        dt=grade_spec['dt'],
+        sim_dt=grade_spec['sim_dt'],
+        episode_length=grade_spec['episode_length'],
+        obs_noise=grade_spec['obs_noise'],
+        grade=grade,
+        reward_tracking=grade_spec['reward_tracking'],
+        reward_smooth=grade_spec['reward_smooth'],
+        reward_energy=grade_spec['reward_energy'],
+        reward_contact=grade_spec['reward_contact'],
+        reward_collision=grade_spec['reward_collision'],
+    )
+
+    # 应用配置覆盖
+    if config_overrides:
+        for k, v in config_overrides.items():
+            if hasattr(config, k):
+                setattr(config, k, v)
+
+    env_id = f"SuperModel-{scenario}-{grade}-v0"
+
+    try:
+        env = gym.make(
+            env_id,
+            render_mode=render_mode,
+            scenario=scenario,
+            config=config,
+        )
+    except Exception:
+        # Fallback: 直接实例化
+        from src.simulation.gym_env import SuperModelGymEnv
+        env = SuperModelGymEnv(
+            render_mode=render_mode,
+            scenario=scenario,
+            config=config,
+        )
+
+    if seed is not None:
+        env.reset(seed=seed)
+
+    # 注入五级规格信息到 info
+    env.unwrapped._grade_spec = grade_spec
+
+    return env
+
+
+def list_agv_grade_specs() -> Dict[str, Dict[str, Any]]:
+    """列出所有 AGV 五级 Gym 规格详情"""
+    return dict(AGV_GYM_GRADE_SPEC)
+
+
+def get_agv_grade_spec(grade: str) -> Dict[str, Any]:
+    """获取指定 AGV 等级的 Gym 规格"""
+    return dict(AGV_GYM_GRADE_SPEC.get(grade, AGV_GYM_GRADE_SPEC['M']))

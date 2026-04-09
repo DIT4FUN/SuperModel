@@ -2,7 +2,24 @@
 
 All notable changes to SuperModel will be documented in this file.
 
-## [2.20.0] - 2026-04-09
+## [2.22.0] - 2026-04-10
+
+### Added
+- src/simulation/gym_env.py: 新增 AGV 五级 Gymnasium 环境规格表 (AGV_GYM_GRADE_SPEC)
+  - 覆盖 S/M/L/XL/XXL 五级完整规格 (负载/速度/控制频率/处理器/算力/传感器配置)
+  - 新增 create_agv_env() 便捷函数: 自动注入五级规格, 支持配置覆盖
+  - 新增 get_agv_grade_spec() / list_agv_grade_specs() 规格查询函数
+- tests/sensor_tests.py: 新增虚拟传感器测试组 (TestVirtualSensors, 14项测试)
+  - VirtualTactileSensor: 接触/多点接触/滑移/滑移检测 4项测试
+  - VirtualForceSensor: 接触/碰撞/负载/表面接触 4项测试
+  - VirtualIMUSensor: 静态/运动/轨迹/AGV运动/人体行走 5项测试
+- tests/sensor_tests.py: 新增 Gymnasium AGV五级规格测试组 (TestGymEnvAGVSpecs, 4项测试)
+  - 五级规格完整性、控制频率递增、算力递增、create_agv_env 规格注入验证
+
+### Changed
+- 传感器+融合测试: 396项全通过 (较上次+18项)
+
+## [2.21.0] - 2026-04-09
 
 ### Added
 - src/control/patrol_control.py: 新增 AGV 卡死检测与自主恢复系统
