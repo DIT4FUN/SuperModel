@@ -182,7 +182,70 @@ class Trajectory:
     timestamps: np.ndarray     # (T,)
 ```
 
-### 3.3 SafetyController 接口
+### 3.3 BehaviorTree 接口
+
+```python
+# === 行为树核心接口 ===
+class BTNode(ABC):
+    @abstractmethod
+    def tick(self, ctx: BTContext) -> NodeState: ...
+
+class BehaviorTree:
+    def __init__(self, root: BTNode, grade: BTGrade = BTGrade.M):
+        self.grade = grade
+        self.root = root
+        self._tick_count = 0
+    
+    def tick(self, ctx: BTContext) -> NodeState:
+        """执行一次 tick，返回根节点最终状态"""
+        return self.root.tick(ctx)
+    
+    @classmethod
+    def create_for_grade(cls, grade: BTGrade, root: BTNode, name: str) -> 'BehaviorTree':
+        """根据AGV五级规格创建行为树"""
+
+# === 组合节点 ===
+class Selector(BTNode):  # 或关系：任意子节点成功即成功
+class Sequence(BTNode):  # 与关系：全部子节点成功才成功
+class Parallel(BTNode): # 并行执行多个子节点
+
+# === 叶子节点 ===
+class Condition(BTNode):  # 条件判断（返回 SUCCESS/FAILURE）
+class Action(BTNode):     # 动作执行（可返回 RUNNING/SUCCESS/FAILURE）
+class SubTree(BTNode):    # 子树调用（行为树复用）
+
+# === 装饰器节点 ===
+class Inverter(BTNode):     # 反转子节点结果
+class RepeatUntil(BTNode): # 重复执行直到满足条件
+class RetryUntil(BTNode):  # 重试直到成功
+class Timeout(BTNode):     # 超时装饰器
+class RateLimiter(BTNode): # 频率限制装饰器
+
+# === 上下文 ===
+@dataclass
+class BTContext:
+    robot_state: Dict[str, Any]    # 机器人当前状态
+    task_goal: Optional[str]       # 当前任务目标
+    sensor_data: Dict[str, Any]   # 传感器数据
+    control_output: Dict[str, Any] # 控制输出
+    bt_data: Dict[str, Any]       # 行为树内部数据
+
+# === AGV五级规格 ===
+AGV_BT_GRADES = {
+    'S':   {'max_nodes': 20,  'tick_rate': 10,  'parallel': 1},
+    'M':   {'max_nodes': 50,  'tick_rate': 50,  'parallel': 3},
+    'L':   {'max_nodes': 150, 'tick_rate': 100, 'parallel': 5},
+    'XL':  {'max_nodes': 500, 'tick_rate': 200, 'parallel': 10},
+    'XXL': {'max_nodes': 2000,'tick_rate': 500, 'parallel': 20},
+}
+
+# === 工厂函数 ===
+def create_for_grade(grade: BTGrade, root: BTNode, name: str) -> BehaviorTree
+def create_safe_selector(name: str, children: List[BTNode], grade: BTGrade) -> Selector
+def create_action_sequence(name: str, actions: List[BTNode], grade: BTGrade) -> Sequence
+```
+
+### 3.4 SafetyController 接口
 
 ```python
 class SafetyController:
