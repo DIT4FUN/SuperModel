@@ -1322,3 +1322,171 @@ stats = ctrl.get_stats()
 | v2.08.0 | 2026-04-07 | 新增AGV五级控制参数完整指南 |
 | v1.55.0 | 2026-04-07 | 完善SPEC.md仿真模块接口设计 |
 | v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
+
+---
+
+## 18. 系统集成架构与数据流
+
+### 18.1 整体架构层次
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    SuperModel 系统架构                        │
+├─────────────────────────────────────────────────────────────┤
+│  具身智能层 (Embodied Intelligence)                          │
+│  ┌─────────────┐ ┌──────────────┐ ┌─────────────────────┐  │
+│  │ DreamerAgent │ │ WorldModel   │ │ AutonomousLearning  │  │
+│  └─────────────┘ └──────────────┘ └─────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│  认知融合层 (Cognitive Fusion)                              │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │         CrossModalFusion (跨模态注意力融合网络)          │  │
+│  │  Vision + Audio + Tactile + Force + IMU + Encoders  │  │
+│  └──────────────────────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│  感知层 (Perception)                                        │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐ ┌────────┐  │
+│  │ Vision │ │ Audio  │ │Tactile │ │ Force  │ │  IMU   │  │
+│  └────────┘ └────────┘ └────────┘ └────────┘ └────────┘  │
+│  ┌────────────────────────────────────────────────────┐    │
+│  │              SensorManager (传感器管理器)             │    │
+│  └────────────────────────────────────────────────────┘    │
+├─────────────────────────────────────────────────────────────┤
+│  执行层 (Control - AGV五级)                                 │
+│  ┌──────────────────────────────────────────────────────┐  │
+│  │ SafetyController → Supervisor → Trajectory → Motor   │  │
+│  │    ↓                                                    │  │
+│  │ Navigation / Patrol / Teleop / MPC / Impedance       │  │
+│  └──────────────────────────────────────────────────────┘  │
+├─────────────────────────────────────────────────────────────┤
+│  硬件抽象层 (Hardware Abstraction)                          │
+│  ┌────────┐ ┌────────┐ ┌────────┐ ┌────────────────┐      │
+│  │ RK3588 │ │  NPU   │ │ GPIO   │ │ DiguRobot/ROS2 │      │
+│  └────────┘ └────────┘ └────────┘ └────────────────────┘      │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### 18.2 AGV五级数据流延迟预算
+
+| 阶段 | S级 | M级 | L级 | XL级 | XXL级 |
+|------|-----|-----|-----|------|-------|
+| **传感器采样** | 20ms | 10ms | 5ms | 2ms | 1ms |
+| **感知预处理** | 30ms | 15ms | 8ms | 3ms | 1ms |
+| **特征提取(CNN)** | 50ms | 20ms | 10ms | 4ms | 2ms |
+| **跨模态融合** | 30ms | 10ms | 5ms | 2ms | 1ms |
+| **世界模型推理** | 40ms | 20ms | 10ms | 5ms | 2ms |
+| **运动规划** | 20ms | 10ms | 5ms | 2ms | 1ms |
+| **控制计算** | 10ms | 5ms | 2ms | 1ms | 0.5ms |
+| **电机响应** | 40ms | 15ms | 5ms | 2ms | 1ms |
+| **总延迟** | **240ms** | **95ms** | **45ms** | **18ms** | **7.5ms** |
+
+### 18.3 传感器-控制接口映射 (AGV五级)
+
+| 控制模式 | S级接口 | M级接口 | L级接口 | XL级接口 | XXL级接口 |
+|---------|---------|---------|---------|---------|---------|
+| **位置控制** | JointTrajectory | JointTrajectory | JointTrajectory | JointTrajectory | JointTrajectory |
+| **速度控制** | TwistCommand | TwistCommand | TwistCommand | TwistCommand | TwistCommand |
+| **力矩控制** | ✗ | Wrench | Wrench | Wrench | Wrench |
+| **阻抗控制** | ✗ | ImpedanceParams | ImpedanceParams | ImpedanceParams | ImpedanceParams |
+| **MPC** | ✗ | ✗ | JointSpaceMPC | JointSpaceMPC | CartesianMPC |
+| **触觉伺服** | ✗ | TactileServo | TactileServo | TactileServo | TactileServo |
+| **遥操作** | ✗ | MasterState | MasterState | MasterState | SharedControl |
+
+### 18.4 AGV五级模块兼容性矩阵
+
+| 模块 | S | M | L | XL | XXL | 依赖 |
+|------|:--:|:--:|:--:|:--:|:--:|------|
+| TactileArray | ✓ | ✓ | ✓ | ✓ | ✓ | - |
+| ForceTorqueSensor | ✓ | ✓ | ✓ | ✓ | ✓ | - |
+| IMUSensor | ✓ | ✓ | ✓ | ✓ | ✓ | - |
+| PoseEstimator | ✓ | ✓ | ✓ | ✓ | ✓ | IMU |
+| ComplementaryFilter | ✓ | ✓ | ✓ | ✓ | ✓ | IMU |
+| ExtendedKalmanFilter | ✗ | ✓ | ✓ | ✓ | ✓ | IMU+Encoder |
+| CrossModalFusion | ✓ | ✓ | ✓ | ✓ | ✓ | All sensors |
+| AttitudeStabilizer | ✗ | ✓ | ✓ | ✓ | ✓ | IMU |
+| TactileServoController | ✗ | ✓ | ✓ | ✓ | ✓ | Tactile |
+| ForceController | ✗ | ✓ | ✓ | ✓ | ✓ | Force |
+| AGVMotionController | ✓ | ✓ | ✓ | ✓ | ✓ | - |
+| SafetyController | ✓ | ✓ | ✓ | ✓ | ✓ | All |
+| GradeAwareSupervisor | ✗ | ✗ | ✓ | ✓ | ✓ | Controllers |
+| JointSpaceMPC | ✗ | ✗ | ✓ | ✓ | ✓ | DynamicsModel |
+| CartesianMPC | ✗ | ✗ | ✗ | ✗ | ✓ | DynamicsModel |
+| TeleoperationController | ✗ | ✓ | ✓ | ✓ | ✓ | Network |
+| MultiAgentCoordinator | ✗ | ✗ | ✗ | ✓ | ✓ | AGV |
+| PatrolController | ✗ | ✓ | ✓ | ✓ | ✓ | Navigation |
+| SensorimotorIntegration | ✗ | ✓ | ✓ | ✓ | ✓ | All sensors |
+| EmbodiedController | ✗ | ✓ | ✓ | ✓ | ✓ | All above |
+
+### 18.5 五级传感器配置与融合策略
+
+```
+S级 (简单触觉+力觉):
+  传感器: TactileArray(8x8) + ForceTorqueSensor(3轴)
+  融合: TactileFrame + Wrench → 简单加权融合
+  控制: 位置环 + 触觉反馈
+
+M级 (完整触觉+力觉+IMU):
+  传感器: TactileArray(16x16) + ForceTorqueSensor(6轴) + IMUSensor(BMI088)
+  融合: ComplementaryFilter(IMU) + 触觉-力觉加权融合
+  控制: 位置+速度环 + 阻抗 + 姿态稳定
+
+L级 (高精度传感+基础MPC):
+  传感器: TactileArray(24x24) + ForceTorqueSensor(6轴) + IMUSensor(BMI088×2)
+  融合: EKF(IMU) + 触觉-力觉-IMU联合融合
+  控制: JointSpaceMPC + 阻抗 + 姿态稳定 + 触觉伺服
+
+XL级 (高性能传感+高级MPC):
+  传感器: TactileArray(32x32) + ForceTorqueSensor(6轴) + IMUSensor(ADIS16470×2)
+  融合: EKF + CrossModalFusion(Transformer) + 预测融合
+  控制: JointSpaceMPC + 全阻抗 + 多级安全 + 触觉伺服
+
+XXL级 (超高性能传感+预测控制):
+  传感器: TactileArray(48x48) + ForceTorqueSensor(6轴) + IMUSensor(ADIS16470×4)
+  融合: 分布式EKF + CrossModalFusion(Large) + 在线持续学习
+  控制: CartesianMPC + 全阻抗 + 全冗余安全 + 多机协同 + 触觉伺服
+```
+
+### 18.6 关键接口时序图 (M级抓取任务)
+
+```
+时间轴 ─────────────────────────────────────────────────────►
+
+传感器采集:
+  IMU:       ──[10ms采样]──[10ms采样]──[10ms采样]──►
+  Force:     ──[2ms采样]──[2ms采样]──[2ms采样]──►
+  Tactile:   ──[10ms采样]──[10ms采样]──[10ms采样]──►
+
+数据融合:
+  PoseEst:   ──[15ms/帧]────────────────────────────────►
+  Contact:   ──[5ms/帧]────────────────────────────────►
+  Fusion:    ──[20ms/帧]────────────────────────────────►
+
+控制计算:
+  Supervisor:──[2ms]────────────────────────────────────►
+  Trajectory:──[5ms]────────────────────────────────────►
+  MotorCmd:   ──[1ms]────────────────────────────────────►
+
+执行反馈:
+  Motor:     ─────────────────[15ms响应]────────────────►
+```
+
+### 18.7 AGV五级典型部署场景
+
+| 场景 | 推荐等级 | 核心模块组合 | 典型配置 |
+|------|---------|------------|---------|
+| 实验室研究 | S/M | Vision+IMU+AGV | RPi4B/RK3588, 单目 |
+| 仓储物流 | M/L | Vision+IMU+Navigation+Patrol | RK3588/OrinNX, 双目D455 |
+| 柔性制造 | L/XL | Vision+Force+IMU+Assembly+MPC | OrinNX/OrinAGX, 力控+双目 |
+| 重载车间 | XL/XXL | Vision+Force+Tactile+IMU+MPC+MultiAgent | OrinAGX×2+GPU, 全冗余 |
+| 无人化工厂 | XXL | 全模态+CrossModalFusion+Dreamer+WorldModel | OrinAGX×2+GPU+NPU, 全冗余+5G |
+
+---
+
+## 19. 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v2.15.0 | 2026-04-09 | 补充SPEC.md第18章: 系统集成架构与数据流, AGV五级模块兼容性矩阵, 接口时序图; 378项传感器+融合测试全通过 |
+| v2.14.0 | 2026-04-09 | 新增SurfaceFollowingController与AssemblyController; AGV五级具身控制完整规格表 |
+| v2.13.0 | 2026-04-09 | 完善SPEC.md接口使用示例(12章)、数据流与状态机(13章)、错误处理规范(14章) |
+| v2.12.0 | 2026-04-09 | 版本同步，1937项测试全通过 |
