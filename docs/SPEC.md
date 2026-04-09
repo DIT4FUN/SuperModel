@@ -736,3 +736,400 @@ pytest tests/five_grade_pipeline_tests.py -v
 | v1.50.0 | 2026-04-03 | 完成触觉/力觉/IMU传感器模块及测试套件、1277项测试通过 |
 | v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
 
+
+## 12. 接口使用示例
+
+### 12.1 触觉传感器使用流程
+
+```python
+from src.sensors.tactile import TactileArray, TactileSensorType, TactileCalibration
+
+# 1. 创建传感器 (按AGV等级选择规格)
+from src.sensors.tactile import get_tactile_spec
+spec = get_tactile_spec('M')  # 16x16阵列, 100Hz
+
+# 2. 初始化
+array = TactileArray(
+    array_size=(spec['array'][0], spec['array'][1]),
+    sensor_type=TactileSensorType.CAPACITIVE,
+    sensor_id="gripper_tactile_0"
+)
+
+# 3. 打开连接
+array.open()
+
+# 4. 标定 (新传感器首次使用)
+array.calibrate(zero_pressure=None, known_weights=[0.0, 5.0, 10.0])
+
+# 5. 主循环
+for _ in range(100):
+    frame = array.capture()               # 捕获触觉帧
+    contacts = array.detect_contacts(frame)  # 检测接触
+    slip = array.get_slip_signal(frame)   # 计算滑移信号
+    quality = array.estimate_grip_quality(frame)  # 抓取质量
+    
+    if quality['overall'] < 0.3:
+        print("抓取不稳定，需要调整!")
+
+# 6. 关闭
+array.close()
+```
+
+### 12.2 力觉传感器使用流程
+
+```python
+from src.sensors.force import ForceTorqueSensor, ForceSensorType, Wrench, VirtualForceSensor
+
+# 1. 创建六维力矩传感器
+sensor = ForceTorqueSensor(
+    sensor_type=ForceSensorType.SIX_AXIS,
+    sensor_id="ft_0",
+    ip_address="192.168.1.100",
+    ethernet_type="UDP"
+)
+
+# 2. 设置工具中心参数 (重力补偿)
+sensor.set_tool_center(tool_mass=0.55, tool_com=np.array([0.0, 0.0, 0.05]))
+
+# 3. 打开连接
+sensor.open()
+
+# 4. 偏置校准 (无负载状态下)
+sensor.calibrate_bias(num_samples=100)
+
+# 5. 主循环
+for _ in range(100):
+    wrench = sensor.capture()  # 获取六维力旋量
+    contact = sensor.detect_contact(wrench, threshold=5.0)  # 接触检测
+    payload = sensor.estimate_payload(wrench)  # 负载估计
+    
+    # 力旋量变换 (传感器坐标 -> 世界坐标)
+    R = np.eye(3)  # 旋转矩阵
+    t = np.array([0.0, 0.0, 0.1])  # 平移
+    world_wrench = wrench.transform(R, t)
+
+sensor.close()
+```
+
+### 12.3 IMU传感器使用流程
+
+```python
+from src.sensors.imu import IMUSensor, IMUSensorType, PoseEstimator, VirtualIMUSensor
+
+# 1. 创建IMU传感器
+imu = IMUSensor(
+    sensor_type=IMUSensorType.BMI088,
+    sensor_id="imu_0",
+    accel_range=16,
+    gyro_range=2000,
+    sample_rate=200
+)
+
+# 2. 打开连接
+imu.open()
+
+# 3. 自检
+if not imu.self_test():
+    print("IMU自检失败!")
+    exit(1)
+
+# 4. 偏置校准 (静止状态下)
+imu.calibrate_gyro_bias(num_samples=500)
+
+# 5. 创建姿态估计器
+estimator = PoseEstimator(algorithm='madgwick', sample_rate=200.0, beta=0.1)
+
+# 6. 主循环
+for _ in range(100):
+    frame = imu.capture()  # 获取IMU帧
+    
+    # 姿态更新
+    pose = estimator.update(
+        accel=frame.accel,
+        gyro=frame.gyro,
+        mag=frame.mag,
+        dt=1.0/200.0
+    )
+    
+    euler = pose.to_euler()  # 欧拉角 [roll, pitch, yaw]
+    R = estimator.get_rotation_matrix()  # 旋转矩阵
+
+imu.close()
+```
+
+### 12.4 传感运动融合使用流程
+
+```python
+from src.control.sensorimotor import SensorimotorIntegration, SensorimotorConfig
+from src.sensors.tactile import TactileArray, TactileSensorType
+from src.sensors.force import ForceTorqueSensor, ForceSensorType
+from src.sensors.imu import IMUSensor, IMUSensorType
+
+# 1. 创建配置
+config = SensorimotorConfig(
+    grade='M',
+    control_freq=100.0,
+    force_control_gain=1.0,
+    imu_control_gain=0.5
+)
+
+# 2. 创建融合器
+fusion = SensorimotorIntegration(config=config, grade='M')
+fusion.open()
+
+# 3. 主循环
+for step in range(1000):
+    dt = 0.01
+    target_force = 10.0  # N
+    target_attitude = (0.0, 0.0, 0.0)  # roll, pitch, yaw
+    
+    state = fusion.step(
+        target_force=target_force,
+        target_attitude=target_attitude,
+        dt=dt
+    )
+    
+    # 获取融合控制量
+    ctrl = fusion.get_fused_control()
+    authority = fusion.get_control_authority()
+    
+    # 健康检查
+    if not fusion.is_healthy():
+        print("融合器异常!")
+        break
+
+fusion.close()
+```
+
+### 12.5 AGV五级导航控制使用流程
+
+```python
+from src.control.agv import AGVMotionController, AGVConfig
+from src.control.navigation import NavigationController, AStarPlanner, OccupancyGrid
+
+# 1. 创建AGV配置 (按等级)
+config = AGVConfig(grade='M')
+controller = AGVMotionController(config)
+
+# 2. 创建导航系统
+grid = OccupancyGrid(
+    width=20.0, height=20.0, resolution=0.1,
+    origin=(-10.0, -10.0)
+)
+planner = AStarPlanner(occupancy_grid=grid)
+nav = NavigationController(
+    planner=planner,
+    max_lin_vel=1.5,
+    max_ang_vel=2.0
+)
+
+# 3. 设置障碍物
+grid.set_obstacle(2.0, 3.0, radius=0.5)
+grid.set_obstacle(5.0, 5.0, radius=0.3)
+
+# 4. 规划路径
+start = np.array([0.0, 0.0, 0.0])  # x, y, theta
+goal = np.array([8.0, 8.0, 0.0])
+nav.plan_to_goal(start, goal)
+
+# 5. 导航主循环
+for step in range(1000):
+    dt = 0.01
+    current_pose = controller.get_pose()
+    
+    velocity = nav.update(current_pose, dt)
+    controller.set_target_twist(velocity)
+    wheel_speeds = controller.step(dt)
+    
+    if nav.get_progress() > 0.99:
+        print("到达目标!")
+        break
+
+controller.stop()
+```
+
+## 13. 数据流与状态机
+
+### 13.1 传感器数据采集流程
+
+```
+┌─────────────┐     open()      ┌──────────────┐
+│   用户代码   │ ──────────────▶│  SensorMgr   │
+└─────────────┘                └──────┬───────┘
+                                      │ open_all()
+                    ┌─────────────────┼─────────────────┐
+                    ▼                 ▼                 ▼
+              ┌───────────┐    ┌───────────┐    ┌───────────┐
+              │  IMU      │    │  Tactile  │    │  Force    │
+              │  Sensor   │    │  Array    │    │  Torque   │
+              └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
+                    │ capture()       │ capture()      │ capture()
+                    ▼                 ▼                 ▼
+              ┌───────────┐    ┌───────────┐    ┌───────────┐
+              │  IMUFrame │    │ Tactile   │    │  Wrench   │
+              │  accel,   │    │  Frame     │    │  6-axis   │
+              │  gyro,    │    │ pressure   │    │  force    │
+              │  mag      │    │  map       │    │  torque   │
+              └─────┬─────┘    └─────┬─────┘    └─────┬─────┘
+                    │                 │                 │
+                    └─────────────────┼─────────────────┘
+                                      ▼
+                           ┌──────────────────┐
+                           │  capture_all()  │
+                           │  SensorDataFrame│
+                           └──────────────────┘
+                                      │
+                                      ▼
+                           ┌──────────────────┐
+                           │ CrossModalFusion│
+                           │  跨模态融合网络  │
+                           └────────┬─────────┘
+                                    │ forward()
+                                    ▼
+                           ┌──────────────────┐
+                           │ UnifiedRep        │
+                           │ 融合表征向量      │
+                           └────────┬─────────┘
+                                    │
+                    ┌───────────────┼───────────────┐
+                    ▼               ▼               ▼
+           ┌────────────┐  ┌────────────┐  ┌────────────┐
+           │  感知决策   │  │ 运动控制   │  │  自主学习   │
+           └────────────┘  └────────────┘  └────────────┘
+```
+
+### 13.2 AGV五级状态机
+
+```
+                    ┌─────────────────┐
+                    │   INITIALIZED   │
+                    │   系统初始化     │
+                    └────────┬────────┘
+                             │ startup()
+                             ▼
+                    ┌─────────────────┐
+         ┌──────────│   IDLE          │
+         │          │   待机/就绪     │
+         │          └────────┬────────┘
+         │                   │ start_navigation() / start_patrol()
+         │                   ▼
+         │          ┌─────────────────┐
+         │          │   NAVIGATING     │
+         │          │   自主导航中     │
+         │          └────────┬────────┘
+         │                   │ obstacle_detected / emergency
+         │                   ▼
+         │          ┌─────────────────┐
+         │          │   AVOIDING      │
+         │          │   避障中        │
+         │          └────────┬────────┘
+         │                   │ obstacle_cleared
+         │                   ▼
+         │          ┌─────────────────┐          emergency
+         │          │   PAUSED        │◀─────────────────┐
+         │          │   暂停          │                   │
+         │          └────────┬────────┘                   │
+         │                   │ resume()                    │
+         │                   └─────────────────────────────┘
+         │
+         │          ┌─────────────────┐
+         └─────────▶│   ERROR          │
+                    │   故障           │
+                    └────────┬────────┘
+                             │ reset() / recover()
+                             ▼
+                    ┌─────────────────┐
+                    │   IDLE          │
+                    └─────────────────┘
+
+    XXL等级额外状态:
+                    ┌─────────────────┐
+                    │   FAULT_TOLERANT│
+                    │   容错运行      │
+                    └────────┬────────┘
+                             │ primary_failed
+                             ▼
+                    ┌─────────────────┐
+                    │   BACKUP_ACTIVE │
+                    │   备用接管      │
+                    └─────────────────┘
+```
+
+### 13.3 传感器融合数据流
+
+```
+IMU原始数据          触觉原始数据         力觉原始数据
+    │                    │                   │
+    ▼                    ▼                   ▼
+┌────────┐          ┌────────┐         ┌────────┐
+│ 校准   │          │ 校准   │         │ 校准   │
+│ 去偏置 │          │ 去噪   │         │ 去偏置 │
+└───┬────┘          └───┬────┘         └───┬────┘
+    │                   │                   │
+    ▼                   ▼                   ▼
+┌────────┐          ┌────────┐         ┌────────┐
+│Madgwick│          │ 接触   │         │ 工具   │
+│ AHRS   │          │ 检测   │         │ 补偿   │
+└───┬────┘          └───┬────┘         └───┬────┘
+    │                   │                   │
+    │    ┌──────────────┼───────────────────┘
+    │    │              │
+    ▼    ▼              ▼
+┌──────────────────────────┐
+│    互补滤波 / EKF        │
+│    姿态 + 接触 融合      │
+└────────────┬─────────────┘
+             │
+             ▼
+┌──────────────────────────┐
+│    具身控制量输出        │
+│  力控 + 位控 + 阻抗控    │
+└──────────────────────────┘
+```
+
+## 14. 错误处理与异常规范
+
+### 14.1 传感器异常分类
+
+| 异常类型 | 异常类 | 触发条件 | 处理策略 |
+|---------|--------|---------|---------|
+| 连接失败 | `SensorConnectionError` | open()失败 | 重试3次，报告 |
+| 数据超时 | `SensorTimeoutError` | capture()超时 | 使用上次数据/降级 |
+| 数据饱和 | `SensorSaturationError` | 测量值超范围 | 切换量程/报警 |
+| 校准失败 | `CalibrationError` | 标定参数异常 | 使用默认参数 |
+| 通信错误 | `CommunicationError` | 总线通信失败 | 切换备通道 |
+| 硬件故障 | `HardwareFaultError` | 自检失败 | 进入安全模式 |
+
+### 14.2 控制异常处理
+
+| 异常类型 | 触发条件 | 响应级别 |
+|---------|---------|---------|
+| 电机过流 | 电流 > 额定150% | 降低功率 |
+| 电机过热 | 温度 > 80°C | 降频运行 |
+| 碰撞检测 | 接触力 > 阈值 | 立即停止 |
+| 位置超限 | 超出边界 | 触发急停 |
+| 通信中断 | CAN/ETH断开 | 保持最后姿态 |
+| 看门狗超时 | 100ms无心跳 | 故障转移 |
+
+### 14.3 AGV等级与故障容忍
+
+| 等级 | 单点故障处理 | 多点故障处理 | 安全状态 |
+|------|------------|------------|---------|
+| **S** | 报警停机 | 人工干预 | 抱闸锁定 |
+| **M** | 本地恢复 | 报警停机 | 缓慢停止 |
+| **L** | 自动切换备机 | 本地恢复 | 受控停止 |
+| **XL** | 热备切换 | 自动切换备机 | 安全位置停止 |
+| **XXL** | 热备+无损转移 | 故障隔离继续运行 | 零速悬停 |
+
+## 15. 版本历史
+
+| 版本 | 日期 | 更新内容 |
+|------|------|---------|
+| v2.13.0 | 2026-04-09 | 完善SPEC.md接口使用示例(12章)、数据流与状态机(13章)、错误处理规范(14章)；触觉/力觉/IMU模块完善，378项传感器+融合测试全通过 |
+| v2.12.0 | 2026-04-09 | 版本同步，清理临时文件，1937项测试全通过 |
+| v2.11.0 | 2026-04-08 | 新增自主巡逻控制模块，多点巡逻+动态避障+传感器融合 |
+| v2.10.0 | 2026-04-08 | 触觉/力觉/IMU三传感器融合集成测试 |
+| v2.09.0 | 2026-04-08 | 具身任务执行器扩展 |
+| v2.08.0 | 2026-04-07 | 新增AGV五级控制参数完整指南 |
+| v1.55.0 | 2026-04-07 | 完善SPEC.md仿真模块接口设计 |
+| v1.0 | 2026-04-01 | 初始版本，基础架构完成 |
