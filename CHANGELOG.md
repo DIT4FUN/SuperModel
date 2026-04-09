@@ -2,7 +2,33 @@
 
 All notable changes to SuperModel will be documented in this file.
 
-## [2.05.1] - 2026-04-09
+## [2.09.0] - 2026-04-09
+
+### Added
+- tests/embodied_task_tests.py: 新增具身任务执行器测试 (41项)
+  - 抓取-搬运-放置 (grasp_place) 完整任务链测试
+  - 推动 (push) 任务测试 - 多方向/多距离
+  - 拉动 (pull) 任务测试 - 全等级覆盖
+  - 表面轮廓追踪 (surface_trace) 任务测试 - 单圈/多圈
+  - 插入 (insert) 任务测试 - 不同深度/力反馈
+  - 表面抛光 (polish) 任务测试 - 持续力控
+  - 传感器健康监控测试 (SensorHealthMonitor)
+  - AGV五级具身控制能力验证测试
+
+### Extended
+- src/control/embodied_control.py: 扩展 EmbodiedTaskExecutor
+  - 新增 execute_push() 推动任务方法
+  - 新增 execute_pull() 拉动任务方法
+  - 新增 execute_surface_trace() 表面轮廓追踪任务方法
+  - 新增 execute_insert() 插入/装配任务方法
+  - 新增 execute_polish() 表面抛光任务方法
+  - 新增 _apply_push_force() 辅助方法
+  - 修复 SensorHealthMonitor.check_tactile_health 中 c.force → c.contact_force bug
+
+### Testing
+- 全项目测试: 421项全部通过 (sensor_tests 305 + fusion_tests 73 + embodied_task 41 + embodied_control 2)
+
+## [2.08.0] - 2026-04-09
 
 ### Added
 - docs/DEPLOYMENT_CHECKLIST.md: 新增完整部署清单文档 (v1.0.0)

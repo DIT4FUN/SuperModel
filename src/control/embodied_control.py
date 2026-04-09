@@ -1324,6 +1324,324 @@ class EmbodiedTaskExecutor:
             time.sleep(0.01)
         return True
     
+    def execute_push(
+        self,
+        object_position: np.ndarray,
+        push_direction: np.ndarray,
+        push_distance: float = 0.2,
+        push_force: float = 15.0
+    ) -> bool:
+        """
+        执行推动任务
+        
+        任务流程:
+          IDLE → APPROACH → APPLY_FORCE → PUSH → RELEASE → IDLE
+        
+        Args:
+            object_position: 目标物体位置 (3,)
+            push_direction: 推动方向 (3,), 归一化
+            push_distance: 推动距离 (m)
+            push_force: 推动力 (N)
+            
+        Returns:
+            bool: 任务是否成功
+        """
+        self.target_position = object_position.copy()
+        norm = np.linalg.norm(push_direction)
+        if norm < 1e-6:
+            push_direction = np.array([1.0, 0.0, 0.0])
+        else:
+            push_direction = push_direction / norm
+        
+        print(f"[TaskExecutor] Push: obj={object_position}, dir={push_direction}, "
+              f"dist={push_distance}m, force={push_force}N")
+        
+        phases = [
+            (self.TaskPhase.APPROACH, lambda: self._approach(object_position)),
+            (self.TaskPhase.CONTACT, lambda: self._contact(object_position, 0.05)),
+            (self.TaskPhase.GRASP, lambda: self._apply_push_force(push_force)),
+            (self.TaskPhase.TRANSPORT, lambda: self._transport(
+                object_position,
+                object_position + push_direction * push_distance
+            )),
+            (self.TaskPhase.RELEASE, lambda: self._release()),
+            (self.TaskPhase.RETRACT, lambda: self._retract()),
+        ]
+        
+        for phase, execute_fn in phases:
+            self.phase = phase
+            self.phase_history.append((phase.value, 0.0))
+            success = execute_fn()
+            if not success:
+                print(f"[TaskExecutor] Push phase {phase} failed")
+                self.failure_count += 1
+                return False
+        
+        self.phase = self.TaskPhase.IDLE
+        self.success_count += 1
+        print(f"[TaskExecutor] Push completed successfully")
+        return True
+    
+    def execute_pull(
+        self,
+        object_position: np.ndarray,
+        pull_direction: np.ndarray,
+        pull_distance: float = 0.2,
+        pull_force: float = 15.0
+    ) -> bool:
+        """
+        执行拉动任务
+        
+        Args:
+            object_position: 目标物体位置 (3,)
+            pull_direction: 拉动方向 (3,), 归一化
+            pull_distance: 拉动距离 (m)
+            pull_force: 拉力 (N)
+            
+        Returns:
+            bool: 任务是否成功
+        """
+        self.target_position = object_position.copy()
+        norm = np.linalg.norm(pull_direction)
+        if norm < 1e-6:
+            pull_direction = np.array([-1.0, 0.0, 0.0])
+        else:
+            pull_direction = pull_direction / norm
+        
+        print(f"[TaskExecutor] Pull: obj={object_position}, dir={pull_direction}, "
+              f"dist={pull_distance}m, force={pull_force}N")
+        
+        phases = [
+            (self.TaskPhase.APPROACH, lambda: self._approach(object_position)),
+            (self.TaskPhase.CONTACT, lambda: self._contact(object_position, 0.05)),
+            (self.TaskPhase.GRASP, lambda: self._apply_push_force(pull_force)),
+            (self.TaskPhase.TRANSPORT, lambda: self._transport(
+                object_position,
+                object_position + pull_direction * pull_distance
+            )),
+            (self.TaskPhase.RELEASE, lambda: self._release()),
+            (self.TaskPhase.RETRACT, lambda: self._retract()),
+        ]
+        
+        for phase, execute_fn in phases:
+            self.phase = phase
+            self.phase_history.append((phase.value, 0.0))
+            success = execute_fn()
+            if not success:
+                print(f"[TaskExecutor] Pull phase {phase} failed")
+                self.failure_count += 1
+                return False
+        
+        self.phase = self.TaskPhase.IDLE
+        self.success_count += 1
+        print(f"[TaskExecutor] Pull completed successfully")
+        return True
+    
+    def execute_surface_trace(
+        self,
+        surface_center: np.ndarray,
+        trace_radius: float = 0.05,
+        trace_speed: float = 0.05,
+        num_cycles: int = 1
+    ) -> bool:
+        """
+        执行表面轮廓追踪任务
+        
+        任务流程:
+          IDLE → APPROACH → CONTACT → TRACE → RELEASE → IDLE
+        
+        Args:
+            surface_center: 表面中心位置 (3,)
+            trace_radius: 追踪半径 (m)
+            trace_speed: 追踪速度 (m/s)
+            num_cycles: 追踪圈数
+            
+        Returns:
+            bool: 任务是否成功
+        """
+        import math
+        self.target_position = surface_center.copy()
+        
+        print(f"[TaskExecutor] Surface trace: center={surface_center}, "
+              f"r={trace_radius}m, cycles={num_cycles}")
+        
+        # 接近
+        self.phase = self.TaskPhase.APPROACH
+        if not self._approach(surface_center):
+            return False
+        
+        # 接触
+        self.phase = self.TaskPhase.CONTACT
+        if not self._contact(surface_center, trace_radius):
+            return False
+        
+        # 追踪圆形轮廓
+        steps_per_cycle = 60
+        total_steps = steps_per_cycle * num_cycles
+        for i in range(total_steps):
+            cycle = i // steps_per_cycle
+            angle = 2 * math.pi * (i % steps_per_cycle) / steps_per_cycle
+            
+            # 计算圆周位置
+            current = surface_center + np.array([
+                trace_radius * math.cos(angle),
+                trace_radius * math.sin(angle),
+                0.0
+            ])
+            
+            # 小步更新
+            state = self.ctrl.update()
+            self.phase_history.append(('trace', float(i) / total_steps))
+        
+        self.phase = self.TaskPhase.RELEASE
+        self._release()
+        
+        self.phase = self.TaskPhase.RETRACT
+        self._retract()
+        
+        self.phase = self.TaskPhase.IDLE
+        self.success_count += 1
+        print(f"[TaskExecutor] Surface trace completed")
+        return True
+    
+    def execute_insert(
+        self,
+        target_position: np.ndarray,
+        insertion_depth: float = 0.05,
+        alignment_force: float = 5.0,
+        insertion_force: float = 20.0
+    ) -> bool:
+        """
+        执行插入任务 (如插头、零件装配)
+        
+        任务流程:
+          IDLE → ALIGN → APPROACH → INSERT → VERIFY → IDLE
+        
+        Args:
+            target_position: 目标位置 (3,)
+            insertion_depth: 插入深度 (m)
+            alignment_force: 对齐力 (N)
+            insertion_force: 插入力 (N)
+            
+        Returns:
+            bool: 任务是否成功
+        """
+        self.target_position = target_position.copy()
+        
+        print(f"[TaskExecutor] Insert: target={target_position}, "
+              f"depth={insertion_depth}m, force={insertion_force}N")
+        
+        # 对齐阶段
+        self.phase = self.TaskPhase.APPROACH
+        if not self._approach(target_position):
+            return False
+        
+        # 插入阶段 - 分步插入并检查力反馈
+        insert_steps = 10
+        for step in range(insert_steps):
+            self.phase = self.TaskPhase.GRASP
+            
+            current_depth = (step + 1) / insert_steps * insertion_depth
+            target_z = target_position[2] - current_depth
+            
+            state = self.ctrl.update()
+            
+            # 力反馈检查 - 插入力过大时停止
+            if state.contact_force > insertion_force * 1.5:
+                print(f"[TaskExecutor] Insert force too high at step {step}: "
+                      f"{state.contact_force:.1f}N > {insertion_force * 1.5:.1f}N")
+                self.failure_count += 1
+                return False
+            
+        self.phase = self.TaskPhase.LIFT
+        self._lift(target_position[2] + 0.05)
+        
+        self.phase = self.TaskPhase.IDLE
+        self.success_count += 1
+        print(f"[TaskExecutor] Insert completed successfully")
+        return True
+    
+    def execute_polish(
+        self,
+        surface_position: np.ndarray,
+        surface_normal: np.ndarray,
+        polish_area: float = 0.1,
+        polish_force: float = 5.0,
+        duration_sec: float = 2.0
+    ) -> bool:
+        """
+        执行表面抛光任务
+        
+        任务流程:
+          IDLE → APPROACH → CONTACT → POLISH → RELEASE → IDLE
+        
+        Args:
+            surface_position: 表面参考位置 (3,)
+            surface_normal: 表面法向量 (3,), 归一化
+            polish_area: 抛光面积 (m^2)
+            polish_force: 抛光压力 (N)
+            duration_sec: 抛光持续时间 (s)
+            
+        Returns:
+            bool: 任务是否成功
+        """
+        import time
+        self.target_position = surface_position.copy()
+        
+        # 确保法向量归一化
+        norm = np.linalg.norm(surface_normal)
+        if norm > 1e-6:
+            surface_normal = surface_normal / norm
+        
+        print(f"[TaskExecutor] Polish: surface={surface_position}, "
+              f"normal={surface_normal}, force={polish_force}N, duration={duration_sec}s")
+        
+        # 接近
+        self.phase = self.TaskPhase.APPROACH
+        if not self._approach(surface_position):
+            return False
+        
+        # 接触
+        self.phase = self.TaskPhase.CONTACT
+        if not self._contact(surface_position, 0.05):
+            return False
+        
+        # 抛光 - 保持力控并做小幅度往复运动
+        start_time = time.time()
+        step_count = 0
+        while time.time() - start_time < duration_sec:
+            self.phase = self.TaskPhase.TRANSPORT
+            state = self.ctrl.update()
+            
+            # 确保抛光压力稳定
+            if state.contact_force > polish_force * 2.0:
+                print(f"[TaskExecutor] Polish force too high: {state.contact_force:.1f}N")
+            
+            step_count += 1
+            time.sleep(0.01)
+        
+        # 释放并退回
+        self.phase = self.TaskPhase.RELEASE
+        self._release()
+        
+        self.phase = self.TaskPhase.RETRACT
+        self._retract()
+        
+        self.phase = self.TaskPhase.IDLE
+        self.success_count += 1
+        print(f"[TaskExecutor] Polish completed: {step_count} steps")
+        return True
+    
+    def _apply_push_force(self, force: float) -> bool:
+        """施加推力"""
+        import time
+        for _ in range(10):
+            state = self.ctrl.update()
+            if state.contact_force >= force * 0.7:
+                return True
+            time.sleep(0.01)
+        return True
+    
     def get_metrics(self) -> Dict:
         """获取执行指标"""
         return {
@@ -1386,13 +1704,13 @@ class SensorHealthMonitor:
         
         # 检查接触力范围
         for c in contacts:
-            if c.force < 0 or c.force > 100:
+            if c.contact_force < 0 or c.contact_force > 100:
                 issues.append('force_out_of_range')
                 health_score -= 0.3
                 break
         
         # 检查信号一致性
-        forces = [c.force for c in contacts]
+        forces = [c.contact_force for c in contacts]
         if forces:
             variance = np.var(forces)
             if variance > 1000:

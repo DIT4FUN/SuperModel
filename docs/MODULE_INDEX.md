@@ -1,9 +1,10 @@
 # SuperModel 模块索引 / Module Index
+- **v2.09.0** (2026-04-09): 具身任务执行器扩展 (push/pull/surface_trace/insert/polish); 新增embodied_task_tests.py (41项); 修复SensorHealthMonitor bug; 421项测试全通过
 - **v2.08.0** (2026-04-09): 新增AGV_CONTROL_PARAMS.md五级控制参数完整指南(PID/阻抗/MPC/安全监控); 新增agv_five_grade_demo.py五级完整对比演示; 1845项测试全通过
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.08.0
+> **版本**: v2.09.0
 > **更新**: 2026-04-09
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
