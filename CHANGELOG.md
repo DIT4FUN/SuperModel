@@ -2,6 +2,42 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.14.0] - 2026-04-09
+
+### Added
+- src/control/embodied_control.py: 新增 SurfaceFollowingController 表面跟踪控制器
+  - 4种控制模式: constant_force / admittance / impedance / adaptive
+  - 压力梯度 → 表面法向估计 (Sobel梯度)
+  - 接触质量评估 (contact_ratio + uniformity)
+  - 支持: 表面擦拭/打磨/抛光/扫描任务
+
+- src/control/embodied_control.py: 新增 AssemblyController 精密装配控制器
+  - 6阶段状态机: IDLE→APPROACH→SEARCH→INSERT→SEAT→VERIFY
+  - 3种搜索模式: spiral / raster / random
+  - 卡阻检测 + 偏斜检测 + 插入失败检测
+  - AGV五级装配能力: 定位精度 ±5mm(S) → ±0.01mm(XXL)
+
+- docs/SPEC.md: 新增第16章 表面跟踪与装配控制器接口详细设计
+- docs/SPEC.md: 新增第17章 AGV五级具身控制完整规格表
+  - 具身感知规格 (触觉/力觉/IMU五级对比)
+  - 具身控制规格 (力控模式/响应时间/任务类型)
+  - 具身任务执行规格 (抓取/插入/打磨/MPC)
+  - 健康监控与降级策略五级对比
+  - 融合编码维度 (128d→4096d)
+
+### Extended
+- tests/embodied_control_tests.py: 新增 46项测试
+  - SurfaceFollowingController: 14项测试 (模式/法向估计/切向/力控/质量评估/重置)
+  - AssemblyController: 20项测试 (阶段转换/搜索/插入/装配失败检测/五级参数)
+
+### Fixed
+- AssemblyController.search_pattern 参数缺失问题
+- SurfaceFollowingController.constant_force 分支语法错误
+
+### Test Results
+- embodied_control_tests.py: 76 passed
+- 全测试套件: 1993 passed, 16 skipped
+
 ## [2.09.0] - 2026-04-09
 
 ### Added
