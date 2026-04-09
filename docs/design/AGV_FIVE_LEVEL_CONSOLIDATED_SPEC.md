@@ -944,5 +944,99 @@ XXL级 (超硬实时): 总预算 <5ms
 
 ---
 
-*文档版本: v1.39.0*
-*最后更新: 2026-04-01 15:39*
+## 二十、自适应增益调度五级规格
+
+### 20.1 AdaptiveGainScheduler 自适应增益调度器
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **启用状态** | ✗ (禁用) | ✓ | ✓ | ✓ | ✓ |
+| **自适应策略** | — | ERROR_BASED | MULTI_MODAL | MULTI_MODAL | MULTI_MODAL |
+| **最大自适应速率** | — | 10.0 | 20.0 | 50.0 | 100.0 |
+| **误差自适应** | — | ✓ | ✓ | ✓ | ✓ |
+| **负载补偿** | — | — | ✓ | ✓ | ✓ |
+| **温度补偿** | — | — | ✓ | ✓ | ✓ |
+| **速度前馈** | — | — | ✓ | ✓ | ✓ |
+| **多模态融合** | — | — | ✓ | ✓ | ✓ |
+| **增益回调** | — | ✓ | ✓ | ✓ | ✓ |
+| **历史记录** | — | ✓ | ✓ | ✓ | ✓ |
+
+### 20.2 GainBlendController 增益混合控制器
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **纳秒精度混合** | — | ✓ | ✓ | ✓ | ✓ |
+| **配置数量** | — | 2 | 4 | 8 | 16 |
+| **切换策略** | — | 即时/渐进 | 即时/渐进 | 即时/渐进 | 即时/渐进 |
+| **缓动函数** | — | ease_in_out | ease_in_out | 自定义 | 自定义 |
+
+### 20.3 ModelReferenceAdaptiveController MRAC
+
+| 参数 | L | XL | XXL |
+|------|---|---|-----|
+| **支持等级** | ✓ | ✓ | ✓ |
+| **自适应增益范围** | 1-50 | 1-100 | 1-200 |
+| **参数数量** | 3 | 6 | 12 |
+| **参考模型** | 线性 | 非线性 | 非线性+补偿 |
+| **Lyapunov 稳定性** | ✓ | ✓ | ✓ |
+
+### 20.4 自适应控制接口
+
+```python
+from control.adaptive_gain import (
+    AdaptiveGainScheduler,    # 自适应增益调度器
+    GainBlendController,       # 纳秒精度增益混合
+    ModelReferenceAdaptiveController,  # MRAC
+    AdaptationStrategy,        # 策略枚举
+    get_adaptive_gain_spec,    # 获取五级规格
+)
+
+# 自适应增益调度 (M+ 级)
+scheduler = AdaptiveGainScheduler(
+    strategy=AdaptationStrategy.MULTI_MODAL,
+    scheduler_id="agv_adaptive"
+)
+kp, ki, kd, kf = scheduler.update(
+    error=0.05, dt=0.01,
+    load_estimate=1.5,
+    temperature=35.0,
+    velocity=0.8,
+    acceleration=0.2
+)
+
+# 纳秒精度增益切换 (L+ 级)
+blend = GainBlendController(blend_time=0.1)
+blend.register_config("low_speed", GainSchedule(kp_base=5.0))
+blend.register_config("high_speed", GainSchedule(kp_base=15.0))
+blend.switch_config("high_speed", blend=True)
+current_gains = blend.update(dt=0.01)
+
+# MRAC (L+ 级)
+def ref_model(t, dt):
+    return np.sin(t * 0.5)
+
+mrac = ModelReferenceAdaptiveController(
+    reference_model=ref_model,
+    adaptation_gain=10.0
+)
+u = mrac.compute_control(system_state=0.3, reference_input=1.0, dt=0.01)
+```
+
+---
+
+## 二十一、AGV 五级自适应控制规格汇总
+
+| 控制功能 | S | M | L | XL | XXL |
+|---------|---|---|---|---|-----|
+| 固定 PID | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 自适应增益调度 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 增益混合切换 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 模型参考自适应 (MRAC) | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 增益回调钩子 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 纳秒级时钟精度 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 多配置管理 | ✗ | ✗ | 4 | 8 | 16 |
+
+---
+
+*文档版本: v1.40.0*
+*最后更新: 2026-04-10 03:25*
