@@ -308,6 +308,20 @@ class PatrolController:
         self._Kp_linear = 2.0
         self._Kp_angular = 3.0
 
+        # 卡死检测与恢复 (L/XL/XXL)
+        self._stuck_detector: Optional[StuckDetector] = None
+        self._recovery_manager: Optional[AutonomousRecoveryManager] = None
+        self._recovery_in_progress = False
+        self._recovery_command: Optional[Dict] = None
+        self._recovery_start_pose: Optional[np.ndarray] = None
+        self._recovery_start_time: float = 0.0
+        self._last_stuck_check: float = 0.0
+
+        # 初始化卡死检测与恢复 (L级及以上)
+        if grade in ('L', 'XL', 'XXL'):
+            self._stuck_detector = StuckDetector()
+            self._recovery_manager = AutonomousRecoveryManager(grade=grade)
+
     def _init_sensors(self, use_virtual: bool):
         """初始化传感器"""
         self.imu: Optional[IMUSensor] = None
@@ -460,6 +474,50 @@ class PatrolController:
                     self.state = PatrolState.PATROLLING
                 self._follow_target(dt)
 
+            # ── 卡死检测与自主恢复 (L/XL/XXL) ──
+            if self._stuck_detector is not None and not self._recovery_in_progress:
+                now = time.time()
+                if now - self._last_stuck_check > 0.5:  # 每0.5秒检测一次
+                    self._last_stuck_check = now
+
+                    # 构建IMU帧 (如果有IMU)
+                    imu_frame = None
+                    if hasattr(self, '_imu_frame'):
+                        imu_frame = self._imu_frame
+
+                    stuck_result = self._stuck_detector.update(
+                        position=self.pose,
+                        command=self.velocity,
+                        imu_frame=imu_frame,
+                        timestamp=now,
+                    )
+
+                    if stuck_result.is_stuck and stuck_result.confidence > 0.6:
+                        # 进入恢复状态
+                        self.state = PatrolState.RECOVERING
+                        self._recovery_in_progress = True
+                        self._recovery_start_pose = self.pose.copy()
+                        self._recovery_start_time = now
+                        self._log_event("stuck_detected", {
+                            "reason": stuck_result.reason,
+                            "confidence": stuck_result.confidence,
+                            "strategy": stuck_result.recommended_strategy.value,
+                        })
+
+                        # 请求恢复指令
+                        if self._recovery_manager:
+                            target = np.array([self.current_target.x, self.current_target.y, 0.0]) if self.current_target else None
+                            self._recovery_command = self._recovery_manager.request_recovery(
+                                stuck_result,
+                                current_pose=self.pose,
+                                target_pose=target,
+                                timestamp=now,
+                            )
+
+            # ── 执行恢复操作 ──
+            if self._recovery_in_progress and self._recovery_command:
+                self._execute_recovery(dt)
+
             # 检查是否到达目标点
             self._check_arrival()
 
@@ -529,6 +587,47 @@ class PatrolController:
         self.velocity[0] = 0.9 * self.velocity[0] + 0.1 * desired_vx
         self.velocity[1] = 0.9 * self.velocity[1] + 0.1 * desired_vy
         self.velocity[2] = 0.0  # 巡逻时保持方向
+
+    def _execute_recovery(self, dt: float):
+        """执行恢复操作"""
+        if self._recovery_command is None or self._recovery_start_pose is None:
+            self._recovery_in_progress = False
+            return
+
+        strategy = self._recovery_command['strategy']
+        elapsed = time.time() - self._recovery_start_time
+
+        # 执行恢复速度指令
+        recovery_vel = self._recovery_command.get('velocity', np.zeros(3))
+        self.velocity[:] = recovery_vel
+
+        # 更新里程计
+        self._update_odometry(dt)
+
+        # 检查恢复是否完成
+        if self._recovery_manager:
+            complete, success = self._recovery_manager.check_recovery_complete(
+                strategy=strategy,
+                elapsed_time=elapsed,
+                current_pose=self.pose,
+                start_pose=self._recovery_start_pose,
+            )
+
+            if complete:
+                self._recovery_in_progress = False
+                self._recovery_command = None
+                self._log_event("recovery_complete", {
+                    "strategy": strategy.value,
+                    "success": success,
+                })
+
+                if success:
+                    # 恢复正常巡逻
+                    self.state = PatrolState.PATROLLING
+                else:
+                    # 恢复失败，降级或终止
+                    self.state = PatrolState.PATROLLING
+                    self.metrics.failures += 1
 
     def _follow_target(self, dt: float):
         """跟踪目标点"""
@@ -642,6 +741,13 @@ class PatrolController:
         self.events.clear()
         self.metrics = PatrolMetrics()
         self._last_update_time = time.time()
+        self._recovery_in_progress = False
+        self._recovery_command = None
+        self._recovery_start_pose = None
+        if self._stuck_detector:
+            self._stuck_detector.reset()
+        if self._recovery_manager:
+            self._recovery_manager.reset()
 
     def get_events(self, since: Optional[float] = None) -> List[PatrolEvent]:
         """获取事件列表"""
@@ -739,9 +845,644 @@ def run_patrol_benchmark(grades: Optional[List[str]] = None) -> Dict[str, Dict]:
     return results
 
 
+# ─────────────────────────────────────────────
+# AGV卡死检测与自主恢复系统 (L/XL/XXL)
+# ─────────────────────────────────────────────
+
+class RecoveryStrategy(str, Enum):
+    """恢复策略"""
+    RETRY = 'retry'                      # 重试当前动作
+    BACKUP = 'backup'                    # 后退尝试
+    REPLAN = 'replan'                    # 重新规划路径
+    SIDESTEP = 'sidestep'               # 侧向横移 (Mecanum)
+    ROTATE = 'rotate'                   # 原地旋转后重新尝试
+    ABORT = 'abort'                     # 放弃当前任务点
+    ESCALATE = 'escalate'               # 升级处理 (请求人工干预)
+
+
+@dataclass
+class StuckDetectionResult:
+    """卡死检测结果"""
+    is_stuck: bool
+    confidence: float                   # 0-1 置信度
+    reason: str                        # 原因描述
+    stuck_duration: float              # 卡死持续时间 (s)
+    command_history: np.ndarray        # 历史指令
+    position_history: np.ndarray       # 历史位置
+    recommended_strategy: RecoveryStrategy
+
+
+class StuckDetector:
+    """
+    AGV卡死检测器
+
+    通过对比电机指令与实际运动，检测AGV是否陷入卡死状态:
+    - 电机持续输出但位置无变化 → 机械卡死
+    - 位置振荡但无法前进 → 陷入局部最优
+    - IMU角度快速变化但位置不变 → 轮胎打滑
+
+    检测方法:
+    1. 命令-运动一致性检验
+    2. 位置方差检验 (方差过小)
+    3. 滑移率检验 (IMU vs 里程计)
+    """
+
+    def __init__(
+        self,
+        position_window: int = 20,       # 位置历史窗口大小
+        command_window: int = 20,        # 指令历史窗口大小
+        stuck_threshold_m: float = 0.02,  # 位置变化阈值 (m)
+        stuck_time_threshold: float = 3.0,  # 卡死判定时间 (s)
+        slip_threshold: float = 0.5,    # 滑移率阈值
+    ):
+        self.position_window = position_window
+        self.command_window = command_window
+        self.stuck_threshold_m = stuck_threshold_m
+        self.stuck_time_threshold = stuck_time_threshold
+        self.slip_threshold = slip_threshold
+
+        # 历史数据
+        self._position_history: List[np.ndarray] = []
+        self._command_history: List[np.ndarray] = []
+        self._imu_history: List[IMUFrame] = []
+        self._timestamp_history: List[float] = []
+
+        self._stuck_start_time: Optional[float] = None
+        self._last_recovery_time: float = 0.0
+        self._recovery_count: int = 0
+
+    def update(
+        self,
+        position: np.ndarray,
+        command: np.ndarray,
+        imu_frame: Optional[IMUFrame] = None,
+        timestamp: Optional[float] = None,
+    ) -> StuckDetectionResult:
+        """
+        更新检测状态
+
+        Args:
+            position: 当前位置 [x, y, theta]
+            command: 当前速度指令 [vx, vy, omega]
+            imu_frame: IMU数据帧 (可选)
+            timestamp: 当前时间戳
+
+        Returns:
+            StuckDetectionResult
+        """
+        if timestamp is None:
+            timestamp = time.time()
+
+        # 记录历史
+        self._position_history.append(position.copy())
+        self._command_history.append(command.copy())
+        if imu_frame:
+            self._imu_history.append(imu_frame)
+        self._timestamp_history.append(timestamp)
+
+        # 保持窗口大小
+        if len(self._position_history) > self.position_window:
+            self._position_history.pop(0)
+        if len(self._command_history) > self.command_window:
+            self._command_history.pop(0)
+        if len(self._imu_history) > self.position_window:
+            self._imu_history.pop(0)
+        if len(self._timestamp_history) > self.position_window:
+            self._timestamp_history.pop(0)
+
+        # 需要足够的样本
+        if len(self._position_history) < 5:
+            return StuckDetectionResult(
+                is_stuck=False,
+                confidence=0.0,
+                reason='insufficient_samples',
+                stuck_duration=0.0,
+                command_history=np.array([]),
+                position_history=np.array([]),
+                recommended_strategy=RecoveryStrategy.RETRY,
+            )
+
+        pos_arr = np.array(self._position_history)
+        cmd_arr = np.array(self._command_history)
+
+        # 1. 检测机械卡死: 指令大但位置不变
+        stuck_by_command = self._detect_stuck_by_command(pos_arr, cmd_arr)
+
+        # 2. 检测振荡陷入: 位置方差过小但时间足够长
+        stuck_by_oscillation = self._detect_stuck_by_oscillation(pos_arr)
+
+        # 3. 检测轮胎打滑: IMU有运动但里程计无变化
+        stuck_by_slip = self._detect_stuck_by_slip(pos_arr)
+
+        # 综合判断
+        is_stuck, confidence, reason = self._fuse_detection(
+            stuck_by_command, stuck_by_oscillation, stuck_by_slip
+        )
+
+        # 跟踪卡死持续时间
+        if is_stuck:
+            if self._stuck_start_time is None:
+                self._stuck_start_time = timestamp
+            stuck_duration = timestamp - self._stuck_start_time
+        else:
+            self._stuck_start_time = None
+            stuck_duration = 0.0
+
+        # 推荐恢复策略
+        strategy = self._recommend_strategy(
+            is_stuck, confidence, reason, stuck_duration
+        )
+
+        return StuckDetectionResult(
+            is_stuck=is_stuck,
+            confidence=confidence,
+            reason=reason,
+            stuck_duration=stuck_duration,
+            command_history=cmd_arr,
+            position_history=pos_arr,
+            recommended_strategy=strategy,
+        )
+
+    def _detect_stuck_by_command(
+        self,
+        positions: np.ndarray,
+        commands: np.ndarray,
+    ) -> Tuple[bool, float, str]:
+        """检测指令大但位置不变的情况"""
+        # 统计有指令的时间比例
+        command_magnitude = np.linalg.norm(commands[:, :2], axis=1)
+        has_command = command_magnitude > 0.05  # 忽略微小指令
+
+        if not np.any(has_command):
+            return False, 0.0, 'no_command'
+
+        # 位置变化
+        if len(positions) > 1:
+            position_changes = np.diff(positions[:, :2], axis=0)
+            movement = np.linalg.norm(position_changes, axis=1)
+            total_movement = np.sum(movement)
+        else:
+            total_movement = 0.0
+
+        # 计算预期运动量
+        command_duration = np.sum(has_command) * (
+            (self._timestamp_history[-1] - self._timestamp_history[0])
+            / max(len(self._timestamp_history), 1)
+        )
+        expected_movement = np.mean(command_magnitude[has_command]) * command_duration
+
+        # 运动效率
+        if expected_movement > 0.01:
+            efficiency = min(total_movement / expected_movement, 1.0)
+        else:
+            efficiency = 1.0
+
+        # 如果效率很低且有明显指令
+        if efficiency < 0.2 and np.sum(has_command) >= len(positions) * 0.5:
+            return True, 1.0 - efficiency, 'mechanical_stuck'
+
+        return False, 0.0, ''
+
+    def _detect_stuck_by_oscillation(
+        self,
+        positions: np.ndarray,
+    ) -> Tuple[bool, float, str]:
+        """检测位置振荡但无法前进"""
+        if len(positions) < 10:
+            return False, 0.0, ''
+
+        # 位置方差
+        pos_std = np.std(positions[:, :2], axis=0)
+        total_std = np.sqrt(np.sum(pos_std ** 2))
+
+        # 时间窗口
+        time_span = (
+            self._timestamp_history[-1] - self._timestamp_history[0]
+            if self._timestamp_history else 1.0
+        )
+
+        # 如果方差很小且时间足够长
+        if total_std < self.stuck_threshold_m and time_span > self.stuck_time_threshold:
+            confidence = min(time_span / (self.stuck_time_threshold * 2), 0.95)
+            return True, confidence, 'oscillation_deadlock'
+
+        return False, 0.0, ''
+
+    def _detect_stuck_by_slip(
+        self,
+        positions: np.ndarray,
+    ) -> Tuple[bool, float, str]:
+        """检测轮胎打滑"""
+        if len(self._imu_history) < 5 or len(positions) < 5:
+            return False, 0.0, ''
+
+        # IMU计算的位移
+        imu_displacement = np.zeros(2)
+        for i in range(1, len(self._imu_history)):
+            dt = self._timestamp_history[i] - self._timestamp_history[i - 1]
+            if dt > 0:
+                accel = np.array([
+                    self._imu_history[i].linear_acceleration[0],
+                    self._imu_history[i].linear_acceleration[1],
+                ])
+                # 简单积分 (忽略重力)
+                imu_displacement += 0.5 * accel * dt * dt
+
+        # 里程计位移
+        odom_displacement = positions[-1, :2] - positions[0, :2]
+
+        # 滑移率
+        odom_dist = np.linalg.norm(odom_displacement)
+        imu_dist = np.linalg.norm(imu_displacement)
+
+        if odom_dist < 0.01:
+            return False, 0.0, ''
+
+        slip_rate = max(0.0, 1.0 - odom_dist / max(imu_dist, 0.001))
+
+        if slip_rate > self.slip_threshold:
+            return True, slip_rate, 'wheel_slip'
+
+        return False, 0.0, ''
+
+    def _fuse_detection(
+        self,
+        stuck_cmd: Tuple[bool, float, str],
+        stuck_osc: Tuple[bool, float, str],
+        stuck_slip: Tuple[bool, float, str],
+    ) -> Tuple[bool, float, str]:
+        """融合多种检测结果"""
+        results = [stuck_cmd, stuck_osc, stuck_slip]
+        is_stuck = any(r[0] for r in results)
+
+        if not is_stuck:
+            return False, 0.0, ''
+
+        # 加权平均置信度
+        total_confidence = sum(r[1] for r in results if r[0])
+        avg_confidence = total_confidence / max(sum(1 for r in results if r[0]), 1)
+
+        # 选择置信度最高的理由
+        best_reason = max(results, key=lambda r: r[1] if r[0] else 0.0)
+
+        return True, avg_confidence, best_reason[2]
+
+    def _recommend_strategy(
+        self,
+        is_stuck: bool,
+        confidence: float,
+        reason: str,
+        stuck_duration: float,
+    ) -> RecoveryStrategy:
+        """推荐恢复策略"""
+        if not is_stuck:
+            return RecoveryStrategy.RETRY
+
+        # 根据原因选择策略
+        if reason == 'mechanical_stuck':
+            if stuck_duration > 5.0:
+                return RecoveryStrategy.BACKUP
+            return RecoveryStrategy.ROTATE
+
+        elif reason == 'oscillation_deadlock':
+            return RecoveryStrategy.REPLAN
+
+        elif reason == 'wheel_slip':
+            return RecoveryStrategy.BACKUP
+
+        # 根据持续时间升级策略
+        if stuck_duration > 10.0:
+            return RecoveryStrategy.ESCALATE
+        elif stuck_duration > 5.0:
+            return RecoveryStrategy.ABORT
+
+        return RecoveryStrategy.SIDESTEP
+
+    def reset(self):
+        """重置检测器"""
+        self._position_history.clear()
+        self._command_history.clear()
+        self._imu_history.clear()
+        self._timestamp_history.clear()
+        self._stuck_start_time = None
+
+
+class AutonomousRecoveryManager:
+    """
+    自主恢复管理器
+
+    管理AGV从各种故障状态中恢复:
+    - 卡死恢复 (机械卡死/振荡死锁/轮胎打滑)
+    - 传感器故障降级
+    - 路径重规划
+    - 多级恢复策略升级
+
+    五级支持:
+      S:  无恢复能力 (仅急停)
+      M:  基础后退恢复
+      L:  路径重规划 + 传感器降级
+      XL: 完整多策略恢复 + 故障日志
+      XXL: MPC预测恢复 + 云端协同
+    """
+
+    def __init__(
+        self,
+        grade: str = 'L',
+        max_recovery_attempts: int = 3,
+        recovery_cooldown: float = 2.0,  # 恢复冷却时间 (s)
+    ):
+        self.grade = grade
+        self.max_recovery_attempts = max_recovery_attempts
+        self.recovery_cooldown = recovery_cooldown
+
+        self._recovery_attempts: Dict[str, int] = {}
+        self._last_recovery_time: float = 0.0
+        self._recovery_history: List[Dict] = []
+        self._current_strategy: Optional[RecoveryStrategy] = None
+        self._strategy_start_time: Optional[float] = None
+        self._degradation_level: int = 0  # 降级级别 0=正常, 1=降级, 2=严重
+
+        # 各等级能力
+        self._grade_capabilities = {
+            'S': {'retry': True, 'backup': False, 'replan': False,
+                  'sidestep': False, 'rotate': False, 'abort': False, 'escalate': True},
+            'M': {'retry': True, 'backup': True, 'replan': False,
+                  'sidestep': False, 'rotate': True, 'abort': True, 'escalate': False},
+            'L': {'retry': True, 'backup': True, 'replan': True,
+                  'sidestep': True, 'rotate': True, 'abort': True, 'escalate': False},
+            'XL': {'retry': True, 'backup': True, 'replan': True,
+                   'sidestep': True, 'rotate': True, 'abort': True, 'escalate': True},
+            'XXL': {'retry': True, 'backup': True, 'replan': True,
+                    'sidestep': True, 'rotate': True, 'abort': True, 'escalate': True},
+        }
+
+    def request_recovery(
+        self,
+        stuck_result: StuckDetectionResult,
+        current_pose: np.ndarray,
+        target_pose: Optional[np.ndarray] = None,
+        available_sensors: Optional[Dict[str, bool]] = None,
+        timestamp: Optional[float] = None,
+    ) -> Optional[Dict]:
+        """
+        请求恢复操作
+
+        Args:
+            stuck_result: 卡死检测结果
+            current_pose: 当前位姿
+            target_pose: 目标位姿 (用于重规划)
+            available_sensors: 可用传感器状态
+            timestamp: 当前时间戳
+
+        Returns:
+            恢复指令字典，如果无法恢复则返回 None
+        """
+        if timestamp is None:
+            timestamp = time.time()
+
+        # 检查冷却时间
+        if timestamp - self._last_recovery_time < self.recovery_cooldown:
+            return None
+
+        # 检查等级能力
+        caps = self._grade_capabilities.get(self.grade, self._grade_capabilities['S'])
+        strategy = stuck_result.recommended_strategy
+
+        if not caps.get(strategy.value, False):
+            # 降级到较低级策略
+            strategy = self._downgrade_strategy(strategy, caps)
+
+        # 检查恢复次数
+        strategy_key = strategy.value
+        attempts = self._recovery_attempts.get(strategy_key, 0)
+        if attempts >= self.max_recovery_attempts:
+            # 升级策略
+            strategy = self._upgrade_strategy(strategy, stuck_result)
+            attempts = 0
+
+        # 更新状态
+        self._current_strategy = strategy
+        self._strategy_start_time = timestamp
+        self._recovery_attempts[strategy_key] = attempts + 1
+
+        # 构建恢复指令
+        recovery_cmd = self._build_recovery_command(
+            strategy=strategy,
+            current_pose=current_pose,
+            target_pose=target_pose,
+            stuck_result=stuck_result,
+            available_sensors=available_sensors,
+            timestamp=timestamp,
+        )
+
+        # 记录恢复历史
+        self._recovery_history.append({
+            'timestamp': timestamp,
+            'strategy': strategy.value,
+            'reason': stuck_result.reason,
+            'confidence': stuck_result.confidence,
+            'pose': current_pose.copy(),
+            'attempts': attempts + 1,
+        })
+
+        # 保持历史长度
+        if len(self._recovery_history) > 100:
+            self._recovery_history.pop(0)
+
+        self._last_recovery_time = timestamp
+
+        return recovery_cmd
+
+    def _downgrade_strategy(
+        self,
+        strategy: RecoveryStrategy,
+        capabilities: Dict[str, bool],
+    ) -> RecoveryStrategy:
+        """降级到可用的策略"""
+        priority_order = [
+            RecoveryStrategy.RETRY,
+            RecoveryStrategy.BACKUP,
+            RecoveryStrategy.ROTATE,
+            RecoveryStrategy.SIDESTEP,
+            RecoveryStrategy.REPLAN,
+            RecoveryStrategy.ABORT,
+            RecoveryStrategy.ESCALATE,
+        ]
+
+        for s in priority_order:
+            if capabilities.get(s.value, False):
+                return s
+
+        return RecoveryStrategy.ABORT
+
+    def _upgrade_strategy(
+        self,
+        current: RecoveryStrategy,
+        stuck_result: StuckDetectionResult,
+    ) -> RecoveryStrategy:
+        """升级恢复策略"""
+        upgrades = {
+            RecoveryStrategy.RETRY: RecoveryStrategy.BACKUP,
+            RecoveryStrategy.BACKUP: RecoveryStrategy.ROTATE,
+            RecoveryStrategy.ROTATE: RecoveryStrategy.SIDESTEP,
+            RecoveryStrategy.SIDESTEP: RecoveryStrategy.REPLAN,
+            RecoveryStrategy.REPLAN: RecoveryStrategy.ABORT,
+            RecoveryStrategy.ABORT: RecoveryStrategy.ESCALATE,
+        }
+        return upgrades.get(current, RecoveryStrategy.ESCALATE)
+
+    def _build_recovery_command(
+        self,
+        strategy: RecoveryStrategy,
+        current_pose: np.ndarray,
+        target_pose: Optional[np.ndarray],
+        stuck_result: StuckDetectionResult,
+        available_sensors: Optional[Dict[str, bool]],
+        timestamp: float,
+    ) -> Dict:
+        """构建恢复指令"""
+        cmd = {
+            'strategy': strategy,
+            'timestamp': timestamp,
+            'duration': 0.0,
+            'velocity': np.zeros(3),
+            'target_pose': target_pose.copy() if target_pose is not None else None,
+            'message': '',
+            'degradation': self._degradation_level,
+        }
+
+        if strategy == RecoveryStrategy.RETRY:
+            cmd['duration'] = 0.5
+            cmd['velocity'] = np.array([0.05, 0.0, 0.0])
+            cmd['message'] = 'Retry: 轻微后退后重试'
+
+        elif strategy == RecoveryStrategy.BACKUP:
+            # 后退一定距离
+            backup_dist = min(stuck_result.stuck_duration * 0.05, 0.3)
+            angle = current_pose[2]
+            cmd['velocity'] = np.array([-backup_dist * np.cos(angle), -backup_dist * np.sin(angle), 0.0])
+            cmd['duration'] = 1.5
+            cmd['message'] = f'Backup: 后退 {backup_dist:.2f}m'
+
+        elif strategy == RecoveryStrategy.ROTATE:
+            # 原地旋转后尝试
+            cmd['velocity'] = np.array([0.0, 0.0, 1.5])
+            cmd['duration'] = 1.0
+            cmd['message'] = 'Rotate: 原地旋转后重试'
+
+        elif strategy == RecoveryStrategy.SIDESTEP:
+            # Mecanum 横移
+            cmd['velocity'] = np.array([0.0, 0.2, 0.0])
+            cmd['duration'] = 1.0
+            cmd['message'] = 'Sidestep: 横移0.2m'
+
+        elif strategy == RecoveryStrategy.REPLAN:
+            cmd['duration'] = 0.0
+            cmd['message'] = 'Replan: 请求路径重规划'
+
+        elif strategy == RecoveryStrategy.ABORT:
+            cmd['duration'] = 0.0
+            cmd['message'] = 'Abort: 放弃当前目标点'
+
+        elif strategy == RecoveryStrategy.ESCALATE:
+            cmd['duration'] = 0.0
+            cmd['message'] = 'Escalate: 请求人工干预'
+            cmd['degradation'] = 2
+
+        return cmd
+
+    def check_recovery_complete(
+        self,
+        strategy: RecoveryStrategy,
+        elapsed_time: float,
+        current_pose: np.ndarray,
+        start_pose: np.ndarray,
+    ) -> Tuple[bool, bool]:
+        """
+        检查恢复操作是否完成
+
+        Returns:
+            (is_complete, success)
+        """
+        if strategy == RecoveryStrategy.RETRY:
+            return elapsed_time > 0.5, True
+
+        elif strategy in (RecoveryStrategy.BACKUP, RecoveryStrategy.SIDESTEP):
+            displacement = np.linalg.norm(current_pose[:2] - start_pose[:2])
+            return elapsed_time > 1.5, displacement > 0.05
+
+        elif strategy == RecoveryStrategy.ROTATE:
+            angle_change = abs(current_pose[2] - start_pose[2])
+            return elapsed_time > 1.0, angle_change > 0.5
+
+        elif strategy == RecoveryStrategy.REPLAN:
+            # 重规划需要外部触发完成
+            return False, False
+
+        elif strategy in (RecoveryStrategy.ABORT, RecoveryStrategy.ESCALATE):
+            return True, True
+
+        return True, True
+
+    def get_diagnostics(self) -> Dict:
+        """获取诊断信息"""
+        return {
+            'grade': self.grade,
+            'recovery_history': self._recovery_history[-10:],
+            'recovery_attempts': self._recovery_attempts.copy(),
+            'current_strategy': self._current_strategy.value if self._current_strategy else None,
+            'degradation_level': self._degradation_level,
+            'last_recovery_time': self._last_recovery_time,
+        }
+
+    def reset(self):
+        """重置恢复管理器"""
+        self._recovery_attempts.clear()
+        self._recovery_history.clear()
+        self._current_strategy = None
+        self._strategy_start_time = None
+        self._degradation_level = 0
+
+
 if __name__ == '__main__':
     # 快速测试
     print("Running patrol benchmark...")
     results = run_patrol_benchmark(['S', 'M', 'L'])
     for grade, metrics in results.items():
         print(f"\n{grade} grade: {metrics}")
+
+    # 测试卡死检测
+    print("\nTesting StuckDetector...")
+    detector = StuckDetector()
+    import random
+    for i in range(30):
+        # 模拟卡死场景: 指令大但位置不变
+        pos = np.array([0.1, 0.1, 0.0])
+        cmd = np.array([0.3, 0.0, 0.0])
+        result = detector.update(pos, cmd, timestamp=float(i) * 0.1)
+        if result.is_stuck:
+            print(f"  Stuck detected: {result.reason}, confidence={result.confidence:.2f}")
+            print(f"  Recommended strategy: {result.recommended_strategy.value}")
+            break
+    else:
+        print("  No stuck detected in normal scenario")
+
+    # 测试恢复管理器
+    print("\nTesting AutonomousRecoveryManager...")
+    manager = AutonomousRecoveryManager(grade='XL')
+    stuck_result = StuckDetectionResult(
+        is_stuck=True,
+        confidence=0.85,
+        reason='mechanical_stuck',
+        stuck_duration=4.0,
+        command_history=np.zeros((10, 3)),
+        position_history=np.zeros((10, 3)),
+        recommended_strategy=RecoveryStrategy.BACKUP,
+    )
+    recovery = manager.request_recovery(
+        stuck_result,
+        current_pose=np.array([1.0, 2.0, 0.5]),
+        target_pose=np.array([3.0, 2.0, 0.0]),
+        timestamp=10.0,
+    )
+    print(f"  Recovery command: {recovery}")

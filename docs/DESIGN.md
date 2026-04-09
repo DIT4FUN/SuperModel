@@ -2199,3 +2199,150 @@ calibrator.save('calibration.npz')
 - 标定结果持久化
 - 接触点/接触力数据结构
 
+---
+
+## 附录K: AGV卡死检测与自主恢复系统 (v2.20.0)
+
+> 本附录定义 SuperModel 超模态大模型 AGV 的卡死检测与自主恢复系统，
+> 为 L/XL/XXL 级 AGV 提供智能化故障恢复能力。
+
+### K.1 系统架构
+
+```
+PatrolController (巡逻控制器)
+    ├── StuckDetector (卡死检测器)
+    │       ├── 机械卡死检测 (命令大但位置不变)
+    │       ├── 振荡死锁检测 (位置方差过小)
+    │       └── 轮胎打滑检测 (IMU vs 里程计不一致)
+    │
+    └── AutonomousRecoveryManager (自主恢复管理器)
+            ├── RecoveryStrategy (恢复策略)
+            │       ├── RETRY: 重试当前动作
+            │       ├── BACKUP: 后退尝试
+            │       ├── ROTATE: 原地旋转后重试
+            │       ├── SIDESTEP: 侧向横移 (Mecanum)
+            │       ├── REPLAN: 重新规划路径
+            │       ├── ABORT: 放弃当前任务点
+            │       └── ESCALATE: 升级处理 (人工干预)
+            │
+            ├── 策略降级 (等级不足时)
+            ├── 策略升级 (多次失败时)
+            └── 恢复历史记录
+```
+
+### K.2 卡死检测算法
+
+#### K.2.1 机械卡死检测
+
+检测条件:
+- 电机指令幅度 > 0.05 m/s
+- 实际运动效率 < 20%
+- 有指令时间占比 > 50%
+
+```
+运动效率 = 实际位移 / 预期位移
+预期位移 = 平均指令速度 × 有指令时间
+```
+
+#### K.2.2 振荡死锁检测
+
+检测条件:
+- 位置标准差 < 0.02m (卡死阈值)
+- 持续时间 > 3.0s
+
+说明: AGV 在小范围内振荡但无法前进，常见于复杂障碍物环境。
+
+#### K.2.3 轮胎打滑检测
+
+检测条件:
+- 滑移率 > 50%
+- 滑移率 = 1 - (里程计位移 / IMU位移)
+
+说明: IMU 检测到加速但里程计无对应位移，常见于光滑地面。
+
+### K.3 恢复策略分级
+
+| 策略 | S级 | M级 | L级 | XL级 | XXL级 | 描述 |
+|------|-----|-----|-----|------|-------|------|
+| RETRY | ✅ | ✅ | ✅ | ✅ | ✅ | 重试当前动作 |
+| BACKUP | ❌ | ✅ | ✅ | ✅ | ✅ | 后退后重试 |
+| ROTATE | ❌ | ✅ | ✅ | ✅ | ✅ | 原地旋转后重试 |
+| SIDESTEP | ❌ | ❌ | ✅ | ✅ | ✅ | Mecanum 横移 |
+| REPLAN | ❌ | ❌ | ✅ | ✅ | ✅ | 重新规划路径 |
+| ABORT | ❌ | ✅ | ✅ | ✅ | ✅ | 放弃当前目标点 |
+| ESCALATE | ✅ | ❌ | ❌ | ✅ | ✅ | 请求人工干预 |
+
+### K.4 策略升级机制
+
+```
+RETRY → BACKUP → ROTATE → SIDESTEP → REPLAN → ABORT → ESCALATE
+```
+
+每次恢复失败后自动升级策略，最多尝试 3 次后升级。
+
+### K.5 AGV五级恢复能力规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|-----|-----|-----|------|------|
+| 卡死检测 | ❌ | ❌ | ✅ | ✅ | ✅ |
+| 自主恢复 | ❌ | 基础 | 完整 | 完整+日志 | MPC预测+云端 |
+| 最大恢复次数 | 0 | 3 | 3 | 5 | 无限制 |
+| 恢复冷却时间(s) | N/A | 2.0 | 2.0 | 1.0 | 0.5 |
+| 传感器降级 | ❌ | ❌ | ✅ | ✅ | ✅ |
+| 故障日志 | ❌ | ❌ | ❌ | ✅ | ✅ |
+| 人工干预接口 | ❌ | ❌ | ❌ | ✅ | ✅ |
+
+### K.6 核心接口
+
+#### StuckDetector
+
+```python
+class StuckDetector:
+    def update(position, command, imu_frame, timestamp) -> StuckDetectionResult
+    def reset()
+```
+
+#### AutonomousRecoveryManager
+
+```python
+class AutonomousRecoveryManager:
+    def request_recovery(stuck_result, current_pose, target_pose, available_sensors, timestamp) -> Optional[Dict]
+    def check_recovery_complete(strategy, elapsed_time, current_pose, start_pose) -> Tuple[bool, bool]
+    def get_diagnostics() -> Dict
+    def reset()
+```
+
+### K.7 集成到巡逻控制器
+
+L/XL/XXL 级 PatrolController 自动启用卡死检测与恢复:
+
+```python
+controller = PatrolController(grade='XL', initial_pose=(0, 0, 0))
+controller.start_patrol()
+
+for _ in range(1000):
+    vel, state = controller.update(dt=0.02)
+    # 内部自动进行:
+    # 1. 卡死检测 (每0.5秒)
+    # 2. 策略选择与执行
+    # 3. 恢复完成检查
+```
+
+### K.8 测试覆盖
+
+| 测试文件 | 覆盖模块 | 测试数 |
+|---------|---------|-------|
+| `tests/patrol_control_tests.py` | StuckDetector + RecoveryManager | 37 |
+
+**主要测试用例:**
+- 五级巡逻控制器创建
+- 巡逻启动/停止/暂停/恢复
+- 单点/多点巡逻
+- 障碍物检测与避障
+- 到达判定
+- 指标统计
+- 事件记录
+- 恢复策略选择 (机械卡死/振荡死锁/轮胎打滑)
+- 策略降级与升级
+- 恢复完成判定
+

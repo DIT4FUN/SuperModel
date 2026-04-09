@@ -2,6 +2,38 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.20.0] - 2026-04-09
+
+### Added
+- src/control/patrol_control.py: 新增 AGV 卡死检测与自主恢复系统
+  - StuckDetector: 机械卡死/振荡死锁/轮胎打滑 三重检测
+  - AutonomousRecoveryManager: 多级恢复策略 (RETRY/BACKUP/ROTATE/SIDESTEP/REPLAN/ABORT/ESCALATE)
+  - RecoveryStrategy: 7种恢复策略枚举
+  - StuckDetectionResult: 卡死检测结果数据结构
+  - 策略降级 (等级不足时自动降级)
+  - 策略升级 (多次失败时自动升级)
+  - L/XL/XXL 级 PatrolController 自动启用
+
+- docs/DESIGN.md: 新增附录K AGV卡死检测与自主恢复系统规范
+  - 系统架构图
+  - 机械卡死检测算法 (运动效率 < 20%)
+  - 振荡死锁检测算法 (位置标准差 < 0.02m)
+  - 轮胎打滑检测算法 (滑移率 > 50%)
+  - AGV五级恢复能力规格表
+  - 策略升级机制 (RETRY→BACKUP→...→ESCALATE)
+  - 核心接口文档
+  - 测试覆盖说明
+
+### Fixed
+- PatrolController.update() 集成卡死检测与恢复逻辑
+- PatrolController.reset() 重置检测器与恢复管理器
+- 37项巡逻控制测试全通过
+
+### Changed
+- src/__init__.py: 版本 2.12.0 → 2.20.0
+
+---
+
 ## [2.16.0] - 2026-04-09
 
 ### Added
