@@ -1,7 +1,7 @@
 # SuperModel 真实机器人集成指南
 
-> **文档版本**: v1.0.0
-> **最后更新**: 2026-04-01
+> **文档版本**: v1.1.0
+> **最后更新**: 2026-04-09 (v2.05.0)
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 ---
@@ -391,4 +391,67 @@ while True:
 
 ---
 
-_本文档与 SuperModel v2.03.0 同步更新_
+_本文档与 SuperModel v2.05.0 同步更新_
+
+---
+
+## 附录: v2.05.0 传感器-控制接口快速参考
+
+### 触觉-控制接口
+```python
+from sensors.tactile import TactileArray, TactileSensorType, get_tactile_spec
+from control.tactile_control import TactileServoController
+
+tactile = TactileArray(array_size=(16, 16), sensor_id="tactile_0")
+tactile.open()
+frame = tactile.capture()
+
+controller = TactileServoController(control_rate=200)
+cmd = controller.compute(frame)  # 返回触觉伺服命令
+```
+
+### 力觉-控制接口
+```python
+from sensors.force import ForceTorqueSensor, ForceSensorType, get_force_spec
+from control.force_control import ForceController
+
+ft = ForceTorqueSensor(sensor_type=ForceSensorType.SIX_AXIS, sensor_id="ft_0")
+ft.open()
+wrench = ft.read()  # Wrench六维力旋量
+
+fctrl = ForceController(control_rate=1000)
+cmd = fctrl.compute(wrench)  # 返回力控命令
+```
+
+### IMU-控制接口
+```python
+from sensors.imu import IMUSensor, IMUSensorType, get_imu_spec
+from control.imu_control import AttitudeStabilizer
+
+imu = IMUSensor(sensor_type=IMUSensorType.BMI088, sensor_id="imu_0")
+imu.open()
+im_frame = imu.read()  # IMUFrame 包含acc/gyro/mag
+
+stabilizer = AttitudeStabilizer(control_rate=500)
+cmd = stabilizer.compute(im_frame)  # 返回姿态稳定命令
+```
+
+### 五级规格快速加载
+```python
+from sensors.manager import SensorManager
+from control.embodied_control import EmbodiedController, create_for_grade
+
+# 方式1: 手动配置
+manager = SensorManager(grade="M")
+controller = EmbodiedController(grade="M", num_sensors=7)
+
+# 方式2: 工厂方法自动加载五级规格
+controller = create_for_grade("M")  # 自动配置M级全部参数
+controller = create_for_grade("XL")  # 自动配置XL级全部参数
+
+# 仿真循环
+controller.run(num_steps=1000, dt=0.01)
+
+# 五级基准测试
+results = controller.run_five_grade_benchmark()
+```

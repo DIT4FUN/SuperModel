@@ -2,6 +2,26 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.05.1] - 2026-04-09
+
+### Added
+- docs/DEPLOYMENT_CHECKLIST.md: 新增完整部署清单文档 (v1.0.0)
+  - 7阶段部署流程: 硬件验收→软件环境→传感器标定→控制配置→仿真验证→实机部署→长期稳定性
+  - 五级AGV (S/M/L/XL/XXL) 逐项检查表
+  - IMU/相机/力传感器/触觉传感器标定代码模板
+  - 仿真-实机差异补偿参数表
+  - 24小时老化测试和性能回归测试方案
+
+### Documentation
+- REAL_ROBOT_INTEGRATION.md: 更新至 v1.1.0 / v2.05.0
+  - 版本更新至 v2.05.0
+  - 新增附录: 传感器-控制接口快速参考 (触觉/力觉/IMU五级加载)
+  - 添加 create_for_grade() 工厂方法和五级基准测试说明
+- MODULE_INDEX.md: 更新至 v2.05.1，新增部署清单导航
+
+### Testing
+- 全项目测试: 1857项全部通过 (50.65s, 16 skipped, 28 warnings)
+
 ## [2.05.0] - 2026-04-09
 
 ### Added

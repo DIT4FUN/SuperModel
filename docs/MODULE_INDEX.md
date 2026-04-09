@@ -1,5 +1,5 @@
 # SuperModel 模块索引 / Module Index
-- **v2.05.0** (2026-04-09): 新增SENSOR_CONTROL_INTERFACE_SPEC.md传感器-控制模块详细接口规范; 1835项测试全通过; 触觉/力觉/IMU模块接口完整定义
+- **v2.05.1** (2026-04-09): 新增DEPLOYMENT_CHECKLIST.md部署清单; 更新REAL_ROBOT_INTEGRATION.md至v2.05.0; 1857项测试全通过
 - **v2.04.0** (2026-04-09): 具身传感控制仿真测试完成, 1835项测试全通过; 模块接口规范完善
 - **v2.03.0** (2026-04-09): 新增具身智能实战演示脚本, 1793项测试全通过
 - **v2.02.0** (2026-04-09): 新增EmbodiedController.run()仿真循环 + run_five_grade_benchmark()五级基准测试; 368项传感器+融合测试全通过
