@@ -52,6 +52,186 @@ class GymEnvConfig:
             self.joint_limits_upper = np.ones(self.num_joints) * np.pi
 
 
+@dataclass
+class GymAGVSpec:
+    """AGV五级规格结构化数据类
+
+    提供类型安全的AGV等级规格访问，包括:
+    - 物理参数 (质量/速度/负载)
+    - 控制参数 (周期/频率/响应时间)
+    - 感知参数 (传感器型号/采样率)
+    - 奖励权重 (跟踪/平滑/能量/碰撞)
+    """
+    grade: str = 'M'
+    grade_desc: str = '中型AGV'
+    payload_kg: float = 100.0
+    max_speed_mps: float = 1.5
+    dt: float = 0.01
+    sim_dt: float = 0.001
+    control_freq_hz: float = 100.0
+    obs_noise: float = 0.005
+    episode_length: int = 1000
+    reward_tracking: float = 1.0
+    reward_smooth: float = 0.01
+    reward_energy: float = 0.0005
+    reward_contact: float = 0.1
+    reward_collision: float = -2.0
+    max_torque_nm: float = 100.0
+    processor: str = 'RK3588'
+    ai_tops: float = 20.0
+    imu_type: str = 'BMI088'
+    imu_hz: float = 200.0
+    camera: str = '双目D435i 720p'
+    audio_ch: int = 2
+    tactile_array: str = '16x16'
+    force_axis: str = '6轴±200N'
+    localization_mm: float = 5.0
+    collision_response_ms: float = 50.0
+    posture_stable_ms: float = 200.0
+
+    @classmethod
+    def from_grade(cls, grade: str) -> 'GymAGVSpec':
+        spec_map = {
+            'S': dict(grade='S', grade_desc='小型AGV', payload_kg=30, max_speed_mps=0.5,
+                dt=0.02, sim_dt=0.002, control_freq_hz=50, obs_noise=0.01,
+                episode_length=500, reward_tracking=1.0, reward_smooth=0.005,
+                reward_energy=0.001, reward_contact=0.05, reward_collision=-1.0,
+                max_torque_nm=50, processor='RPi 4B', ai_tops=5,
+                imu_type='MPU6050', imu_hz=100, camera='单目640x480', audio_ch=1,
+                tactile_array='8x8', force_axis='3轴±100N',
+                localization_mm=10, collision_response_ms=100, posture_stable_ms=500),
+            'M': dict(grade='M', grade_desc='中型AGV', payload_kg=100, max_speed_mps=1.5,
+                dt=0.01, sim_dt=0.001, control_freq_hz=100, obs_noise=0.005,
+                episode_length=1000, reward_tracking=1.0, reward_smooth=0.01,
+                reward_energy=0.0005, reward_contact=0.1, reward_collision=-2.0,
+                max_torque_nm=100, processor='RK3588/Nano', ai_tops=20,
+                imu_type='BMI088', imu_hz=200, camera='双目D435i 720p', audio_ch=2,
+                tactile_array='16x16', force_axis='6轴±200N',
+                localization_mm=5, collision_response_ms=50, posture_stable_ms=200),
+            'L': dict(grade='L', grade_desc='大型AGV', payload_kg=300, max_speed_mps=2.0,
+                dt=0.005, sim_dt=0.0005, control_freq_hz=200, obs_noise=0.002,
+                episode_length=1000, reward_tracking=2.0, reward_smooth=0.02,
+                reward_energy=0.0002, reward_contact=0.2, reward_collision=-5.0,
+                max_torque_nm=200, processor='Orin NX', ai_tops=100,
+                imu_type='BMI088', imu_hz=500, camera='双目D455 60fps', audio_ch=4,
+                tactile_array='24x24', force_axis='6轴±500N',
+                localization_mm=3, collision_response_ms=20, posture_stable_ms=100),
+            'XL': dict(grade='XL', grade_desc='超大型AGV', payload_kg=600, max_speed_mps=2.5,
+                dt=0.002, sim_dt=0.0002, control_freq_hz=500, obs_noise=0.001,
+                episode_length=2000, reward_tracking=5.0, reward_smooth=0.05,
+                reward_energy=0.0001, reward_contact=0.5, reward_collision=-10.0,
+                max_torque_nm=500, processor='Orin AGX', ai_tops=300,
+                imu_type='ADIS16470', imu_hz=1000, camera='双目+事件相机', audio_ch=6,
+                tactile_array='32x32', force_axis='6轴±1000N',
+                localization_mm=1, collision_response_ms=10, posture_stable_ms=50),
+            'XXL': dict(grade='XXL', grade_desc='重型AGV', payload_kg=1200, max_speed_mps=3.0,
+                dt=0.001, sim_dt=0.0001, control_freq_hz=1000, obs_noise=0.0005,
+                episode_length=5000, reward_tracking=10.0, reward_smooth=0.1,
+                reward_energy=0.00005, reward_contact=1.0, reward_collision=-20.0,
+                max_torque_nm=1000, processor='Orin AGX x2+GPU', ai_tops=500,
+                imu_type='ADIS16470', imu_hz=2000, camera='多目+3D LiDAR', audio_ch=8,
+                tactile_array='48x48', force_axis='6轴±5000N',
+                localization_mm=0.5, collision_response_ms=5, posture_stable_ms=20),
+        }
+        return cls(**(spec_map.get(grade, spec_map['M'])))
+
+    def to_dict(self) -> Dict[str, Any]:
+        """转换为字典 (兼容旧AGV_GYM_GRADE_SPEC格式)"""
+        return {
+            'grade': self.grade, 'grade_desc': self.grade_desc,
+            'payload_kg': self.payload_kg, 'max_speed_mps': self.max_speed_mps,
+            'dt': self.dt, 'sim_dt': self.sim_dt, 'control_freq_hz': self.control_freq_hz,
+            'obs_noise': self.obs_noise, 'episode_length': self.episode_length,
+            'reward_tracking': self.reward_tracking, 'reward_smooth': self.reward_smooth,
+            'reward_energy': self.reward_energy, 'reward_contact': self.reward_contact,
+            'reward_collision': self.reward_collision, 'max_torque_nm': self.max_torque_nm,
+            'processor': self.processor, 'ai_tops': self.ai_tops,
+            'imu_type': self.imu_type, 'imu_hz': self.imu_hz,
+            'camera': self.camera, 'audio_ch': self.audio_ch,
+            'tactile_array': self.tactile_array, 'force_axis': self.force_axis,
+            'localization_mm': self.localization_mm,
+            'collision_response_ms': self.collision_response_ms,
+            'posture_stable_ms': self.posture_stable_ms,
+        }
+
+    def get_control_params(self) -> Dict[str, Any]:
+        """获取控制参数子集"""
+        return {
+            'dt': self.dt, 'sim_dt': self.sim_dt,
+            'control_freq_hz': self.control_freq_hz,
+            'max_torque_nm': self.max_torque_nm,
+            'collision_response_ms': self.collision_response_ms,
+            'posture_stable_ms': self.posture_stable_ms,
+        }
+
+    def get_sensor_params(self) -> Dict[str, Any]:
+        """获取传感器参数子集"""
+        return {
+            'imu_type': self.imu_type, 'imu_hz': self.imu_hz,
+            'camera': self.camera, 'audio_ch': self.audio_ch,
+            'tactile_array': self.tactile_array,
+            'force_axis': self.force_axis, 'obs_noise': self.obs_noise,
+        }
+
+
+def get_agv_control_params(grade: str) -> Dict[str, Any]:
+    """获取AGV等级对应的控制参数
+
+    Args:
+        grade: AGV等级 ('S', 'M', 'L', 'XL', 'XXL')
+
+    Returns:
+        控制参数字典
+    """
+    return GymAGVSpec.from_grade(grade).get_control_params()
+
+
+def compute_agv_reward(
+    grade: str,
+    tracking_error: float,
+    action: np.ndarray,
+    contact: float = 0.0,
+    collision: bool = False,
+) -> float:
+    """根据AGV等级计算奖励
+
+    Args:
+        grade: AGV等级
+        tracking_error: 位置跟踪误差
+        action: 当前动作 (关节力矩)
+        contact: 接触量 (0-1)
+        collision: 是否发生碰撞
+
+    Returns:
+        奖励值
+    """
+    spec = GymAGVSpec.from_grade(grade)
+    reward = spec.reward_tracking * np.exp(-tracking_error * 10.0)
+    energy = np.sum(np.square(action)) * spec.dt
+    reward += spec.reward_smooth * np.exp(-np.linalg.norm(action) * 0.01)
+    reward += spec.reward_energy * (-energy)
+    reward += spec.reward_contact * contact
+    if collision:
+        reward += spec.reward_collision
+    return float(reward)
+
+
+def get_gym_agv_spec(grade: str) -> GymAGVSpec:
+    """获取类型安全的AGV Gym规格对象 (推荐使用)
+
+    Example:
+        >>> spec = get_gym_agv_spec('M')
+        >>> print(spec.control_freq_hz)
+        100.0
+    """
+    return GymAGVSpec.from_grade(grade)
+
+
+def list_gym_agv_specs() -> Dict[str, GymAGVSpec]:
+    """列出所有AGV五级Gym规格对象"""
+    return {g: GymAGVSpec.from_grade(g) for g in ['S', 'M', 'L', 'XL', 'XXL']}
+
+
 class SuperModelGymEnv(gym.Env):
     """
     SuperModel Gymnasium 环境
@@ -690,84 +870,18 @@ def get_gym_spec(grade: str = 'M') -> Dict[str, Any]:
 # =============================================================================
 # AGV 五级 Gymnasium 环境规格表
 # =============================================================================
+# AGV_GYM_GRADE_SPEC now backed by GymAGVSpec (类型安全)
+# 使用 get_gym_agv_spec(grade) 获取 GymAGVSpec 对象
+# 使用 get_agv_control_params(grade) 获取控制参数
+# 使用 get_agv_grade_spec(grade) 获取旧格式字典 (向后兼容)
 
-AGV_GYM_GRADE_SPEC = {
-    'S': {
-        'grade': 'S', 'grade_desc': '小型AGV',
-        'payload_kg': 30, 'max_speed_mps': 0.5,
-        'dt': 0.02, 'sim_dt': 0.002, 'control_freq_hz': 50,
-        'obs_noise': 0.01, 'episode_length': 500,
-        'reward_tracking': 1.0, 'reward_smooth': 0.005,
-        'reward_energy': 0.001, 'reward_contact': 0.05,
-        'reward_collision': -1.0, 'max_torque_nm': 50,
-        'processor': 'RPi 4B', 'ai_tops': 5,
-        'imu_type': 'MPU6050', 'imu_hz': 100,
-        'camera': '单目640x480', 'audio_ch': 1,
-        'tactile_array': '8x8', 'force_axis': '3轴±100N',
-        'localization_mm': 10, 'collision_response_ms': 100,
-        'posture_stable_ms': 500,
-    },
-    'M': {
-        'grade': 'M', 'grade_desc': '中型AGV',
-        'payload_kg': 100, 'max_speed_mps': 1.5,
-        'dt': 0.01, 'sim_dt': 0.001, 'control_freq_hz': 100,
-        'obs_noise': 0.005, 'episode_length': 1000,
-        'reward_tracking': 1.0, 'reward_smooth': 0.01,
-        'reward_energy': 0.0005, 'reward_contact': 0.1,
-        'reward_collision': -2.0, 'max_torque_nm': 100,
-        'processor': 'RK3588/Nano', 'ai_tops': 20,
-        'imu_type': 'BMI088', 'imu_hz': 200,
-        'camera': '双目D435i 720p', 'audio_ch': 2,
-        'tactile_array': '16x16', 'force_axis': '6轴±200N',
-        'localization_mm': 5, 'collision_response_ms': 50,
-        'posture_stable_ms': 200,
-    },
-    'L': {
-        'grade': 'L', 'grade_desc': '大型AGV',
-        'payload_kg': 300, 'max_speed_mps': 2.0,
-        'dt': 0.005, 'sim_dt': 0.0005, 'control_freq_hz': 200,
-        'obs_noise': 0.002, 'episode_length': 1000,
-        'reward_tracking': 2.0, 'reward_smooth': 0.02,
-        'reward_energy': 0.0002, 'reward_contact': 0.2,
-        'reward_collision': -5.0, 'max_torque_nm': 200,
-        'processor': 'Orin NX', 'ai_tops': 100,
-        'imu_type': 'BMI088', 'imu_hz': 500,
-        'camera': '双目D455 60fps', 'audio_ch': 4,
-        'tactile_array': '24x24', 'force_axis': '6轴±500N',
-        'localization_mm': 3, 'collision_response_ms': 20,
-        'posture_stable_ms': 100,
-    },
-    'XL': {
-        'grade': 'XL', 'grade_desc': '超大型AGV',
-        'payload_kg': 600, 'max_speed_mps': 2.5,
-        'dt': 0.002, 'sim_dt': 0.0002, 'control_freq_hz': 500,
-        'obs_noise': 0.001, 'episode_length': 2000,
-        'reward_tracking': 5.0, 'reward_smooth': 0.05,
-        'reward_energy': 0.0001, 'reward_contact': 0.5,
-        'reward_collision': -10.0, 'max_torque_nm': 500,
-        'processor': 'Orin AGX', 'ai_tops': 300,
-        'imu_type': 'ADIS16470', 'imu_hz': 1000,
-        'camera': '双目+事件相机', 'audio_ch': 6,
-        'tactile_array': '32x32', 'force_axis': '6轴±1000N',
-        'localization_mm': 1, 'collision_response_ms': 10,
-        'posture_stable_ms': 50,
-    },
-    'XXL': {
-        'grade': 'XXL', 'grade_desc': '重型AGV',
-        'payload_kg': 1200, 'max_speed_mps': 3.0,
-        'dt': 0.001, 'sim_dt': 0.0001, 'control_freq_hz': 1000,
-        'obs_noise': 0.0005, 'episode_length': 5000,
-        'reward_tracking': 10.0, 'reward_smooth': 0.1,
-        'reward_energy': 0.00005, 'reward_contact': 1.0,
-        'reward_collision': -20.0, 'max_torque_nm': 1000,
-        'processor': 'Orin AGX x2+GPU', 'ai_tops': 500,
-        'imu_type': 'ADIS16470', 'imu_hz': 2000,
-        'camera': '多目+3D LiDAR', 'audio_ch': 8,
-        'tactile_array': '48x48', 'force_axis': '6轴±5000N',
-        'localization_mm': 0.5, 'collision_response_ms': 5,
-        'posture_stable_ms': 20,
-    },
-}
+AGV_GYM_GRADE_SPEC = {g: GymAGVSpec.from_grade(g).to_dict() for g in ['S', 'M', 'L', 'XL', 'XXL']}
+
+
+def get_agv_grade_spec(grade: str) -> Dict[str, Any]:
+    """获取指定AGV等级的Gym规格 (旧格式字典，向后兼容)"""
+    return dict(AGV_GYM_GRADE_SPEC.get(grade, AGV_GYM_GRADE_SPEC['M']))
+
 
 
 def create_agv_env(
@@ -865,10 +979,5 @@ def create_agv_env(
 
 
 def list_agv_grade_specs() -> Dict[str, Dict[str, Any]]:
-    """列出所有 AGV 五级 Gym 规格详情"""
+    """列出所有 AGV 五级 Gym 规格详情 (旧格式字典)"""
     return dict(AGV_GYM_GRADE_SPEC)
-
-
-def get_agv_grade_spec(grade: str) -> Dict[str, Any]:
-    """获取指定 AGV 等级的 Gym 规格"""
-    return dict(AGV_GYM_GRADE_SPEC.get(grade, AGV_GYM_GRADE_SPEC['M']))

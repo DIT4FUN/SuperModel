@@ -4239,6 +4239,87 @@ class TestGymEnvAGVSpecs(unittest.TestCase):
         self.assertEqual(spec['grade'], 'M')
         env.close()
 
+    def test_gym_agv_spec_dataclass(self):
+        """测试 GymAGVSpec dataclass 类型安全访问"""
+        from src.simulation.gym_env import GymAGVSpec
+        spec = GymAGVSpec.from_grade('M')
+        self.assertEqual(spec.grade, 'M')
+        self.assertEqual(spec.control_freq_hz, 100.0)
+        self.assertEqual(spec.payload_kg, 100.0)
+        self.assertEqual(spec.processor, 'RK3588/Nano')
+        self.assertEqual(spec.imu_type, 'BMI088')
+
+    def test_gym_agv_spec_all_grades(self):
+        """测试所有AGV等级的GymAGVSpec创建"""
+        from src.simulation.gym_env import GymAGVSpec
+        expected = {'S': 50.0, 'M': 100.0, 'L': 200.0, 'XL': 500.0, 'XXL': 1000.0}
+        for grade, freq in expected.items():
+            spec = GymAGVSpec.from_grade(grade)
+            self.assertEqual(spec.control_freq_hz, freq)
+
+    def test_gym_agv_spec_to_dict(self):
+        """测试 GymAGVSpec.to_dict() 向后兼容"""
+        from src.simulation.gym_env import GymAGVSpec
+        spec = GymAGVSpec.from_grade('L')
+        d = spec.to_dict()
+        self.assertIsInstance(d, dict)
+        self.assertEqual(d['grade'], 'L')
+        self.assertEqual(d['control_freq_hz'], 200.0)
+
+    def test_get_agv_control_params(self):
+        """测试 get_agv_control_params 控制参数提取"""
+        from src.simulation.gym_env import get_agv_control_params
+        p = get_agv_control_params('XL')
+        self.assertIn('dt', p)
+        self.assertIn('control_freq_hz', p)
+        self.assertIn('max_torque_nm', p)
+        self.assertEqual(p['control_freq_hz'], 500.0)
+
+    def test_get_gym_agv_spec(self):
+        """测试 get_gym_agv_spec 类型安全获取"""
+        from src.simulation.gym_env import get_gym_agv_spec
+        spec = get_gym_agv_spec('XXL')
+        self.assertEqual(spec.grade, 'XXL')
+        self.assertEqual(spec.payload_kg, 1200.0)
+
+    def test_list_gym_agv_specs(self):
+        """测试 list_gym_agv_specs 返回所有五级规格"""
+        from src.simulation.gym_env import list_gym_agv_specs
+        specs = list_gym_agv_specs()
+        self.assertEqual(set(specs.keys()), {'S', 'M', 'L', 'XL', 'XXL'})
+
+    def test_compute_agv_reward(self):
+        """测试 compute_agv_reward 奖励计算"""
+        from src.simulation.gym_env import compute_agv_reward
+        import numpy as np
+        action = np.zeros(6)
+        r_normal = compute_agv_reward('M', 0.01, action, 0.0, False)
+        r_collision = compute_agv_reward('M', 0.01, action, 0.0, True)
+        self.assertLess(r_collision, r_normal)  # 碰撞应降低奖励
+        r_s = compute_agv_reward('S', 0.01, action, 0.0, False)
+        r_xxl = compute_agv_reward('XXL', 0.01, action, 0.0, False)
+        # XXL 碰撞惩罚更大
+        r_xxl_col = compute_agv_reward('XXL', 0.01, action, 0.0, True)
+        self.assertLess(r_xxl_col - r_xxl, r_collision - r_normal)
+
+    def test_gym_agv_spec_sensor_params(self):
+        """测试 GymAGVSpec.get_sensor_params()"""
+        from src.simulation.gym_env import GymAGVSpec
+        spec = GymAGVSpec.from_grade('M')
+        sp = spec.get_sensor_params()
+        self.assertEqual(sp['imu_type'], 'BMI088')
+        self.assertEqual(sp['audio_ch'], 2)
+        self.assertEqual(sp['tactile_array'], '16x16')
+
+    def test_gym_agv_spec_control_params(self):
+        """测试 GymAGVSpec.get_control_params()"""
+        from src.simulation.gym_env import GymAGVSpec
+        spec = GymAGVSpec.from_grade('L')
+        cp = spec.get_control_params()
+        self.assertEqual(cp['dt'], 0.005)
+        self.assertEqual(cp['control_freq_hz'], 200.0)
+        self.assertEqual(cp['collision_response_ms'], 20.0)
+
 
 if __name__ == '__main__':
     unittest.main()

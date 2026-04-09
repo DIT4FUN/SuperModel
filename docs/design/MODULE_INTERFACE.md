@@ -6019,3 +6019,125 @@ class SensorInterface(ABC):
 ---
 
 *附录J版本: v1.99.1 | 补充日期: 2026-04-09*
+
+---
+
+## 附录K: Gymnasium环境接口 (v2.0)
+
+### K.1 GymAGVSpec 类
+
+`GymAGVSpec` 是AGV五级规格的类型安全数据结构，替代旧版字典格式。
+
+```python
+from src.simulation.gym_env import GymAGVSpec, get_gym_agv_spec
+
+# 从等级获取规格
+spec = GymAGVSpec.from_grade('M')
+
+# 属性访问
+spec.grade              # 'M'
+spec.control_freq_hz   # 100.0
+spec.payload_kg        # 100.0
+spec.dt                # 0.01
+spec.processor         # 'RK3588/Nano'
+spec.ai_tops           # 20.0
+spec.imu_type          # 'BMI088'
+spec.tactile_array     # '16x16'
+```
+
+**核心方法:**
+
+| 方法 | 说明 |
+|------|------|
+| `from_grade(grade)` | 从AGV等级创建规格对象 |
+| `to_dict()` | 转换为字典 (向后兼容) |
+| `get_control_params()` | 提取控制参数子集 |
+| `get_sensor_params()` | 提取传感器参数子集 |
+
+**AGV五级控制参数速查:**
+
+| 等级 | dt | control_freq_hz | collision_response_ms | posture_stable_ms |
+|------|-----|-----------------|----------------------|-------------------|
+| S | 20ms | 50Hz | 100ms | 500ms |
+| M | 10ms | 100Hz | 50ms | 200ms |
+| L | 5ms | 200Hz | 20ms | 100ms |
+| XL | 2ms | 500Hz | 10ms | 50ms |
+| XXL | 1ms | 1000Hz | 5ms | 20ms |
+
+### K.2 辅助函数
+
+```python
+from src.simulation.gym_env import (
+    get_gym_agv_spec,      # GymAGVSpec: 类型安全获取
+    get_agv_control_params,# Dict: 控制参数
+    get_agv_grade_spec,    # Dict: 旧格式字典
+    list_gym_agv_specs,    # Dict[str, GymAGVSpec]: 所有五级
+    compute_agv_reward,    # float: RL奖励计算
+)
+
+# 类型安全获取
+spec = get_gym_agv_spec('XL')
+ctrl = spec.get_control_params()
+
+# 控制参数提取
+p = get_agv_control_params('L')
+# {'dt': 0.005, 'sim_dt': 0.0005, 'control_freq_hz': 200.0, ...}
+
+# RL奖励计算
+import numpy as np
+reward = compute_agv_reward('M', tracking_error=0.05, action=np.zeros(6), contact=0.3, collision=False)
+```
+
+### K.3 create_agv_env 工厂函数
+
+```python
+from src.simulation.gym_env import create_agv_env
+
+# 创建环境 (推荐入口)
+env = create_agv_env(scenario='reach', grade='M')
+
+# 支持的场景
+# - "reach": 到达目标
+# - "track": 轨迹跟踪
+# - "grasp": 抓取操作
+# - "warehouse": 仓库物流
+# - "patrol": 巡逻巡检
+
+# 环境注册
+from src.simulation.gym_env import register_gym_envs
+register_gym_envs()  # 注册所有 SuperModel-{scenario}-{grade}-v0
+
+# Gymnasium.make 方式
+import gymnasium as gym
+env = gym.make('SuperModel-reach-M-v0', render_mode='rgb_array')
+```
+
+### K.4 SuperModelGymEnv 核心接口
+
+```python
+class SuperModelGymEnv(gym.Env):
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+
+    def reset(seed=None, options=None) -> (obs, info)
+    def step(action) -> (obs, reward, terminated, truncated, info)
+    def render() -> None
+    def close() -> None
+
+# 观测空间: [joint_pos(6) + joint_vel(6) + ee_pos(3) + ee_quat(4)
+#           + imu(6) + wrench(6) + tactile(16) + target(6)] = 53 dims
+# 动作空间: 关节力矩命令 (6,) ±100Nm
+```
+
+### K.5 AGV五级Gym环境规格对比
+
+| 场景 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| reach | ✓ | ✓ | ✓ | ✓ | ✓ |
+| track | ✓ | ✓ | ✓ | ✓ | ✓ |
+| grasp | ✓ | ✓ | ✓ | ✓ | ✓ |
+| warehouse | — | ✓ | ✓ | ✓ | ✓ |
+| patrol | — | — | ✓ | ✓ | ✓ |
+
+---
+
+*附录K版本: v2.0.0 | 补充日期: 2026-04-10*
