@@ -983,3 +983,233 @@ XXL级流水线:
 - 重载车间 → XL级 (RK3588集群 + 多目LiDAR + ADIS16470)
 - 无人化工厂 → XXL级 (集群+GPU + 超模态感知 + 具身智能)
 
+
+
+---
+
+## 附录H: 模块接口规范 (Interface Specification)
+
+### H.1 具身控制器接口 (EmbodiedController)
+
+```python
+from src.control.embodied_control import (
+    EmbodiedController,
+    EmbodiedControlParams,
+    EmbodiedCommand,
+    EmbodiedState,
+    EmbodiedGrade,
+    get_embodied_spec,
+)
+
+# ── 工厂方法创建 ──────────────────────────────
+ctrl = EmbodiedController.create_for_grade(
+    grade='M',           # AGV等级: 'S' | 'M' | 'L' | 'XL' | 'XXL'
+    use_virtual=True,    # 使用虚拟传感器 (仿真模式)
+    use_tactile=True,    # 启用触觉模态
+    use_force=True,      # 启用力觉模态
+    use_imu=True,        # 启用IMU模态
+)
+
+# ── 仿真循环 ─────────────────────────────────
+result = ctrl.run(
+    num_steps=100,       # 仿真步数
+    cmd=EmbodiedCommand(mode='admittance')
+)
+# result = {
+#     'states': List[EmbodiedState],   # 每步状态
+#     'outputs': List[Dict],           # 每步控制输出
+#     'slip_events': int,              # 滑移事件数
+#     'contact_events': int,            # 接触事件数
+#     'safety_stops': int,              # 安全停止次数
+#     'avg_cycle_time_ms': float,      # 平均控制周期 (ms)
+# }
+
+# ── 五级基准测试 ─────────────────────────────
+results = EmbodiedController.run_five_grade_benchmark(steps_per_grade=50)
+# results = Dict[grade, result]  # 5个等级的仿真结果
+```
+
+### H.2 触觉传感器接口 (TactileArray)
+
+```python
+from src.sensors.tactile import (
+    TactileArray, TactileSensorType, TactileFrame,
+    TactileContact, VirtualTactileSensor
+)
+
+# ── 创建传感器 ───────────────────────────────
+sensor = TactileArray(array_size=(16, 16), sensor_id="tactile_01")
+sensor.open()
+
+# ── 捕获触觉帧 ───────────────────────────────
+frame: TactileFrame = sensor.capture()
+# frame.pressure_map    # 压力分布图 [rows, cols], Pa
+# frame.total_force     # 总压力, N
+# frame.contact_center  # 接触中心 (row, col)
+# frame.timestamp       # 时间戳
+
+# ── 接触检测 ─────────────────────────────────
+contacts: List[TactileContact] = sensor.detect_contacts(threshold=2.0)
+# contact.position      # 接触位置 (row, col)
+# contact.force         # 接触力, N
+# contact.area          # 接触面积, m²
+
+# ── 抓取质量评估 ─────────────────────────────
+quality = sensor.assess_grasp_quality()
+# quality.grasp_quality # 抓取质量 0~1
+# quality.stability     # 稳定性指标 0~1
+# quality.slip_risk      # 滑移风险 0~1
+
+sensor.close()
+```
+
+### H.3 力觉传感器接口 (ForceTorqueSensor)
+
+```python
+from src.sensors.force import (
+    ForceTorqueSensor, ForceSensorType, Wrench,
+    VirtualForceSensor, ContactState
+)
+
+# ── 创建力传感器 ─────────────────────────────
+sensor = ForceTorqueSensor(sensor_id="force_01")
+sensor.open()
+
+# ── 捕获六维力/力矩 ──────────────────────────
+wrench: Wrench = sensor.capture()
+# wrench.forces   # [Fx, Fy, Fz], N
+# wrench.torques  # [Mx, My, Mz], N·m
+# wrench.magnitude # 合力大小, N
+
+# ── TCP力矩计算 ─────────────────────────────
+tcp_wrench = sensor.compute_tcp_wrench(
+    tcp_offset=np.array([0, 0, 0.05]),  # TCP偏移 [x, y, z], m
+    measured_wrench=wrench
+)
+
+# ── 接触状态检测 ─────────────────────────────
+contact: ContactState = sensor.detect_contact(force_threshold=2.0)
+# contact.is_in_contact  # 是否接触
+# contact.contact_force  # 接触力, N
+# contact.sliding        # 是否滑移
+
+sensor.close()
+```
+
+### H.4 IMU传感器接口 (IMUSensor)
+
+```python
+from src.sensors.imu import (
+    IMUSensor, IMUSensorType, IMUFrame, Pose,
+    VirtualIMUSensor, PoseEstimator
+)
+
+# ── 创建IMU ─────────────────────────────────
+sensor = IMUSensor(sensor_type=IMUSensorType.VIRTUAL, sensor_id="imu_01")
+sensor.open()
+
+# ── 捕获IMU帧 ────────────────────────────────
+frame: IMUFrame = sensor.capture()
+# frame.accel   # 加速度 [ax, ay, az], m/s²
+# frame.gyro    # 角速度 [wx, wy, wz], rad/s
+# frame.quat    # 四元数 [w, x, y, z]
+
+# ── 姿态估计 ────────────────────────────────
+estimator = PoseEstimator(algorithm='madgwick', beta=0.1)
+pose: Pose = estimator.update(accel, gyro, dt=0.01)
+# pose.roll   # 横滚角, rad
+# pose.pitch  # 俯仰角, rad
+# pose.yaw    # 偏航角, rad
+
+sensor.close()
+```
+
+### H.5 AGV运动控制器接口 (AGVMotionController)
+
+```python
+from src.control.agv import (
+    AGVMotionController, AGVSpec, AGVGrade,
+    AGVPose, AGVTwist, DifferentialDrive, MecanumDrive
+)
+
+# ── 创建AGV控制器 ───────────────────────────
+spec = AGVSpec.from_grade(AGVGrade.M)
+agv = AGVMotionController(spec)
+
+# ── 更新位姿 ────────────────────────────────
+agv.update_pose(AGVPose(x=0.0, y=0.0, theta=0.0))
+
+# ── 计算轮速指令 ───────────────────────────
+target = AGVPose(x=1.0, y=0.5, theta=0.0)
+wheel_cmds = agv.compute_wheel_commands(target, dt=0.01)
+# wheel_cmds: np.ndarray  # 轮子速度指令 [rad/s]
+
+# ── 安全限幅 ───────────────────────────────
+cmds_safe = agv.apply_safety_limits(wheel_cmds)
+```
+
+### H.6 安全控制器接口 (SafetyController)
+
+```python
+from src.control.safety_controller import (
+    SafetyController, SafetyConfig, SafetyLevel, JointStateSnapshot
+)
+
+# ── 创建安全控制器 ─────────────────────────
+config = SafetyConfig(
+    joint_limits_lower=-np.ones(6) * np.pi,
+    joint_limits_upper=np.ones(6) * np.pi,
+    velocity_limits=np.ones(6) * 3.0,
+    acceleration_limits=np.ones(6) * 10.0,
+    torque_limits=np.ones(6) * 100.0,
+    safety_level=SafetyLevel.M,
+)
+safety = SafetyController(config)
+
+# ── 安全检查 ───────────────────────────────
+state = JointStateSnapshot(
+    positions=np.zeros(6),
+    velocities=np.array([0.5, 0.5, 0.5, 0.5, 0.5, 0.5]),
+    accelerations=np.zeros(6),
+    torques=np.zeros(6),
+    timestamp=time.time(),
+)
+result = safety.check(state)
+# result.safe              # 是否安全
+# result.violated_limits   # 违反的限制列表
+
+# ── 安全速度计算 ───────────────────────────
+safe_vel = safety.compute_safe_velocity(
+    current_vel=np.array([0.5]*6),
+    desired_vel=np.array([10.0]*6),
+)
+```
+
+### H.7 轨迹规划接口 (TrajectoryPlanner)
+
+```python
+from src.control.trajectory import (
+    TrajectoryPlanner, PlanningAlgorithm, VelocityProfile,
+    VelocityProfiler
+)
+
+# ── 创建规划器 ─────────────────────────────
+planner = TrajectoryPlanner(
+    algorithm=PlanningAlgorithm.RRT_STAR,
+    bounds=((0, 5), (0, 5)),
+)
+
+# ── 路径规划 ───────────────────────────────
+path = planner.plan(
+    start=(0.0, 0.0),
+    goal=(4.0, 4.0),
+)
+# path: List[Tuple[x, y]]  # 规划路径点
+
+# ── 速度规划 ───────────────────────────────
+profiler = VelocityProfiler(
+    max_v=1.0, max_a=0.5, max_j=2.0,
+    profile_type=VelocityProfile.TRAPEZOIDAL,
+)
+positions, velocities = profiler.plan(distance=1.0, v0=0.0, v1=0.0)
+```
