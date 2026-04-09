@@ -1,10 +1,9 @@
 # SuperModel 模块索引 / Module Index
-- **v2.05.1** (2026-04-09): 新增DEPLOYMENT_CHECKLIST.md部署清单; 更新REAL_ROBOT_INTEGRATION.md至v2.05.0; 1857项测试全通过
-- **v2.04.0** (2026-04-09): 具身传感控制仿真测试完成, 1835项测试全通过; 模块接口规范完善
-- **v2.03.0** (2026-04-09): 新增具身智能实战演示脚本, 1793项测试全通过
-- **v2.02.0** (2026-04-09): 新增EmbodiedController.run()仿真循环 + run_five_grade_benchmark()五级基准测试; 368项传感器+融合测试全通过
+- **v2.08.0** (2026-04-09): 新增AGV_CONTROL_PARAMS.md五级控制参数完整指南(PID/阻抗/MPC/安全监控); 新增agv_five_grade_demo.py五级完整对比演示; 1845项测试全通过
+- **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
+- **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.05.0
+> **版本**: v2.08.0
 > **更新**: 2026-04-09
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
@@ -198,6 +197,7 @@ docs/
 ├── MODULE_INDEX.md           # 模块索引
 ├── DESIGN.md                # 架构设计文档
 ├── PRACTICAL_DEPLOYMENT.md   # AGV五级部署实战指南 (选型→配置→仿真→实机)
+├── AGV_CONTROL_PARAMS.md     # AGV五级控制参数完整指南 (PID/阻抗/MPC/安全监控)
 └── architecture/
 │   ├── SUPER_MODEL_ARCHITECTURE.md    # 系统架构
 │   ├── MODEL_STRUCTURE.md             # 模型内部结构层次图
