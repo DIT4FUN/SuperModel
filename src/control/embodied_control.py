@@ -941,6 +941,215 @@ class EmbodiedController:
         
         print("[EmbodiedController] Reset")
 
+    def run(
+        self,
+        num_steps: int = 100,
+        cmd: Optional[EmbodiedCommand] = None
+    ) -> Dict[str, List]:
+        """
+        运行具身控制仿真循环
+
+        运行 num_steps 步的完整感知-融合-控制循环，
+        用于仿真验证、边界测试、性能评估。
+
+        Args:
+            num_steps: 仿真步数
+            cmd: 控制指令 (默认: 导纳控制模式)
+
+        Returns:
+            dict: 仿真结果 {
+                'states': List[EmbodiedState],  每步状态
+                'outputs': List[Dict],           每步控制输出
+                'slip_events': int,              滑移事件数
+                'contact_events': int,           接触事件数
+                'safety_stops': int,             安全停止次数
+                'avg_cycle_time_ms': float,      平均控制周期 (ms)
+            }
+        """
+        import time
+
+        if cmd is None:
+            cmd = EmbodiedCommand(mode='admittance')
+
+        states = []
+        outputs = []
+        slip_events = 0
+        contact_events = 0
+        safety_stops = 0
+        cycle_times = []
+
+        self.reset()
+        print(f"[EmbodiedController.run] Starting simulation: {num_steps} steps @ {self.params.control_rate}Hz")
+
+        for step in range(num_steps):
+            t0 = time.perf_counter()
+
+            # 感知更新
+            state = self.update()
+            states.append(state)
+
+            # 检测事件
+            if state.is_slipping:
+                slip_events += 1
+            if state.is_in_contact and not (states[-2].is_in_contact if len(states) > 1 else False):
+                contact_events += 1
+
+            # 控制计算
+            output = self.compute(cmd)
+            outputs.append(output)
+
+            if output['safety_stop']:
+                safety_stops += 1
+
+            # 记录周期时间
+            cycle_time = (time.perf_counter() - t0) * 1000
+            cycle_times.append(cycle_time)
+
+            # 进度日志 (每10%)
+            if step % (num_steps // 10 + 1) == 0:
+                print(f"  step {step:4d}/{num_steps} | "
+                      f"contact={state.is_in_contact} | "
+                      f"slip={state.is_slipping:.2f} | "
+                      f"grip={state.grip_quality:.2f} | "
+                      f"tilt={state.tilt_angle:.3f} | "
+                      f"dt={cycle_time:.2f}ms")
+
+        avg_cycle_time = sum(cycle_times) / len(cycle_times) if cycle_times else 0
+
+        result = {
+            'states': states,
+            'outputs': outputs,
+            'slip_events': slip_events,
+            'contact_events': contact_events,
+            'safety_stops': safety_stops,
+            'avg_cycle_time_ms': avg_cycle_time,
+        }
+
+        print(f"[EmbodiedController.run] Done: "
+              f"slip={slip_events}, contact={contact_events}, "
+              f"safety_stops={safety_stops}, "
+              f"avg_dt={avg_cycle_time:.2f}ms")
+
+        return result
+
+    @classmethod
+    def create_for_grade(
+        cls,
+        grade: str = 'M',
+        use_virtual: bool = True,
+        use_tactile: bool = True,
+        use_force: bool = True,
+        use_imu: bool = True
+    ) -> 'EmbodiedController':
+        """
+        工厂方法: 为指定AGV等级创建配置好的具身控制器
+
+        Args:
+            grade: AGV等级 ('S', 'M', 'L', 'XL', 'XXL')
+            use_virtual: 使用虚拟传感器 (仿真模式)
+            use_tactile: 启用触觉
+            use_force: 启用力觉
+            use_imu: 启用IMU
+
+        Returns:
+            EmbodiedController: 配置好的控制器
+        """
+        params = EmbodiedControlParams(
+            grade=grade,
+            fusion_method=get_embodied_spec(grade).get('fusion_method', 'weighted_average'),
+            control_rate=float(get_embodied_spec(grade).get('control_rate', 100)),
+            contact_threshold=2.0,
+        )
+
+        controller = cls(
+            grade=grade,
+            params=params,
+            use_virtual_sensors=use_virtual,
+        )
+
+        # 根据等级启用/禁用模态
+        spec = get_embodied_spec(grade)
+        if not use_tactile or not spec.get('tactile_enabled', True):
+            controller._tactile = None
+        if not use_force or not spec.get('force_enabled', True):
+            controller._force = None
+        if not use_imu or not spec.get('imu_enabled', True):
+            controller._imu = None
+
+        if use_virtual:
+            controller.init_virtual_sensors()
+
+        return controller
+
+    @staticmethod
+    def _grade_tactile_size(grade: str) -> Tuple[int, int]:
+        sizes = {
+            'S': (8, 8),
+            'M': (16, 16),
+            'L': (24, 24),
+            'XL': (32, 32),
+            'XXL': (48, 48),
+        }
+        return sizes.get(grade, (16, 16))
+
+    def run_five_grade_benchmark(
+        self,
+        steps_per_grade: int = 50
+    ) -> Dict[str, Dict]:
+        """
+        在所有五个AGV等级上运行基准测试
+
+        Args:
+            steps_per_grade: 每个等级的仿真步数
+
+        Returns:
+            Dict[grade, result]: 每个等级的仿真结果
+        """
+        results = {}
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+
+        print("\n" + "=" * 60)
+        print("AGV Five-Grade Embodied Control Benchmark")
+        print("=" * 60)
+
+        for grade in grades:
+            print(f"\n--- Grade {grade} ---")
+            spec = get_embodied_spec(grade)
+            print(f"  Control Rate: {spec.get('control_rate', 0)} Hz")
+            print(f"  Fusion Method: {spec.get('fusion_method', 'N/A')}")
+            print(f"  Latency: {spec.get('latency_ms', 0)} ms")
+            print(f"  Tactile: {spec.get('tactile_resolution', 'N/A')}")
+            print(f"  Force Axes: {spec.get('force_axes', 0)}")
+            print(f"  Max Contact Force: {spec.get('max_contact_force', 0)} N")
+
+            ctrl = self.create_for_grade(
+                grade=grade,
+                use_virtual=True,
+                use_tactile=spec.get('tactile_enabled', True),
+                use_force=spec.get('force_enabled', True),
+                use_imu=spec.get('imu_enabled', True),
+            )
+
+            result = ctrl.run(num_steps=steps_per_grade)
+            results[grade] = result
+
+            print(f"  → Slip Events: {result['slip_events']}")
+            print(f"  → Contact Events: {result['contact_events']}")
+            print(f"  → Safety Stops: {result['safety_stops']}")
+            print(f"  → Avg Cycle Time: {result['avg_cycle_time_ms']:.3f} ms")
+
+        # 汇总
+        print("\n" + "=" * 60)
+        print("Benchmark Summary")
+        print("=" * 60)
+        print(f"{'Grade':<6} {'Slip':<8} {'Contact':<10} {'Safety':<10} {'AvgDT(ms)':<12}")
+        print("-" * 60)
+        for grade, res in results.items():
+            print(f"{grade:<6} {res['slip_events']:<8} {res['contact_events']:<10} "
+                  f"{res['safety_stops']:<10} {res['avg_cycle_time_ms']:<12.3f}")
+
+        return results
+
 
 # ─────────────────────────────────────────────
 # 具身任务执行器
