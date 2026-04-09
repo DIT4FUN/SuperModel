@@ -1,7 +1,99 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 04:45 (v2.31.0)
+> Last Updated: 2026-04-10 07:38 (v2.36.0)
+
+---
+
+## v2.36.0 (2026-04-10 07:38) - 行为树接口完善 + 2244项测试全通过
+
+### 本次更新
+
+1. **行为树模块导入修复** ✅
+   - `src/control/__init__.py`: 补充 behavior_tree 模块正确导入
+
+2. **MODULE_INTERFACE_SPEC.md 行为树接口章节** ✅
+   - 新增 BTContext 黑板系统接口定义
+   - 新增 Selector/Sequence/Parallel/Condition/Action/SubTree 节点接口
+   - 新增装饰器接口 (Inverter/RepeatUntil/RetryUntil/Timeout/RateLimiter)
+   - 新增 create_for_grade() 工厂函数接口
+   - AGV五级行为树规格 (S:3层/16节点/10Hz → XXL:16层/4096节点/500Hz)
+
+3. **CHANGELOG 补全** ✅
+   - 补全 v2.33.0~v2.35.0 共4个版本的变更记录
+
+### 测试统计
+- 全量测试: **2244项全部通过** ✅
+- embodied_brain_integration_tests: 13项 / embodied_deployment_tests: 29项
+- bias_compensation_tests: 29项 / behavior_tree_tests: 51项
+- sensor_tests: 332项 / fusion_tests: 73项
+
+### 已完成模块清单
+- ✅ 触觉传感器模块 (tactile.py): 电子皮肤阵列, 压力/温度/接近觉/滑移检测, AGV五级规格
+- ✅ 力觉传感器模块 (force.py): 六维力矩传感器, Wrench数据, 接触检测, 负载估计, AGV五级规格
+- ✅ IMU传感器模块 (imu.py): 惯性测量, 姿态解算, PoseEstimator, VirtualIMUSensor, AGV五级规格
+- ✅ 偏置补偿模块 (bias_compensation.py): 自适应零漂/温度补偿/IMU偏置追踪/力传感器校正
+- ✅ 传感器融合控制 (sensor_fusion_control.py): 统一IMU+力觉+触觉→控制闭环
+- ✅ 具身智能大脑集成 (embodied_brain_integration_tests.py): 13项端到端pipeline测试
+- ✅ 实机部署验证 (embodied_deployment_tests.py): 29项实机部署测试
+- ✅ 行为树模块 (behavior_tree.py): Selector/Sequence/Parallel/Condition/Action + 5个装饰器, AGV五级规格
+- ✅ 控制模块: 20+子模块, AGV五级全覆盖
+- ✅ 仿真环境: PyBullet/Gymnasium多级AGV仿真
+- ✅ 测试用例: 2244项全通过
+
+---
+
+## v2.35.0 (2026-04-10 07:01) - 具身智能实机部署验证测试 + 434项测试全通过
+
+### 本次更新
+
+1. **具身智能实机部署验证测试** ✅
+   - `tests/embodied_deployment_tests.py` (746行)
+   - 端到端实机部署流水线测试 (传感器→预处理→融合→控制→执行)
+   - 五级AGV配置实机验证 (S/M/L/XL/XXL各等级配置一致性)
+   - 触觉/力觉/IMU 传感器→控制指令闭环验证
+   - ROS2接口实机通信验证
+   - 传感器超时/故障注入恢复测试
+   - 29项测试全部通过
+
+2. **PRACTICAL_DEPLOYMENT.md 重写** ✅
+   - RK3588 NPU 部署实战步骤
+   - 传感器校准与验证流程
+   - 触觉/力觉/IMU 传感器五级配置表
+   - 实机部署检查清单
+
+---
+
+## v2.34.0 (2026-04-10 06:17) - 具身智能大脑集成测试 + 2215项测试全通过
+
+### 本次更新
+
+1. **具身智能大脑集成测试** ✅
+   - `tests/embodied_brain_integration_tests.py` (388行)
+   - 触觉→融合→控制五级pipeline验证
+   - 力觉→融合→控制五级pipeline验证
+   - IMU→姿态估计→控制五级pipeline验证
+   - 多传感器联合→融合网络→控制指令集成测试
+   - 13项测试全部通过
+
+---
+
+## v2.33.0 (2026-04-10 05:30) - 传感器偏置补偿模块 + 29项测试全通过
+
+### 本次更新
+
+1. **传感器偏置补偿模块** ✅
+   - `src/control/bias_compensation.py` (695行)
+   - AdaptiveBiasCompensator: 自适应零漂补偿 (低通滤波/卡尔曼/滑动窗口)
+   - TemperatureBiasModel: 温度-偏置耦合模型 (热漂移实时补偿)
+   - IMUBiasTracker: IMU偏置追踪器 (陀螺仪/加速度计分离估计)
+   - ForceBiasCorrector: 力传感器偏置校正 (重力补偿/工具偏置)
+   - TactileBaselineEstimation: 触觉基线估计 (零点漂移跟踪)
+   - AGV五级偏置补偿规格 (S:低通~XXL:自适应卡尔曼)
+
+2. **偏置补偿测试** ✅
+   - `tests/bias_compensation_tests.py` (369行, 29项测试)
+   - 各模块单元测试 + AGV五级规格测试
 
 ---
 

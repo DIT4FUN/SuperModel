@@ -2,6 +2,84 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.36.0] - 2026-04-10
+
+### Fixed
+- **行为树模块导入**: 修复 `src/control/__init__.py` 中 behavior_tree 模块导入
+- **MODULE_INTERFACE_SPEC.md**: 新增行为树接口章节 (65行)
+  - BTContext 黑板系统接口
+  - Selector/Sequence/Parallel/Condition/Action/SubTree 节点接口
+  - 装饰器接口 (Inverter/RepeatUntil/RetryUntil/Timeout/RateLimiter)
+  - create_for_grade() 工厂函数接口
+  - AGV五级行为树规格 (S:3层/16节点/10Hz → XXL:16层/4096节点/500Hz)
+
+### Test Results
+- 全量测试: **2244项全部通过** ✅
+- embodied_brain_integration_tests: 13项 / embodied_deployment_tests: 29项
+- bias_compensation_tests: 29项 / behavior_tree_tests: 51项
+
+---
+
+## [2.35.0] - 2026-04-10
+
+### Added
+- **具身智能实机部署验证测试** (embodied_deployment_tests.py, 746行)
+  - 端到端实机部署流水线测试 (传感器→预处理→融合→控制→执行)
+  - 五级AGV配置实机验证 (S/M/L/XL/XXL各等级配置一致性)
+  - 触觉/力觉/IMU 传感器→控制指令闭环验证
+  - ROS2接口实机通信验证
+  - 传感器超时/故障注入恢复测试
+  - 29项测试全部通过
+
+### Changed
+- **PRACTICAL_DEPLOYMENT.md** 重写为实用部署指南
+  - RK3588 NPU 部署实战步骤
+  - 传感器校准与验证流程
+  - 触觉/力觉/IMU 传感器五级配置表
+  - 实机部署检查清单
+
+---
+
+## [2.34.0] - 2026-04-10
+
+### Added
+- **具身智能大脑集成测试** (embodied_brain_integration_tests.py, 388行)
+  - 触觉→融合→控制五级pipeline验证
+  - 力觉→融合→控制五级pipeline验证
+  - IMU→姿态估计→控制五级pipeline验证
+  - 多传感器联合→融合网络→控制指令集成测试
+  - 13项测试全部通过
+
+### Test Results
+- sensor_tests + fusion_tests + embodied_brain_integration_tests: **2215项全部通过**
+
+---
+
+## [2.33.0] - 2026-04-10
+
+### Added
+- **传感器偏置补偿模块** (bias_compensation.py, 695行)
+  - `AdaptiveBiasCompensator`: 自适应零漂补偿 (低通滤波/卡尔曼/滑动窗口)
+  - `TemperatureBiasModel`: 温度-偏置耦合模型 (热漂移实时补偿)
+  - `IMUBiasTracker`: IMU偏置追踪器 (陀螺仪零偏/加速度计零偏分离估计)
+  - `ForceBiasCorrector`: 力传感器偏置校正器 (重力补偿/工具偏置)
+  - `TactileBaselineEstimation`: 触觉基线估计 (零点漂移跟踪)
+  - AGV五级偏置补偿规格 (S:低通~XXL:自适应卡尔曼)
+- **偏置补偿测试** (bias_compensation_tests.py, 369行, 29项测试)
+  - AdaptiveBiasCompensator: 初始化/低通滤波/卡尔曼/滑动窗口/重置 5项
+  - TemperatureBiasModel: 温度模型/耦合估计/无温度数据/重置 4项
+  - IMUBiasTracker: 陀螺仪/加速度计/分离估计/无数据/重置 5项
+  - ForceBiasCorrector: 重力补偿/工具偏置/无数据/重置 4项
+  - TactileBaselineEstimation: 基线更新/衰减/无数据/重置 4项
+  - AGV五级规格: 5级结构/递进关系 2项
+  - 29项测试全部通过
+
+### Changed
+- docs/design/AGV_FIVE_GRADE_SPEC.md: 新增偏置补偿五级规格章节
+- src/control/__init__.py: 新增 bias_compensation 模块导出
+
+---
+
 ## [2.32.0] - 2026-04-10
 
 ### Added
