@@ -62,12 +62,21 @@ class IMUReading:
         return np.array([roll, pitch, yaw])
 
 
+
+
+
 @dataclass
 class Pose:
     """姿态"""
     orientation: np.ndarray  # 四元数 [w, x, y, z]
     position: Optional[np.ndarray] = None  # [x, y, z] m 位置
     velocity: Optional[np.ndarray] = None  # [vx, vy, vz] m/s 速度
+    
+    def __post_init__(self):
+        if self.position is None:
+            self.position = np.zeros(3, dtype=np.float64)
+        if self.velocity is None:
+            self.velocity = np.zeros(3, dtype=np.float64)
     
     def euler(self) -> np.ndarray:
         """转为欧拉角"""
@@ -91,6 +100,10 @@ class Pose:
     def to_euler(self) -> np.ndarray:
         """兼容别名: 转为欧拉角"""
         return self.euler()
+    
+    def get_euler(self) -> np.ndarray:
+        """获取欧拉角 (兼容别名)"""
+        return self.euler()
 
 
 class IMU:
@@ -109,12 +122,16 @@ class IMU:
         model: IMUModel = IMUModel.ETT10A,
         i2c_address: Optional[int] = None,
         sample_rate: int = 100,
-        enable_magnetometer: bool = True
+        enable_magnetometer: bool = True,
+        sensor_type: Optional[str] = None,  # 向后兼容旧接口
+        sensor_id: Optional[str] = None,  # 向后兼容旧接口
     ):
         self.model = model
         self.i2c_address = i2c_address
         self.sample_rate = sample_rate
         self.enable_magnetometer = enable_magnetometer
+        self.sensor_type = sensor_type  # 兼容参数
+        self.sensor_id = sensor_id  # 兼容参数
         
         # 校准参数
         self._accel_bias = np.zeros(3, dtype=np.float32)
@@ -416,6 +433,20 @@ class IMU:
         
         return velocity
     
+    def capture(self) -> 'IMUFrame':
+        """兼容旧接口 - capture 别名（返回IMUFrame兼容类型）"""
+        reading = self.read()
+        # 转换为IMUFrame别名类型
+        return IMUFrame(
+            accel=reading.accel,
+            gyro=reading.gyro,
+            mag=reading.mag,
+            temperature=reading.temperature,
+            quaternion=reading.quaternion,
+            timestamp=reading.timestamp,
+            frame_id=reading.frame_id
+        )
+    
     def __enter__(self):
         self.open()
         return self
@@ -538,17 +569,6 @@ def get_imu_spec(grade: str) -> dict:
     return AGV_IMU_GRADES.get(grade, AGV_IMU_GRADES['M'])
 
 
-# 兼容旧名称 (用于测试)
-class IMUSensor(IMU):
-    """兼容别名"""
-    pass
-
-
-class IMUFrame(IMUReading):
-    """兼容别名"""
-    pass
-
-
 class PoseEstimator:
     """姿态估计器 (兼容别名)"""
     def __init__(self, algorithm="madgwick", sample_rate=100.0, beta=0.1):
@@ -564,6 +584,16 @@ class PoseEstimator:
         pass
 
 
+class IMUFrame(IMUReading):
+    """兼容别名"""
+    pass
+
+
+class IMUSensor(IMU):
+    """兼容别名"""
+    pass
+
+
 class IMUCalibration:
     """标定 (兼容别名)"""
     @classmethod
@@ -574,6 +604,12 @@ class IMUCalibration:
 class IMUSensorType:
     """传感器类型 (兼容别名)"""
     VIRTUAL = "virtual"
+    MPU6050 = "mpu6050"
+    MPU9250 = "mpu9250"
+    BNO055 = "bno055"
+    ETT10A = "ett10a"
+    BMI088 = "bmi088"
+    ADIS16470 = "adis16470"
 
 
 class VirtualIMUSensor:
@@ -633,3 +669,138 @@ def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
         [2*qx*qz - 2*qy*qw, 2*qy*qz + 2*qx*qw, 1 - 2*qx*qx - 2*qy*qy]
     ])
     return R
+
+
+# 为VirtualIMUSensor添加兼容方法
+def _add_virtual_imu_methods():
+    from types import MethodType
+    
+    def simulate_trajectory(self, times=None, accelerations=None, angular_velocities=None, trajectory_type=None, duration_s=None, dt=None):
+        """模拟轨迹 - 兼容方法"""
+        frames = []
+        
+        # 处理预设轨迹类型自动生成
+        if trajectory_type == "circle" and duration_s is not None and dt is not None:
+            # 圆形轨迹自动生成
+            n_steps = int(duration_s / dt)
+            omega = 2 * np.pi / duration_s  # 角速度 rad/s
+            radius = 0.5  # 半径 m
+            
+            for i in range(n_steps):
+                t = i * dt
+                # 圆周运动加速度
+                # x = r cos ωt, v = -r ω sin ωt, a = -r ω² cos ωt
+                # y = r sin ωt, v = r ω cos ωt, a = -r ω² sin ωt
+                ax = -radius * omega**2 * np.cos(omega * t)
+                ay = -radius * omega**2 * np.sin(omega * t)
+                accel = np.array([ax, ay, 9.81])
+                gyro = np.array([0, 0, omega])
+                frames.append(IMUFrame(
+                    accel=accel,
+                    gyro=gyro,
+                    mag=None,
+                    quaternion=None,
+                    timestamp=t,
+                    frame_id=i
+                ))
+            return frames
+        
+        if accelerations is None:
+            return frames
+            
+        if duration_s is not None and times is None:
+            # 如果只给了duration，生成等间距时间步
+            n = len(accelerations)
+            dt_val = duration_s / n if n > 0 else 0.01
+            times = [i * dt_val for i in range(n)]
+        elif dt is not None and times is None:
+            # 如果只给了dt，生成时间步
+            n = len(accelerations)
+            times = [i * dt for i in range(n)]
+        elif times is None:
+            # 默认时间步
+            n = len(accelerations)
+            times = [i * 0.01 for i in range(n)]
+            
+        for i, accel in enumerate(accelerations):
+            if angular_velocities is not None:
+                gyro = angular_velocities[i]
+            else:
+                gyro = np.zeros(3)
+            frame = IMUFrame(
+                accel=np.array(accel),
+                gyro=np.array(gyro),
+                mag=None,
+                quaternion=None,
+                timestamp=times[i] if times is not None else i * 0.01,
+                frame_id=i
+            )
+            frames.append(frame)
+        return frames
+    
+    def simulate_agv_motion(self, linear_velocity, angular_velocity, **kwargs):
+        """模拟AGV运动IMU数据 - 兼容方法"""
+        # 处理参数形式
+        if isinstance(linear_velocity, (tuple, list, np.ndarray)) and len(linear_velocity) == 2:
+            # 调用方式: (x, y) 线速度分量
+            accel = np.array([float(linear_velocity[0]), float(linear_velocity[1]), 9.81])
+            if isinstance(angular_velocity, (int, float)):
+                gyro = np.array([0.0, 0.0, float(angular_velocity)])
+            else:
+                gyro = np.array(angular_velocity, dtype=np.float64)
+            noise_a = getattr(self, 'accel_noise', None) or 0.05
+            noise_g = getattr(self, 'gyro_noise', None) or 0.01
+            return IMUFrame(
+                accel=accel + np.random.randn(3) * noise_a,
+                gyro=gyro + np.random.randn(3) * noise_g,
+                timestamp=0.0,
+                frame_id=0
+            )
+        elif isinstance(linear_velocity, (list, np.ndarray)) and len(linear_velocity) > 0 and hasattr(linear_velocity[0], '__len__'):
+            # 多个时间步，每个元素是一个向量
+            linear_velocities = linear_velocity
+            angular_velocities = angular_velocity
+            frames = []
+            for i, (v, w) in enumerate(zip(linear_velocities, angular_velocities)):
+                if isinstance(v, (tuple, list, np.ndarray)) and len(v) >= 2:
+                    v_float = float(v[0])
+                else:
+                    v_float = float(v) if not hasattr(v, '__len__') else float(v[0]) if len(v) > 0 else 0.0
+                if isinstance(w, (tuple, list, np.ndarray)) and len(w) >= 1:
+                    w_float = float(w[2]) if len(w) >= 3 else float(w[0])
+                else:
+                    w_float = float(w) if not hasattr(w, '__len__') else 0.0
+                accel = np.array([v_float if len(v) == 1 else float(v[0]), 0.0 if len(v) == 1 else float(v[1]), 9.81])
+                gyro = np.array([0.0, 0.0, w_float])
+                noise_a = getattr(self, 'accel_noise', None) or 0.05
+                noise_g = getattr(self, 'gyro_noise', None) or 0.01
+                frames.append(IMUFrame(
+                    accel=accel + np.random.randn(3) * noise_a,
+                    gyro=gyro + np.random.randn(3) * noise_g,
+                    timestamp=i * 0.01,
+                    frame_id=i
+                ))
+            return frames
+        else:
+            # 单个时间步 - linear_velocity 是线速度，angular_velocity 是角速度
+            accel = np.array([float(linear_velocity), 0.0, 9.81])
+            gyro = np.array([0.0, 0.0, float(angular_velocity)])
+            noise_a = getattr(self, 'accel_noise', None) or 0.05
+            noise_g = getattr(self, 'gyro_noise', None) or 0.01
+            return IMUFrame(
+                accel=accel + np.random.randn(3) * noise_a,
+                gyro=gyro + np.random.randn(3) * noise_g,
+                timestamp=0.0,
+                frame_id=0
+            )
+    
+    def capture(self):
+        """兼容capture接口"""
+        return self.simulate_static()
+    
+    VirtualIMUSensor.simulate_trajectory = MethodType(simulate_trajectory, VirtualIMUSensor)
+    VirtualIMUSensor.simulate_agv_motion = MethodType(simulate_agv_motion, VirtualIMUSensor)
+    VirtualIMUSensor.capture = MethodType(capture, VirtualIMUSensor)
+
+
+_add_virtual_imu_methods()

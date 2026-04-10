@@ -12,7 +12,7 @@
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 from enum import Enum
 
 
@@ -64,6 +64,28 @@ class Wrench:
         """转为6D数组 [fx, fy, fz, mx, my, mz]"""
         return np.concatenate([self.force, self.torque])
     
+    def to_vector(self) -> np.ndarray:
+        """转为6D向量 (兼容别名)"""
+        return self.to_array()
+    
+    def transform(self, rotation: np.ndarray, translation: Optional[np.ndarray] = None) -> 'Wrench':
+        """变换力旋量到新坐标系
+        
+        Args:
+            rotation: 3x3 旋转矩阵
+            translation: 平移向量 (新坐标系原点在旧坐标系中的位置)
+            
+        Returns:
+            变换后的 Wrench
+        """
+        # 力旋量变换: 力只旋转, 力矩需要加上叉乘
+        new_force = rotation @ self.force
+        if translation is not None:
+            new_torque = rotation @ (self.torque - np.cross(translation, self.force))
+        else:
+            new_torque = rotation @ self.torque
+        return Wrench(force=new_force, torque=new_torque)
+    
     @property
     def magnitude(self) -> float:
         """获取力的模长 (兼容旧接口)"""
@@ -92,12 +114,16 @@ class SixAxisForceTorque:
         rs485_address: Optional[int] = None,
         calibration_matrix: Optional[np.ndarray] = None,
         sample_rate: int = 1000,
-        gravity_compensation: bool = True
+        gravity_compensation: bool = True,
+        sensor_type: Optional[str] = None,  # 向后兼容旧接口
+        sensor_id: Optional[str] = None,  # 向后兼容旧接口
     ):
         self.can_id = can_id
         self.rs485_address = rs485_address
         self.sample_rate = sample_rate
         self.gravity_compensation = gravity_compensation
+        self.sensor_type = sensor_type  # 兼容参数
+        self.sensor_id = sensor_id  # 兼容参数
         
         # 标定矩阵 (6x6 用于原始数据转换)
         # 原始 -> 实际 = calibration_matrix @ 原始
@@ -198,6 +224,10 @@ class SixAxisForceTorque:
             biases[i] = raw
         self._bias = np.mean(biases, axis=0)
         print(f"[SixAxisForceTorque] Zero calibration done: bias={self._bias}")
+    
+    def calibrate_bias(self, samples: int = 1000) -> None:
+        """偏置标定 (别名，兼容旧接口)"""
+        self.calibrate_zero(samples)
     
     def set_gravity_compensation(self, mass: float, com: np.ndarray):
         """
@@ -344,6 +374,46 @@ class SixAxisForceTorque:
     def get_bias(self) -> np.ndarray:
         """获取当前偏置"""
         return self._bias.copy()
+    
+    def detect_contact(self, wrench_or_threshold: Union[Wrench, float] = 5.0, threshold: float = None) -> 'ForceContactDetection':
+        """检测是否有外力接触 - 兼容接口返回对象"""
+        # 兼容关键字参数
+        if threshold is not None:
+            # detect_contact(threshold=5.0)
+            wrench = self.read_wrench()
+            force_magnitude = np.linalg.norm(wrench.force)
+            is_contact = force_magnitude > threshold
+        elif isinstance(wrench_or_threshold, Wrench):
+            # 调用方式: detect_contact(wrench) 带Wrench参数
+            wrench = wrench_or_threshold
+            force_magnitude = np.linalg.norm(wrench.force)
+            threshold = 5.0
+            is_contact = force_magnitude > threshold
+        else:
+            # 调用方式: detect_contact(threshold) 读取后检测
+            wrench = self.read_wrench()
+            force_magnitude = np.linalg.norm(wrench.force)
+            threshold = wrench_or_threshold
+            is_contact = force_magnitude > threshold
+        
+        # 返回对象保持向后兼容
+        class ForceContactDetection:
+            def __init__(self, is_contact):
+                self.is_contact = is_contact
+        
+        return ForceContactDetection(is_contact)
+    
+    def capture(self) -> Wrench:
+        """兼容旧接口 - capture 别名"""
+        return self.read_wrench()
+    
+    def estimate_payload(self, wrench: Optional[Wrench] = None) -> float:
+        """估计负载重量 - 兼容接口"""
+        if wrench is None:
+            wrench = self.read_wrench()
+        # 垂直力估计质量 mass = fz / g
+        mass = max(0.0, wrench.force[2]) / 9.81
+        return mass
     
     def __enter__(self):
         self.open()
@@ -618,6 +688,28 @@ class VirtualForceSensor:
     def close(self):
         pass
     
-    def simulate_contact(self, *args, **kwargs):
-        """兼容方法 - 返回零力旋量"""
-        return Wrench(force=np.zeros(3), torque=np.zeros(3))
+    def capture(self):
+        """兼容capture接口"""
+        return self.simulate_contact(np.zeros(3))
+    
+    def simulate_contact(self, force_vector=None, torque_vector=None, add_noise=False, force=None, torque=None):
+        """模拟接触力，返回Wrench"""
+        # 兼容关键字参数
+        if force is not None:
+            force_vector = force
+        if torque is not None:
+            torque_vector = torque
+            
+        if force_vector is None:
+            force_vector = np.zeros(3)
+        if torque_vector is None:
+            torque_vector = np.zeros(3)
+            
+        force = np.array(force_vector, dtype=np.float64)
+        torque = np.array(torque_vector, dtype=np.float64)
+        
+        if add_noise and self.noise_level is not None:
+            force += np.random.randn(3) * self.noise_level
+            torque += np.random.randn(3) * (self.noise_level * 0.1)
+        
+        return Wrench(force=force, torque=torque)

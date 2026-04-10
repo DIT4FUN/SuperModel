@@ -44,6 +44,13 @@ class TactileFrame:
     total_force: float = 0.0  # 总压力 N
     timestamp: float = 0.0
     frame_id: int = 0
+    
+    @property
+    def contact_area(self) -> int:
+        """兼容接口 - 接触面积像素数"""
+        if self.contact_mask is None:
+            return 0
+        return int(np.sum(self.contact_mask))
 
 
 @dataclass
@@ -73,16 +80,30 @@ class TactileArray:
         self,
         rows: int = 16,
         cols: int = 16,
+        array_size: Optional[Tuple[int, int]] = None,  # 向后兼容旧接口
         sensor_type: TactileSensorType = TactileSensorType.CAPACITIVE,
         sample_rate: int = 100,
         i2c_address: Optional[int] = None,
-        calibration: bool = True
+        calibration: bool = True,
+        sensor_id: Optional[str] = None,  # 向后兼容旧接口
     ):
-        self.rows = rows
-        self.cols = cols
+        # 完整处理所有兼容情况:
+        # 1. TactileArray((8, 8)) -> 第一个参数就是 tuple/list
+        if isinstance(rows, (tuple, list, np.ndarray)) and len(rows) == 2:
+            r, c = rows
+            rows, cols = int(r), int(c)
+        # 2. TactileArray(array_size=(8, 8)) -> keyword 参数
+        elif array_size is not None and isinstance(array_size, (tuple, list, np.ndarray)) and len(array_size) == 2:
+            r, c = array_size
+            rows, cols = int(r), int(c)
+        # 3. 正常参数
+        self.rows = int(rows)
+        self.cols = int(cols)
         self.sensor_type = sensor_type
         self.sample_rate = sample_rate
         self.i2c_address = i2c_address
+        self.array_size = (rows, cols)  # 兼容属性
+        self.sensor_id = sensor_id  # 兼容属性
         
         # 校准参数
         self._baseline = np.zeros((rows, cols), dtype=np.float32)
@@ -271,6 +292,57 @@ class TactileArray:
         hist, bins = np.histogram(pressure, bins=20, range=(0, self.max_pressure))
         return hist, bins
     
+    def capture(self) -> TactileFrame:
+        """兼容旧接口 - capture 别名"""
+        return self.read()
+    
+    def detect_contacts(self, frame: TactileFrame):
+        """兼容旧接口别名 - 返回接触列表保持向后兼容"""
+        event = self.detect_contact_event(frame)
+        if event.contact_detected:
+            return [event]
+        else:
+            return []
+    
+    def estimate_grip_quality(self, frame: TactileFrame):
+        """估算抓取质量 - 返回字典保持向后兼容"""
+        if frame.contact_mask is None:
+            score = 0.0
+        else:
+            contact_area = frame.contact_area
+            total_force = frame.total_force
+            if contact_area == 0 or total_force < 0.1:
+                score = 0.0
+            else:
+                # 简单评分：接触面积适中，力合适 → 高质量
+                area_score = min(1.0, contact_area / (frame.pressure_map.shape[0] * frame.pressure_map.shape[1] * 0.5))
+                force_score = min(1.0, total_force / 20.0)
+                score = (area_score + force_score) / 2.0
+        return {
+            'overall': score,
+            'area_score': min(1.0, (frame.contact_area if frame.contact_mask is not None else 0) / 
+                              (frame.pressure_map.shape[0] * frame.pressure_map.shape[1] * 0.5)),
+            'force_score': score,
+        }
+    
+    def get_slip_signal(self, frame: TactileFrame = None, prev_frame: Optional[TactileFrame] = None) -> Optional[np.ndarray]:
+        """获取滑动信号 - 兼容无参数调用"""
+        if frame is None:
+            # 向后兼容：无参数调用返回零滑动数组
+            return np.zeros((self.rows, self.cols), dtype=np.float32)
+        event = self.detect_contact_event(frame, prev_frame)
+        if event.sliding_detected and event.sliding_velocity is not None:
+            # 返回完整数组，兼容旧接口期望
+            slip = np.zeros((self.rows, self.cols), dtype=np.float32)
+            if event.sliding_velocity is not None:
+                # 滑动信号填充到对应位置
+                if hasattr(frame, 'center_of_pressure') and frame.center_of_pressure is not None:
+                    y, x = frame.center_of_pressure
+                    if 0 <= int(y) < self.rows and 0 <= int(x) < self.cols:
+                        slip[int(y), int(x)] = np.linalg.norm(event.sliding_velocity)
+            return slip
+        return np.zeros((self.rows, self.cols), dtype=np.float32)
+    
     def __enter__(self):
         self.open()
         return self
@@ -322,6 +394,10 @@ class TactileGlove:
     
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
+    
+    def capture(self) -> List[TactileFrame]:
+        """兼容旧接口 - capture 别名"""
+        return self.read_all()
 
 
 class AGVTactileBumper:
@@ -524,9 +600,11 @@ class TactileCalibration:
 
 class VirtualTactileSensor:
     """虚拟触觉传感器 (兼容别名)"""
-    def __init__(self, array_size=(16, 16), sensor_id="virtual"):
+    def __init__(self, array_size=(16, 16), sensor_id="virtual", noise_level=None):
         self.array_size = array_size
+        self.rows, self.cols = array_size
         self.sensor_id = sensor_id
+        self.noise_level = noise_level
     
     def open(self):
         return True
@@ -534,6 +612,93 @@ class VirtualTactileSensor:
     def close(self):
         pass
     
-    def simulate_contact(self, *args, **kwargs):
-        """兼容方法 - 返回空接触"""
-        return TactileContact(center=np.zeros(2), area=0, peak_pressure=0)
+    def simulate_contact(self, center_xy=None, radius=None, peak_pressure=None, contact_pos=None, pressure=None, contact_radius=None, contact_force=None, noise_level=None):
+        """模拟接触生成压力图，返回TactileFrame"""
+        # 兼容多种参数形式
+        if contact_pos is not None:
+            # contact_pos=(cx, cy), pressure=peak_pressure/contact_force, contact_radius=radius
+            cx, cy = contact_pos
+            if contact_force is not None:
+                peak_pressure = contact_force
+            else:
+                peak_pressure = pressure if pressure is not None else 10.0
+            radius = contact_radius if contact_radius is not None else (radius if radius is not None else 0.3)
+        elif center_xy is not None:
+            cx, cy = center_xy
+            peak_pressure = peak_pressure if peak_pressure is not None else 10.0
+            radius = radius if radius is not None else 0.3
+        else:
+            cx, cy = (0.5, 0.5)
+            peak_pressure = 10.0
+            radius = 0.3
+            
+        pressure_map = np.zeros((self.rows, self.cols), dtype=np.float32)
+        
+        # 生成二维高斯分布
+        for r in range(self.rows):
+            for c in range(self.cols):
+                # 归一化坐标
+                y_norm = r / (self.rows - 1) if self.rows > 1 else 0.5
+                x_norm = c / (self.cols - 1) if self.cols > 1 else 0.5
+                dist_sq = (x_norm - cx) ** 2 + (y_norm - cy) ** 2
+                if dist_sq <= radius ** 2:
+                    pressure_map[r, c] = peak_pressure * np.exp(-dist_sq / (2 * (radius/3)**2))
+        
+        # 检测接触
+        contact_mask = pressure_map > 0.1 * peak_pressure
+        
+        # 计算压力中心
+        if np.any(contact_mask):
+            y_idx, x_idx = np.where(contact_mask)
+            weighted_pressures = pressure_map[contact_mask]
+            cop_x = np.sum(x_idx * weighted_pressures) / np.sum(weighted_pressures)
+            cop_y = np.sum(y_idx * weighted_pressures) / np.sum(weighted_pressures)
+            center_of_pressure = np.array([cop_x, cop_y])
+            total_force = np.sum(pressure_map) * 0.01
+        else:
+            center_of_pressure = None
+            total_force = 0.0
+        
+        # 添加噪声
+        nl = noise_level if noise_level is not None else self.noise_level
+        if nl is not None and nl > 0:
+            pressure_map += np.random.randn(*pressure_map.shape) * nl
+            pressure_map = np.clip(pressure_map, 0, None)
+        
+        return TactileFrame(
+            pressure_map=pressure_map,
+            contact_mask=contact_mask,
+            center_of_pressure=center_of_pressure,
+            total_force=total_force
+        )
+    
+    def capture(self):
+        """兼容capture接口"""
+        return self.simulate_contact((0.5, 0.5), 0.3, 5.0)
+    
+    def simulate_slip_detection(self, start_position, end_position, slip_velocity, peak_pressure=10.0):
+        """模拟滑移检测，返回一系列接触帧
+        
+        Args:
+            start_position: 起始位置 (x, y)
+            end_position: 结束位置 (x, y)
+            slip_velocity: 滑移速度 像素/秒
+            peak_pressure: 峰值压力
+            
+        Returns:
+            list[TactileFrame]: 滑移过程的帧序列
+        """
+        import math
+        distance = math.sqrt((end_position[0] - start_position[0])**2 + (end_position[1] - start_position[1])**2)
+        duration = distance / slip_velocity if slip_velocity > 0 else 1.0
+        num_frames = max(1, int(duration * 100))  # 100Hz采样
+        
+        frames = []
+        for i in range(num_frames):
+            t = i / max(1, num_frames - 1)
+            cx = start_position[0] + t * (end_position[0] - start_position[0])
+            cy = start_position[1] + t * (end_position[1] - start_position[1])
+            frame = self.simulate_contact((cx, cy), radius=0.2, peak_pressure=peak_pressure)
+            frames.append(frame)
+        
+        return frames
