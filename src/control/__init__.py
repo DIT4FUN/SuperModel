@@ -34,7 +34,12 @@ from .trajectory_planning import (
 )
 from .skill import SkillLibrary, Skill, SkillRegistry
 from .planner import TaskPlanner, Task, TaskStatus
-from .impedance import ImpedanceController
+from .impedance import (
+    ImpedanceController, AdmittanceController,
+    ForceImpedanceController, CollaborativeController,
+    AdaptiveImpedanceController,
+    AGV_IMPEDANCE_GRADES, get_impedance_spec, list_impedance_capabilities,
+)
 from .safety_controller import (
     SafetyController, SafetyConfig, SafetyLevel, SafetyEvent,
     SafetyResponse, SafetyEventRecord, JointStateSnapshot,
@@ -196,7 +201,11 @@ __all__ = [
     'VelocityProfiler', 'VelocityProfile',
     'SkillLibrary', 'Skill', 'SkillRegistry',
     'TaskPlanner', 'Task', 'TaskStatus',
-    'ImpedanceController',
+    # impedance
+    'ImpedanceController', 'AdmittanceController',
+    'ForceImpedanceController', 'CollaborativeController',
+    'AdaptiveImpedanceController',
+    'AGV_IMPEDANCE_GRADES', 'get_impedance_spec', 'list_impedance_capabilities',
     'MPCConfig', 'JointStateMP', 'DynamicsModel',
     'JointSpaceMPC', 'CartesianMPC', 'get_mpc_spec',
     'SafetyController', 'SafetyConfig', 'SafetyLevel', 'SafetyEvent',

@@ -288,12 +288,16 @@ class ForceImpedanceController:
         """
         # 位置误差 (仅位置控方向)
         pos_error = np.zeros(6)
-        pos_error[self.position_axes] = desired_position - current_position
-        
+        pos_error[self.position_axes] = (
+            desired_position[self.position_axes] - current_position[self.position_axes]
+        )
+
         # 力误差 (仅力控方向)
         force_error = np.zeros(6)
-        force_error[self.force_axes] = desired_force - current_force
-        
+        force_error[self.force_axes] = (
+            desired_force[self.force_axes] - current_force[self.force_axes]
+        )
+
         # 混合控制
         control_effort = np.zeros(6)
         control_effort[self.position_axes] = self.Kp * pos_error[self.position_axes]
@@ -747,3 +751,104 @@ class AdaptiveImpedanceController:
             "D_variance": D_std,
             "history_length": len(self._stiffness_history),
         }
+
+
+# === AGV五级阻抗控制规格表 ===
+AGV_IMPEDANCE_GRADES = {
+    "S": {
+        "control_freq_hz": 50,
+        "stiffness_range": (50.0, 500.0),
+        "damping_range": (10.0, 100.0),
+        "inertia_range": (1.0, 10.0),
+        "force_limit": 50.0,
+        "position_error_limit": 0.05,
+        "adaptation_rate": 0.005,
+        "convergence_time_s": 5.0,
+        "use_lyapunov": False,
+        "use_mrac": False,
+    },
+    "M": {
+        "control_freq_hz": 100,
+        "stiffness_range": (100.0, 1000.0),
+        "damping_range": (20.0, 200.0),
+        "inertia_range": (2.0, 20.0),
+        "force_limit": 100.0,
+        "position_error_limit": 0.02,
+        "adaptation_rate": 0.01,
+        "convergence_time_s": 2.0,
+        "use_lyapunov": False,
+        "use_mrac": False,
+    },
+    "L": {
+        "control_freq_hz": 200,
+        "stiffness_range": (200.0, 2000.0),
+        "damping_range": (50.0, 500.0),
+        "inertia_range": (5.0, 50.0),
+        "force_limit": 200.0,
+        "position_error_limit": 0.01,
+        "adaptation_rate": 0.02,
+        "convergence_time_s": 1.0,
+        "use_lyapunov": True,
+        "use_mrac": False,
+    },
+    "XL": {
+        "control_freq_hz": 500,
+        "stiffness_range": (300.0, 3000.0),
+        "damping_range": (70.0, 700.0),
+        "inertia_range": (7.0, 70.0),
+        "force_limit": 350.0,
+        "position_error_limit": 0.005,
+        "adaptation_rate": 0.05,
+        "convergence_time_s": 0.5,
+        "use_lyapunov": True,
+        "use_mrac": True,
+    },
+    "XXL": {
+        "control_freq_hz": 1000,
+        "stiffness_range": (500.0, 5000.0),
+        "damping_range": (100.0, 1000.0),
+        "inertia_range": (10.0, 100.0),
+        "force_limit": 500.0,
+        "position_error_limit": 0.001,
+        "adaptation_rate": 0.1,
+        "convergence_time_s": 0.5,
+        "use_lyapunov": True,
+        "use_mrac": True,
+    },
+}
+
+
+def get_impedance_spec(grade: str) -> Dict:
+    """
+    获取指定AGV等级的阻抗控制规格
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+
+    Returns:
+        阻抗控制规格字典
+    """
+    return AGV_IMPEDANCE_GRADES.get(grade, AGV_IMPEDANCE_GRADES['M'])
+
+
+def list_impedance_capabilities() -> Dict[str, Dict]:
+    """
+    列出所有AGV等级的阻抗控制能力
+
+    Returns:
+        所有等级的完整规格字典
+    """
+    return dict(AGV_IMPEDANCE_GRADES)
+
+
+__all__ = [
+    'ImpedanceParams',
+    'ImpedanceController',
+    'AdmittanceController',
+    'ForceImpedanceController',
+    'CollaborativeController',
+    'AdaptiveImpedanceController',
+    'AGV_IMPEDANCE_GRADES',
+    'get_impedance_spec',
+    'list_impedance_capabilities',
+]

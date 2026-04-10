@@ -2031,10 +2031,92 @@ class SignalStats:
 
 ---
 
-## 24. 版本历史
+## 24. 阻抗控制模块 (Impedance Control)
+
+### 24.1 概述
+
+阻抗控制实现柔顺控制，核心方程：
+```
+M·Xdd + D·Xd + K·X = F
+```
+其中 X 是位置误差，F 是外力，M/D/K 分别是惯性/阻尼/刚度矩阵。
+
+**支持控制器：**
+- `ImpedanceController` - 基础阻抗控制器
+- `AdmittanceController` - 导纳控制器（输入力→输出位置）
+- `ForceImpedanceController` - 力位混合控制器
+- `CollaborativeController` - 协作/拖动示教控制器
+- `AdaptiveImpedanceController` - 自适应阻抗控制器（MRAC + 李雅普诺夫）
+
+### 24.2 AGV五级阻抗控制规格表
+
+| 规格项 | S | M | L | XL | XXL |
+|--------|---|---|---|---|-----|
+| 控制频率 (Hz) | 50 | 100 | 200 | 500 | 1000 |
+| 刚度范围 (N/m) | 50~500 | 100~1000 | 200~2000 | 300~3000 | 500~5000 |
+| 阻尼范围 (Ns/m) | 10~100 | 20~200 | 50~500 | 70~700 | 100~1000 |
+| 惯性范围 (kg) | 1~10 | 2~20 | 5~50 | 7~70 | 10~100 |
+| 力限制 (N) | 50 | 100 | 200 | 350 | 500 |
+| 位置误差限制 (m) | 0.05 | 0.02 | 0.01 | 0.005 | 0.001 |
+| 自适应率 | 0.005 | 0.01 | 0.02 | 0.05 | 0.1 |
+| 收敛时间 (s) | 5.0 | 2.0 | 1.0 | 0.5 | 0.5 |
+| 李雅普诺夫稳定 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| MRAC自适应 | ✗ | ✗ | ✗ | ✓ | ✓ |
+
+### 24.3 核心接口
+
+```python
+# AGV五级规格查询
+from src.control.impedance import AGV_IMPEDANCE_GRADES, get_impedance_spec
+spec = get_impedance_spec("XXL")  # 获取XXL级规格
+
+# 基础阻抗控制
+from src.control.impedance import ImpedanceController, ImpedanceParams
+params = ImpedanceParams.default_6d()
+ctrl = ImpedanceController(params, control_rate=100.0)
+jacobian = np.eye(6, 3)
+torque, info = ctrl.compute_torque(
+    desired_position=np.array([0.1, 0.0, 0.0]),
+    desired_velocity=np.zeros(3),
+    current_position=np.array([0.05, 0.0, 0.0]),
+    current_velocity=np.zeros(3),
+    external_wrench=np.zeros(6),
+    jacobian=jacobian,
+)
+
+# 自适应阻抗控制（MRAC + 李雅普诺夫）
+from src.control.impedance import AdaptiveImpedanceController
+adapt_ctrl = AdaptiveImpedanceController(
+    control_rate=500.0,
+    adaptation_rate=0.05,
+    env_stiffness_bounds=(100.0, 10000.0),
+    use_lyapunov=True,
+)
+torque, info = adapt_ctrl.update(
+    desired_position=np.array([0.1, 0.0, 0.0]),
+    current_position=np.array([0.05, 0.0, 0.0]),
+    current_velocity=np.zeros(3),
+    external_wrench=np.zeros(6),
+    jacobian=jacobian,
+    contact_phase="contact",
+    task_type="assembly",
+)
+print(f"估计环境刚度: {info['est_env_K']:.1f} N/m")
+print(f"收敛性: {adapt_ctrl.get_convergence_metrics()}")
+
+# 导纳控制
+from src.control.impedance import AdmittanceController
+adm_ctrl = AdmittanceController(M=10.0, D=50.0, K=200.0, control_rate=100.0)
+pos = adm_ctrl.update(external_force=10.0, desired_position=0.0)
+```
+
+---
+
+## 25. 版本历史
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v2.51.0 | 2026-04-10 | 新增AGV五级阻抗控制规格(AGV_IMPEDANCE_GRADES); ForceImpedanceController.compute_torque bug修复; impedance_control_tests.py 31项测试; SPEC.md第24章阻抗控制规格; 2636项测试全通过 |
 | v2.46.1 | 2026-04-10 | 新增AGV五极控制规格模块(control/grade_control.py); 五极PID/安全监控/轨迹规划器; grade_control_tests.py 100项测试; SPEC.md第22章五极控制规格; 583项测试全通过 |
 | v2.45.0 | 2026-04-10 | 新增velocity_control.py速度控制模块(S曲线规划/摩擦补偿/PID闭环/AGV五级规格); velocity_control_tests.py 78项测试全通过; SPEC.md第21章速度控制规格; 483项测试全通过 |
 | v2.43.0 | 2026-04-10 | 补充SPEC.md第20章AGV五级规格总表(7大子系统完整对照表); 传感器+融合+控制全链路五级规格完善; 2327项测试全通过 |

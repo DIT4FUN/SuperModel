@@ -1,7 +1,50 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 12:46 (v2.46.1)
+> Last Updated: 2026-04-10 14:33 (v2.51.0)
+
+---
+
+## v2.51.0 (2026-04-10 14:33) - AGV五级阻抗控制规格模块 + 31项测试
+
+### 本次更新
+
+1. **新增AGV五级阻抗控制规格** (`src/control/impedance.py`, +80行)
+   - `AGV_IMPEDANCE_GRADES`: 完整五级规格表 (S/M/L/XL/XXL)
+   - `get_impedance_spec(grade)`: 按等级查询规格
+   - `list_impedance_capabilities()`: 列出所有等级能力
+   - 规格涵盖: 控制频率/刚度/阻尼/惯性/力限制/自适应率/收敛时间/MRAC/李雅普诺夫
+
+2. **ForceImpedanceController.compute_torque 修复**
+   - 修复布尔索引赋值维度不匹配的 bug
+   - 位置误差和力误差计算现在正确使用轴掩码
+
+3. **测试用例** (`tests/impedance_control_tests.py`, 31项)
+   - `TestImpedanceParams`: 参数数据类测试 (3项)
+   - `TestImpedanceController`: 基础阻抗控制测试 (5项)
+   - `TestAdmittanceController`: 导纳控制测试 (3项)
+   - `TestForceImpedanceController`: 力位混合控制测试 (2项)
+   - `TestCollaborativeController`: 协作控制测试 (4项)
+   - `TestAdaptiveImpedanceController`: 自适应阻抗控制测试 (6项)
+   - `TestAGVImpedanceGrades`: AGV五级规格一致性测试 (8项)
+   - `TestImpedanceControllerGradeIntegration`: 规格集成测试 (1项)
+   - **31项全部通过** ✅
+
+4. **文档更新** (`docs/SPEC.md`, 新增第24章)
+   - AGV五级阻抗控制规格表 (频率/刚度/阻尼/惯性/力限制/误差限制/自适应率)
+   - 完整接口使用示例 (基础/自适应/导纳控制)
+   - 版本历史更新至v2.51.0
+
+5. **模块导出更新**
+   - `src/control/__init__.py`: 新增impedance全部导出 (AdmittanceController/ForceImpedanceController/CollaborativeController/AdaptiveImpedanceController/AGV_IMPEDANCE_GRADES)
+
+### 测试结果
+```
+pytest tests/impedance_control_tests.py -q --tb=no
+============================== 31 passed in 0.16s ============================
+pytest tests/ -q --tb=no
+=========== 2636 passed, 38 skipped, 10 warnings in 77.29s ============================
+```
 
 ---
 

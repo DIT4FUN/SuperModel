@@ -2,6 +2,27 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.51.0] - 2026-04-10
+
+### Added
+- `src/control/impedance.py`: AGV五级阻抗控制规格表 (+80行)
+  - `AGV_IMPEDANCE_GRADES`: 完整S/M/L/XL/XXL规格
+  - `get_impedance_spec(grade)`: 按等级查询规格
+  - `list_impedance_capabilities()`: 列出所有等级能力
+  - 规格: 控制频率/刚度/阻尼/惯性/力限制/误差限制/自适应率/收敛时间/MRAC/李雅普诺夫
+- `src/control/impedance.py`: 修复 `ForceImpedanceController.compute_torque` 布尔索引 bug
+- `tests/impedance_control_tests.py`: 阻抗控制测试套件 (31项)
+  - ImpedanceController/AdmittanceController/ForceImpedanceController/CollaborativeController/AdaptiveImpedanceController
+  - AGV五级规格一致性测试 (频率单调性/误差限制单调性/特性完整性)
+  - 规格集成测试
+- `docs/SPEC.md`: 新增第24章「阻抗控制模块规格」
+  - AGV五级阻抗控制规格表
+  - 基础/自适应/导纳控制接口使用示例
+- `src/control/__init__.py`: 新增阻抗控制全部导出
+
+### Fixed
+- `ForceImpedanceController.compute_torque`: 修复布尔索引维度不匹配 bug
+
 ## [2.50.0] - 2026-04-10
 
 ### Added
