@@ -2,6 +2,38 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.53.0] - 2026-04-10
+
+### Added
+- `src/control/swarm_control.py` (+520行): 蜂群控制系统模块
+  - `ConsensusController`: 图论邻接矩阵/Laplacian矩阵 + 一阶/二阶分布式共识协议
+  - `FormationController`: LINE/TRIANGLE/CIRCLE/GRID等6种编队形状 + 虚拟结构编队控制
+  - `CollisionAvoidance`: 人工势场排斥 + ORCA碰撞检测与规避
+  - `SwarmController`: 整合共识+编队+避障的统一蜂群控制主类
+  - `SWARM_GRADES`: AGV五级蜂群规格表 (S:4台~XXL:64台, 0.3~2.0m/s, 20~200Hz, 2D/3D)
+- `tests/swarm_control_tests.py` (35项): 蜂群控制系统完整测试套件
+  - AGV五级规格测试(单调性/一致性/详细规格/维度验证)
+  - 环形/星型/网状拓扑共识测试
+  - 一阶/二阶共识 + LeaderFollower共识测试
+  - 六种编队形状测试 + 碰撞检测与规避测试
+  - 蜂群速度限制/碰撞/连通性验证 + AGV五级一致性测试
+- `src/control/__init__.py`: 新增swarm_control全部导出
+
+### Fixed
+- `ConsensusController.compute_consensus`: 修复动态agent数量时邻接矩阵索引越界bug
+- `FormationController.compute_formation_control`: 修复position-only共识维度不匹配bug
+
+## [2.52.0] - 2026-04-10
+
+### Added
+- `docs/SPEC.md`: 新增第26章「详细模块接口设计」(+305行)
+  - 触觉感知模块接口(TactileArray/AGV五级规格表)
+  - 力觉感知模块接口(ForceTorqueSensor/Wrench/仿真方法)
+  - IMU感知模块接口(IMUSensor/PoseEstimator/VirtualIMUSensor)
+  - 控制模块接口(7个子模块/AGV五级控制规格表)
+  - 仿真环境接口(Gymnasium/PyBullet/MuJoCo/Gazebo统一接口)
+  - 综合AGV五级规格总表(20项参数完整对照)
+
 ## [2.51.0] - 2026-04-10
 
 ### Added
