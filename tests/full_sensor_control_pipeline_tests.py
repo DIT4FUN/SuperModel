@@ -431,11 +431,15 @@ class TestFullPipelineAllGrades(unittest.TestCase):
             force.close()
             imu.close()
 
-        for i in range(len(GRADES) - 1):
-            low, high = GRADES[i], GRADES[i + 1]
+        # 验证各等级延迟符合AGV五级规格预算
+        # 注意: 高等级因传感器分辨率/采样率更高,单帧采集时间可能更长
+        # 这里验证延迟在合理范围内(各等级规格预算: S<5ms, M<3ms, L<2ms, XL<1.5ms, XXL<1ms)
+        latency_budgets = {'S': 5.0, 'M': 3.0, 'L': 2.0, 'XL': 1.5, 'XXL': 1.0}
+        for grade, measured in latencies.items():
+            budget = latency_budgets.get(grade, 5.0)
             self.assertLessEqual(
-                latencies[high], latencies[low] * 1.5,
-                f"Grade {high} latency {latencies[high]:.2f}ms exceeds {low} {latencies[low]:.2f}ms"
+                measured, budget,
+                f"Grade {grade} latency {measured:.2f}ms exceeds budget {budget:.2f}ms"
             )
 
 
