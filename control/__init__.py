@@ -52,6 +52,19 @@ from control.grade_control import (
     get_grade_control_spec,
     list_grade_capabilities
 )
+from control.velocity_control import (
+    AGV_VELOCITY_CONTROL_GRADES,
+    VelocityProfileType,
+    VelocityProfile1D,
+    WheelVelocityCommand,
+    WheelVelocityState,
+    VelocityControllerState,
+    FrictionCompensator,
+    VelocityPIDController,
+    AGVVelocityController,
+    get_velocity_control_spec,
+    list_velocity_capabilities,
+)
 
 __all__ = [
     # motor
@@ -72,4 +85,9 @@ __all__ = [
     'AGVGrade', 'GRADE_CONTROL_SPECS', 'GradePIDConfig', 'GradeControllerConfig',
     'GradeAwarePID', 'GradeAwareSafetyMonitor', 'GradeAwareTrajectoryPlanner',
     'get_grade_control_spec', 'list_grade_capabilities',
+    # velocity control
+    'AGV_VELOCITY_CONTROL_GRADES', 'VelocityProfileType', 'VelocityProfile1D',
+    'WheelVelocityCommand', 'WheelVelocityState', 'VelocityControllerState',
+    'FrictionCompensator', 'VelocityPIDController', 'AGVVelocityController',
+    'get_velocity_control_spec', 'list_velocity_capabilities',
 ]

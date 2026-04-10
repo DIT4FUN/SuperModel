@@ -2,6 +2,47 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.60.0] - 2026-04-10
+
+### Added
+- **AGV速度控制模块** (`control/velocity_control.py`, 800行)
+  - `AGV_VELOCITY_CONTROL_GRADES`: 完整五级速度控制规格表 (S/M/L/XL/XXL)
+  - `VelocityProfile1D`: S曲线速度规划器 (急动度限制, 平滑无冲击)
+  - `FrictionCompensator`: Stribeck摩擦模型补偿器
+  - `VelocityPIDController`: 带积分抗饱和和微分滤波的速度PID
+  - `AGVVelocityController`: 五级感知速度控制器 (运动学/PID/摩擦补偿/滑移检测)
+  - `WheelVelocityCommand`/`WheelVelocityState`/`VelocityControllerState`: 数据结构
+  - 规格涵盖: 最大速度/加速度/急动度/PID参数/摩擦补偿/滑移率阈值/轮参数
+- **AGV五级规格总表** (`docs/design/MODULE_INTERFACE_SPEC.md` 新增第十章)
+  - 传感器系统规格表 (视觉/IMU/力觉/触觉/编码器)
+  - 融合系统规格表 (维度/策略/延迟/同步/偏置补偿)
+  - 控制系统规格表 (频率/算法/规划/安全)
+  - 通信与计算规格表 (平台/总线/实时内核/协同)
+  - 速度控制五级规格表 (与velocity_control.py对应)
+  - 触觉-运动-控制闭环规格表
+  - 测试用例覆盖率规格表
+
+### Changed
+- **control/__init__.py**: 新增velocity_control全部导出
+- **MODULE_INTERFACE_SPEC.md**: 版本更新至v1.1.0
+
+## [2.59.0] - 2026-04-10
+
+### Added
+- **多传感器时序同步测试模块** (`tests/temporal_sync_tests.py`, 770行, 24项测试)
+  - `TemporalSyncMonitor`: 时序同步监控器 (记录硬件/软件时间戳, 计算同步抖动/延迟)
+  - `SyncTimestamp`/`SyncFrame`: 同步数据结构
+  - `TestSensorTimestampConsistency`: 传感器时间戳一致性测试
+  - `TestTemporalSyncMechanisms`: 时序同步机制测试
+  - `TestSynchronizedCaptureSequential`: 顺序采集同步测试
+  - `TestSynchronizedCaptureParallel`: 并行采集线程安全测试
+  - `TestGradeSyncPerformance`: AGV五级采样间隔/同步容差测试
+  - `TestSyncLatencyBudgetCompliance`: 各等级同步延迟预算合规性验证
+  - AGV五级采样率配置表 (`GRADE_SAMPLE_RATES`) 和延迟预算表 (`GRADE_SYNC_LATENCY_BUDGET`)
+
+### Changed
+- **测试套件扩展**: 2687项 → 2711项 (新增24项时序同步测试)
+
 ## [2.58.0] - 2026-04-10
 
 ### Added
