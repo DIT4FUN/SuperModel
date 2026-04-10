@@ -2,6 +2,26 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.64.0] - 2026-04-10
+
+### Added
+- **AGV五级传感器融合集成测试** (`tests/sensor_agv_grade_tests.py`, 388行)
+  - 18项测试: 触觉五级规格/力觉五级规格/IMU五级规格
+  - 传感器管理器五级配置测试
+  - 延迟预算测试 / 多模态融合一致性 / 时间同步测试
+  - 覆盖S/M/L/XL/XXL五级AGV全规格验证
+
+### Fixed
+- `SensorManager.shutdown()` → `close_all()` (API兼容性)
+- `VirtualForceSensor.capture()` → `simulate_contact()` (API兼容性)
+- `VirtualIMUSensor.capture()` → `simulate_static()` (API兼容性)
+
+### Test Results
+- `sensor_agv_grade_tests.py`: 18 passed (0.09s)
+- `sensor_tests.py`: 347 tests passed
+- `fusion_tests.py`: 79 tests passed
+- **TOTAL: 444 tests passed**
+
 ## [2.62.0] - 2026-04-10
 
 ### Added
