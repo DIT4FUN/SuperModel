@@ -2,6 +2,36 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.58.0] - 2026-04-10
+
+### Added
+- **进度汇报脚本更新**: send_v257.py
+- **传感器/控制/测试模块全面就绪**: 触觉/力觉/IMU/控制模块完整, AGV五级规格齐全, 2687项测试全通过
+
+## [2.57.0] - 2026-04-10
+
+### Added
+- **CAN Bus传感器接口** (`src/hardware/canbus.py`, 750行)
+  - `VirtualCANBus`: 仿真/测试用虚拟CAN总线 (支持广播/过滤/错误模拟)
+  - `RealCANBus`: Linux socketcan真实总线接口
+  - `CANopenNode`: 基础CANopen协议节点 (NMT/SDO/PDO/TPDO/RPDO/Heartbeat)
+  - `IMUCANopenNode`: IMU CANopen节点 (xsens MTi兼容, 2500000bps)
+  - `ForceTorqueCANopenNode`: 六维力/力矩传感器CANopen节点 (Kistler兼容)
+  - `TactileCANopenNode`: 触觉阵列CANopen节点
+  - `AGV五级CAN总线规格表`: S(125kbps/1节点)→XXL(1Mbps/64节点)
+- **传感器硬件桥接器** (`src/hardware/sensor_bridge.py`, 560行)
+  - `SensorHardwareBridge`: 统一管理多协议传感器 (USB HID/I2C/SPI/CAN/UART)
+  - `SimulatedSensorInterface`: 仿真传感器接口 (高斯/正弦噪声模型)
+  - `SensorData`: 统一传感器数据格式 (IMU/力觉/触觉/编码器)
+  - `AGV五级硬件桥接规格表`: S(100Hz)→XXL(5000Hz)
+- **硬件测试套件** (`tests/hardware_tests.py`, 34项全通过)
+
+## [2.56.0] - 2026-04-10
+
+### Added
+- **进度汇报脚本**: send_v255.py / send_v256.py
+- **传感器-控制集成完善**: 触觉/力觉/IMU与控制模块深度集成
+
 ## [2.55.0] - 2026-04-10
 
 ### Added
