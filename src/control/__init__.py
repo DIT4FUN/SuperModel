@@ -192,6 +192,12 @@ from .grade_control import (
     GradeAwarePID, GradeAwareSafetyMonitor, GradeAwareTrajectoryPlanner,
     get_grade_control_spec, list_grade_capabilities,
 )
+from .swarm_control import (
+    SwarmController, ConsensusController, FormationController,
+    CollisionAvoidance, SwarmAgent,
+    FormationShape, ConsensusType, FormationSpec,
+    SWARM_GRADES, get_swarm_spec, list_swarm_capabilities,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -314,4 +320,9 @@ __all__ = [
     'AGVGrade', 'GRADE_CONTROL_SPECS', 'GradePIDConfig', 'GradeControllerConfig',
     'GradeAwarePID', 'GradeAwareSafetyMonitor', 'GradeAwareTrajectoryPlanner',
     'get_grade_control_spec', 'list_grade_capabilities',
+    # swarm_control
+    'SwarmController', 'ConsensusController', 'FormationController',
+    'CollisionAvoidance', 'SwarmAgent',
+    'FormationShape', 'ConsensusType', 'FormationSpec',
+    'SWARM_GRADES', 'get_swarm_spec', 'list_swarm_capabilities',
 ]
