@@ -424,12 +424,20 @@ class AGVTactileBumper:
 # AGV五级触觉传感器规格
 AGV_TACTILE_GRADES = {
     'S': {
+        'array': (8, 8),
+        'res': 12,
+        'freq_hz': 50,
+        'temp': False,
         'bumper_segments': 4,
         'has_skin': False,
         'resolution': 'coarse',
         'sample_rate': 50
     },
     'M': {
+        'array': (16, 16),
+        'res': 12,
+        'freq_hz': 100,
+        'temp': True,
         'bumper_segments': 8,
         'has_skin': True,
         'skin_size': (16, 16),
@@ -437,6 +445,10 @@ AGV_TACTILE_GRADES = {
         'sample_rate': 100
     },
     'L': {
+        'array': (24, 24),
+        'res': 14,
+        'freq_hz': 200,
+        'temp': True,
         'bumper_segments': 12,
         'has_skin': True,
         'skin_size': (32, 32),
@@ -444,6 +456,10 @@ AGV_TACTILE_GRADES = {
         'sample_rate': 100
     },
     'XL': {
+        'array': (32, 32),
+        'res': 14,
+        'freq_hz': 500,
+        'temp': True,
         'bumper_segments': 16,
         'has_skin': True,
         'skin_size': (32, 64),
@@ -452,6 +468,10 @@ AGV_TACTILE_GRADES = {
         'has_temperature': True
     },
     'XXL': {
+        'array': (48, 48),
+        'res': 16,
+        'freq_hz': 1000,
+        'temp': True,
         'bumper_segments': 24,
         'has_skin': True,
         'skin_size': (64, 128),

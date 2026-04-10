@@ -543,3 +543,58 @@ def rpm_to_radps(rpm: float) -> float:
 def radps_to_rpm(radps: float) -> float:
     """rad/s转rpm"""
     return radps * 60.0 / (2 * np.pi)
+
+
+# =============================================================================
+# 日志和重试工具
+# =============================================================================
+
+import logging
+logger = logging.getLogger(__name__)
+
+
+class RateLimiter:
+    """速率限制器"""
+    def __init__(self, max_calls: int, period: float):
+        self.max_calls = max_calls
+        self.period = period
+        self.calls = []
+    
+    def allow(self) -> bool:
+        """检查是否允许调用"""
+        import time
+        now = time.time()
+        # 清除过期调用
+        self.calls = [t for t in self.calls if now - t < self.period]
+        if len(self.calls) < self.max_calls:
+            self.calls.append(now)
+            return True
+        return False
+
+
+def retry(
+    max_attempts: int = 3,
+    delay: float = 1.0,
+    backoff: float = 2.0,
+    exceptions: tuple = (Exception,)
+) -> callable:
+    """重试装饰器"""
+    import time
+    def decorator(func):
+        def wrapper(*args, **kwargs):
+            current_delay = delay
+            last_exception = None
+            for attempt in range(max_attempts):
+                try:
+                    return func(*args, **kwargs)
+                except exceptions as e:
+                    last_exception = e
+                    logger.warning(
+                        f"Attempt {attempt + 1}/{max_attempts} failed: {e}, "
+                        f"retrying in {current_delay}s"
+                    )
+                    time.sleep(current_delay)
+                    current_delay *= backoff
+            raise last_exception
+        return wrapper
+    return decorator

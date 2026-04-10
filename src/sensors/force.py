@@ -514,12 +514,20 @@ class LiftForceSensor:
 # AGV五级力传感器规格
 AGV_FORCE_GRADES = {
     'S': {
+        'axes': 3,
+        'force_range': 100,
+        'torque_range': 10,
+        'sampling_hz': 100,
         'has_ft': False,
         'has_wheel_force': False,
         'has_lift_force': True,
         'max_lift': 50  # kg
     },
     'M': {
+        'axes': 6,
+        'force_range': 200,
+        'torque_range': 20,
+        'sampling_hz': 500,
         'has_ft': False,
         'has_wheel_force': True,
         'has_lift_force': True,
@@ -527,6 +535,10 @@ AGV_FORCE_GRADES = {
         'wheel_count': 2
     },
     'L': {
+        'axes': 6,
+        'force_range': 500,
+        'torque_range': 50,
+        'sampling_hz': 1000,
         'has_ft': True,
         'has_wheel_force': True,
         'has_lift_force': True,
@@ -535,6 +547,10 @@ AGV_FORCE_GRADES = {
         'ft_range': 1000  # N
     },
     'XL': {
+        'axes': 6,
+        'force_range': 1000,
+        'torque_range': 100,
+        'sampling_hz': 2000,
         'has_ft': True,
         'has_wheel_force': True,
         'has_lift_force': True,
@@ -544,6 +560,10 @@ AGV_FORCE_GRADES = {
         'ft_sample_rate': 500
     },
     'XXL': {
+        'axes': 6,
+        'force_range': 5000,
+        'torque_range': 500,
+        'sampling_hz': 5000,
         'has_ft': True,
         'has_wheel_force': True,
         'has_lift_force': True,

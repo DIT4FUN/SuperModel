@@ -87,6 +87,10 @@ class Pose:
         yaw = np.arctan2(siny_cosp, cosy_cosp)
         
         return np.array([roll, pitch, yaw])
+    
+    def to_euler(self) -> np.ndarray:
+        """兼容别名: 转为欧拉角"""
+        return self.euler()
 
 
 class IMU:
@@ -472,6 +476,9 @@ class IMUOdometry:
 # AGV五级IMU规格
 AGV_IMU_GRADES = {
     'S': {
+        'type': 'MPU6050',
+        'sample_hz': 100,
+        'noise_density': 400,
         'axes': 6,  # 3+3
         'sample_rate': 50,
         'has_mag': False,
@@ -479,6 +486,9 @@ AGV_IMU_GRADES = {
         'drift_drift_h': 10.0  # 度/小时 漂移
     },
     'M': {
+        'type': 'BMI088',
+        'sample_hz': 200,
+        'noise_density': 120,
         'axes': 6,
         'sample_rate': 100,
         'has_mag': False,
@@ -487,6 +497,9 @@ AGV_IMU_GRADES = {
         'bias_stability': 10  # °/h
     },
     'L': {
+        'type': 'BMI088',
+        'sample_hz': 500,
+        'noise_density': 60,
         'axes': 9,
         'sample_rate': 200,
         'has_mag': True,
@@ -495,6 +508,9 @@ AGV_IMU_GRADES = {
         'bias_stability': 5  # °/h
     },
     'XL': {
+        'type': 'ADIS16470',
+        'sample_hz': 1000,
+        'noise_density': 20,
         'axes': 9,
         'sample_rate': 500,
         'has_mag': True,
@@ -503,6 +519,9 @@ AGV_IMU_GRADES = {
         'temperature_compensation': True
     },
     'XXL': {
+        'type': 'ADIS16470',
+        'sample_hz': 2000,
+        'noise_density': 10,
         'axes': 9,
         'sample_rate': 1000,
         'has_mag': True,
@@ -570,9 +589,39 @@ class VirtualIMUSensor:
     def close(self):
         pass
     
-    def simulate_static(self, *args, **kwargs):
+    def simulate_static(self, orientation=(0.0, 0.0, 0.0)):
         """兼容方法 - 返回静止姿态"""
-        return np.array([0, 0, 9.81]), np.zeros(3)
+        # roll, pitch, yaw -> 四元数
+        import math
+        cr = math.cos(orientation[0] * 0.5)
+        cp = math.cos(orientation[1] * 0.5)
+        cy = math.cos(orientation[2] * 0.5)
+        sr = math.sin(orientation[0] * 0.5)
+        sp = math.sin(orientation[1] * 0.5)
+        sy = math.sin(orientation[2] * 0.5)
+        
+        qw = cr * cp * cy + sr * sp * sy
+        qx = sr * cp * cy - cr * sp * sy
+        qy = cr * sp * cy + sr * cp * sy
+        qz = cr * cp * sy - sr * cp * cp
+        
+        accel = np.array([0.0, 0.0, 9.81])
+        gyro = np.zeros(3)
+        mag = None
+        
+        if self.accel_noise is not None:
+            accel += np.random.randn(3) * self.accel_noise
+        if self.gyro_noise is not None:
+            gyro += np.random.randn(3) * self.gyro_noise
+        
+        return IMUReading(
+            accel=accel,
+            gyro=gyro,
+            mag=mag,
+            quaternion=np.array([qw, qx, qy, qz]),
+            timestamp=0.0,
+            frame_id=0
+        )
 
 
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:

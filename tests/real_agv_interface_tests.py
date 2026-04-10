@@ -21,7 +21,6 @@ from src.hardware.real_agv_interface import (
     RealAGVController,
     AGV_HARDWARE_SPECS,
     CANZAC8015DDriver,
-    AGVTaskPlanner,
     HardwareMonitor,
 )
 

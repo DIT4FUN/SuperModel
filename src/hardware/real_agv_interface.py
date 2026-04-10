@@ -22,7 +22,7 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
 
-from ...utils import logger, retry, RateLimiter
+from utils import logger, retry, RateLimiter
 
 __all__ = [
     'AGVHardwareStatus',
