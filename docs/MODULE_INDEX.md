@@ -1,5 +1,6 @@
 # SuperModel 模块索引 / Module Index
-- **v2.33.0** (2026-04-10): 新增传感器偏置补偿模块(bias_compensation.py, 695行); 29项测试全通过; AGV五级规格表补充偏置补偿章节; 传感器+融合+偏置补偿 450项全部通过
+- **v2.42.0** (2026-04-10): 新增核心目标系统(src/core/: core_goals/safety_shield/value_judgment/self_preservation); 2327项测试全通过
+- **v2.43.0** (2026-04-10): 补充SPEC.md第20章AGV五级规格总表(整车/感知/控制/计算/电源/自主学习/接口7大子系统); 传感器+融合+控制全链路五级规格完善; 2327项测试全通过
 - **v2.32.0** (2026-04-10): 新增行为树模块(behavior_tree.py, 795行, 51项测试); Selector/Sequence/Parallel/Condition/Action/SubTree + 5个装饰器; 456项测试全通过
 - **v2.31.0** (2026-04-10): 新增传感器融合控制模块(sensor_fusion_control.py, 398行) + 34项测试; 统一IMU+力觉+触觉→控制闭环; sensor+fusion+fusion_ctrl 439项全部通过
 - **v2.30.0** (2026-04-10): 新增预测性维护模块(predictive_maintenance.py, 900行) + 45项测试; 电机轴承磨损/电池SOH/车轮打滑检测; sensor+fusion+pred_main 450项全部通过
@@ -10,7 +11,7 @@
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.33.0
+> **版本**: v2.43.0
 > **更新**: 2026-04-10
 > **项目**: SuperModel 超模态机器人具身智能大脑
 

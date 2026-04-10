@@ -1,7 +1,47 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 09:52 (v2.41.0)
+> Last Updated: 2026-04-10 11:01 (v2.43.0)
+
+---
+
+## v2.43.0 (2026-04-10 11:01) - AGV五级规格总表 + 文档完善
+
+### 本次更新
+
+1. **SPEC.md 第20章: AGV五级规格总表**
+   - 整车系统规格 (负载/速度/精度/防护等级)
+   - 感知子系统规格 (视觉/听觉/触觉/力觉/IMU/编码器)
+   - 控制系统规格 (控制周期/PID/轨迹规划/避障/安全等级/力控/MPC)
+   - 计算平台规格 (处理器/AI算力/CPU/内存/存储/通信/ROS版本)
+   - 电源系统规格 (电压/电池/续航/充电/功率)
+   - 自主学习子系统规格 (学习方法/世界模型/探索策略/收敛样本)
+   - 接口与扩展规格 (CAN/Ethernet/USB/GPIO/模拟输入/编码器)
+
+2. **文档版本更新**
+   - SPEC.md: v2.43.0, MODULE_INDEX.md: v2.43.0
+   - PROGRESS.md: v2.43.0
+
+### 测试结果
+
+```
+pytest tests/sensor_tests.py -q --tb=no
+============================== 332 passed, 2 warnings in 1.65s =================
+pytest tests/fusion_tests.py -q --tb=no
+============================== 73 passed in 1.79s ==============================
+```
+
+---
+
+## v2.42.0 (2026-04-10) - 核心目标系统 + 2327项测试全通过
+
+### 本次更新
+
+1. **核心目标系统** (`src/core/`)
+   - `core_goals.py`: P0-P5六层核心目标定义
+   - `safety_shield.py`: P0级安全护盾执行器
+   - `value_judgment.py`: P2/P3级价值判断伦理执行器
+   - `self_preservation.py`: P4级自我保存模块
 
 ---
 
