@@ -1,7 +1,61 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 08:19 (v2.38.0)
+> Last Updated: 2026-04-10 09:52 (v2.41.0)
+
+---
+
+## v2.41.0 (2026-04-10 09:52) - 技能调度器 + 30项测试 + SPEC.md更新 + 435项测试全通过
+
+### 本次更新
+
+1. **技能调度器** (`src/control/skill_dispatcher.py`, 360行)
+   - `SkillDispatcher`: 跨模态技能协调执行器，支持多技能并发调度
+   - 资源锁定机制: MOTOR / SENSOR_FORCE / SENSOR_TACTILE / SENSOR_IMU / POSITION / GRIPPER
+   - 优先级调度: LOW / NORMAL / HIGH / CRITICAL 四级优先级
+   - 冲突仲裁: 资源冲突自动检测与阻塞
+   - `SkillRequest` / `SkillResult` / `SkillDefinition` 数据类
+   - 技能工厂: `create_grasp_skill` / `create_navigate_skill` / `create_place_skill`
+   - AGV五级规格适配: S(1并发/30s超时) → XXL(6并发/5s超时)
+   - `AGV_SKILL_DISPATCHER_GRADES` 五级规格字典
+
+2. **技能调度器测试** (`tests/skill_dispatcher_tests.py`, 30项)
+   - `TestSkillDispatcherBasics`: 创建/注册/注销/重复注册
+   - `TestSkillDispatching`: 成功调度/异常/超时/执行时间
+   - `TestResourceLocking`: 锁定/冲突检测/释放
+   - `TestPriorityScheduling`: LOW/NORMAL/HIGH/CRITICAL
+   - `TestConcurrentLimit`: 各等级最大并发数强制执行
+   - `TestSkillStatus`: IDLE/RUNNING/COMPLETED/FAILED/CANCELLED
+   - `TestSkillDefinitions`: 抓取/导航/放置技能工厂
+   - `TestAGVGrades`: 五级规格完整性/递增性
+   - `TestStats`: 调度统计 (dispatched/completed/failed)
+   - **30项测试全部通过** ✅
+
+3. **SPEC.md文档更新** (`docs/SPEC.md`, 新增第19章)
+   - 技能调度器接口设计 (19.1-19.7)
+   - 核心数据类型 (SkillPriority/SkillStatus/ResourceType/SkillRequest/SkillResult)
+   - 接口方法表: register / dispatch / cancel / get_status / get_result
+   - AGV五级技能调度规格表
+   - 预定义技能工厂对照表
+   - 资源锁定机制说明
+   - 使用示例代码
+   - 版本历史更新至v2.41.0
+
+### 测试规模
+- 全量测试: **435项全部通过** ✅ (sensor: 332 + fusion: 73 + skill_dispatcher: 30)
+- 新增: `tests/skill_dispatcher_tests.py` 30项
+
+### 已完成模块清单 (v2.41.0)
+- ✅ 触觉传感器模块 (tactile.py): 电子皮肤阵列, 压力/温度/接近觉/滑移检测, AGV五级规格
+- ✅ 力觉传感器模块 (force.py): 六维力矩传感器, Wrench数据, 接触检测, 负载估计, AGV五级规格
+- ✅ IMU传感器模块 (imu.py): 惯性测量, 姿态解算, PoseEstimator, VirtualIMUSensor, AGV五级规格
+- ✅ 偏置补偿模块 (bias_compensation.py): 自适应零漂/温度补偿/IMU偏置追踪
+- ✅ 传感器融合控制 (sensor_fusion_control.py): 统一IMU+力觉+触觉→控制闭环
+- ✅ 传感器标定管理器 (calibration_manager.py): IMU/Force/Tactile多传感器统一标定
+- ✅ 技能调度器 (skill_dispatcher.py): 跨模态技能协调执行器, AGV五级规格
+- ✅ 控制模块: 24个子模块, AGV五级全覆盖
+- ✅ 仿真环境: embodied_sim + Gymnasium + PyBullet + MuJoCo
+- ✅ 测试用例: 435项全通过
 
 ---
 
