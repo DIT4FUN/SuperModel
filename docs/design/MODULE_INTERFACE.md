@@ -6400,3 +6400,494 @@ sequence = create_action_sequence("TaskSequence", [approach, grasp, retract])
 *文档版本: v2.64.0 | 补充日期: 2026-04-10*
 
 **2026-04-10 v2.64.0**: 新增第37节行为树具身任务规划模块，完整接口设计，包含节点类型、上下文、五级规格、应用示例和性能基准。
+
+
+---
+
+## 38. 增强具身仿真环境 (Embodied Simulation)
+
+### 38.1 概述
+增强具身仿真环境基于PyBullet，提供多模态传感器仿真、接触力仿真、动态物体交互、场景生成、任务评估等功能，支持单个AGV和多个AGV协同仿真，可用于离线验证算法和强化学习训练。
+
+### 38.2 EmbodiedSimEnv (单个AGV仿真环境)
+
+```python
+class EmbodiedSimEnv:
+    def __init__(self, gui: bool = False, gravity: Tuple[float, float, float] = (0, 0, -9.81))
+    def reset() -> None
+    """重置仿真环境"""
+    def load_agv(grade: str = "M", position: Tuple[float, float, float] = (0, 0, 0.15)) -> int
+    """加载AGV模型"""
+    def add_box(name: str, half_extents, position, color, mass: float = 0.0) -> int
+    """添加方块障碍物/目标物体"""
+    def add_warehouse_shelf(position, size) -> int
+    """添加货架"""
+    def set_goal(position: np.ndarray, radius: float = 0.3) -> None
+    """设置目标区域"""
+    def is_goal_reached() -> bool
+    """检查是否到达目标"""
+    def get_robot_position() -> np.ndarray
+    """获取机器人当前位置"""
+    def check_collision() -> bool
+    """检查机器人是否发生碰撞"""
+    def set_wheel_velocity(left_velocity: float, right_velocity: float) -> None
+    """设置左右轮速度 (rad/s)"""
+    def step(num_steps: int = 1) -> None
+    """执行仿真步"""
+    def start_task(task_id: str) -> TaskMetrics
+    """开始任务，重置指标"""
+    def finish_current_task(success: Optional[bool] = None) -> TaskMetrics
+    """结束当前任务，计算得分"""
+    def get_sensor_readings() -> Dict[str, Any]
+    """获取所有仿真传感器读数"""
+    def get_camera_image(width: int = 640, height: int = 480) -> Tuple[np.ndarray, np.ndarray]
+    """获取相机图像，用于视觉仿真"""
+    def close() -> None
+    """关闭环境"""
+```
+
+### 38.3 EmbodiedSensorSimulator (多模态传感器仿真)
+
+```python
+class EmbodiedSensorSimulator:
+    def __init__(client: int, agv_id: int, base_link: int = 0)
+    def setup_tactile(grid_size: Tuple[int, int] = (16, 16), attachment_link: int = -1) -> VirtualTactileSensor
+    """设置虚拟触觉传感器"""
+    def setup_force() -> VirtualForceSensor
+    """设置虚拟力传感器"""
+    def setup_imu() -> VirtualIMUSensor
+    """设置虚拟IMU"""
+    def get_contacts(body_a: int, link_a: int = -1) -> List[ContactPoint]
+    """获取接触点列表"""
+    def simulate_tactile(gripper_id: int, link_id: int) -> np.ndarray
+    """模拟触觉阵列读数"""
+    def simulate_force(joint_index: int) -> np.ndarray
+    """模拟六维力传感器读数"""
+    def simulate_imu() -> Tuple[np.ndarray, np.ndarray]
+    """模拟IMU读数"""
+    def get_estimated_pose() -> Optional[np.ndarray]
+    """获取姿态估计结果"""
+```
+
+### 38.4 WarehouseScene (仓库场景生成器)
+
+```python
+class WarehouseScene:
+    def __init__(env: EmbodiedSimEnv)
+    def generate() -> None
+    """生成标准仓库场景: 4行6列货架阵列 + 随机障碍物"""
+```
+
+### 38.5 MultiAGVEmbodiedSim (多AGV具身协同仿真)
+
+```python
+class MultiAGVEmbodiedSim:
+    def __init__(gui: bool = False)
+    def add_agv(name: str, grade: str, position: Tuple[float, float, float]) -> int
+    """添加一个AGV"""
+    def set_goal(agv_name: str, position: np.ndarray, radius: float = 0.3) -> None
+    """设置AGV目标"""
+    def check_collisions_between_agvs() -> List[Tuple[str, str]]
+    """检测AGV之间的碰撞"""
+    def step(num_steps: int = 1) -> None
+    """仿真步进"""
+    def close() -> None
+    """关闭环境"""
+```
+
+### 38.6 TaskMetrics (具身任务评估指标)
+
+```python
+@dataclass
+class TaskMetrics:
+    task_id: str
+    start_time: float
+    end_time: Optional[float] = None
+    success: bool = False
+    total_distance: float = 0.0
+    collisions: int = 0
+    min_obstacle_distance: float = float('inf')
+    completion_time: float = 0.0
+    energy_consumed: float = 0.0
+    path_smoothness: float = 0.0
+    force_regulation_error: float = 0.0
+
+    def finish(success: bool) -> None
+    """结束任务，计算完成时间"""
+    def get_score() -> float
+    """计算综合得分 [0-100]"""
+```
+
+### 38.7 ContactPoint (接触点数据结构)
+
+```python
+@dataclass
+class ContactPoint:
+    position: np.ndarray
+    normal: np.ndarray
+    force: np.ndarray
+    distance: float
+    body_a: int
+    body_b: int
+    link_a: int = -1
+    link_b: int = -1
+```
+
+### 38.8 工厂方法
+
+```python
+# 创建具身仿真环境
+def create_embodied_sim(grade: str = "M", scene_type: str = "empty", gui: bool = False) -> EmbodiedSimEnv
+
+# 创建空环境
+env = create_embodied_sim(grade="M", scene_type="empty", gui=False)
+
+# 创建仓库场景
+warehouse = WarehouseScene(env)
+warehouse.generate()
+```
+
+### 38.9 AGV五级仿真规格
+
+| 功能 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| 视觉仿真 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 触觉仿真 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 力觉仿真 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| IMU仿真 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 多AGV协同 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 相机渲染 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 动态障碍物 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 随机场景生成 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| 任务评估指标 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 接触力计算 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 碰撞检测 | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+### 38.10 使用示例
+
+```python
+from simulation.embodied_sim import (
+    EmbodiedSimEnv, EmbodiedSensorSimulator, WarehouseScene, TaskMetrics, create_embodied_sim
+)
+
+# 创建M级AGV导航场景
+env = create_embodied_sim(grade="M", scene_type="navigation", gui=False)
+
+# 开始任务
+metrics = env.start_task("navigation_test")
+
+# 仿真循环
+while not env.is_goal_reached() and metrics.completion_time < 60.0:
+    # 获取传感器读数
+    readings = env.get_sensor_readings()
+    
+    # 计算控制指令
+    # ... 控制器计算 ...
+    
+    # 执行
+    env.step()
+
+# 结束任务
+result = env.finish_current_task()
+print(f"Task success: {result.success}, score: {result.get_score():.1f}")
+
+# 关闭
+env.close()
+```
+
+*文档版本: v2.64.0 | 补充日期: 2026-04-10*
+
+**2026-04-10 v2.64.0**: 新增第38节增强具身仿真环境，完整接口设计，包含 EmbodiedSimEnv、EmbodiedSensorSimulator、WarehouseScene、MultiAGVEmbodiedSim、TaskMetrics，满足算法离线验证需求。
+
+
+---
+
+## 39. 真实AGV机器人硬件接口 (Real AGV Hardware Interface)
+
+### 39.1 概述
+真实AGV机器人硬件接口模块整合所有硬件驱动，提供统一API，支持CAN总线通信 (ZLAC8015D驱动器)、镭神N10P激光雷达、ETT10A-PW IMU、触觉/力觉传感器桥接，内置硬件监控和安全保障机制，支持AGV五级规格自动适配。
+
+### 39.2 AGV硬件规格等级
+
+```python
+# AGV五级硬件规格表
+AGV_HARDWARE_SPECS = {
+    'S': {
+        'grade': 'S',
+        'load_kg': 30,
+        'wheel_config': '2-wheel-diff',
+        'motor_type': 'stepper_57',
+        'motor_power_w': 50 * 2,
+        'encoder_ppr': 1000,
+        'max_speed_mps': 1.0,
+        'battery_v': 24,
+        'battery_ah': 10,
+        'lidar': 'none',
+        'has_imu': True,
+        'has_tactile': False,
+        'has_force': False,
+        'can_bitrate': 250000,
+    },
+    'M': {
+        'grade': 'M',
+        'load_kg': 100,
+        'wheel_config': '2-wheel-diff',
+        'motor_type': 'hub_5.5inch',
+        'motor_power_w': 150 * 2,
+        'encoder_ppr': 1024,
+        'max_speed_mps': 1.5,
+        'battery_v': 48,
+        'battery_ah': 20,
+        'lidar': '360_25m',  # 镭神N10P
+        'has_imu': True,
+        'has_tactile': True,
+        'has_force': True,
+        'can_bitrate': 500000,
+    },
+    'L': {
+        'grade': 'L',
+        'load_kg': 300,
+        'wheel_config': '4-wheel-diff',
+        'motor_type': 'hub_5.5inch',
+        'motor_power_w': 150 * 4,
+        'encoder_ppr': 1024,
+        'max_speed_mps': 1.5,
+        'battery_v': 48,
+        'battery_ah': 35,
+        'lidar': '360_25m',
+        'has_imu': True,
+        'has_tactile': True,
+        'has_force': True,
+        'can_bitrate': 500000,
+    },
+    'XL': {
+        'grade': 'XL',
+        'load_kg': 600,
+        'wheel_config': '4-wheel-diff',
+        'motor_type': 'hub_6.5inch',
+        'motor_power_w': 300 * 4,
+        'encoder_ppr': 2048,
+        'max_speed_mps': 1.2,
+        'battery_v': 48,
+        'battery_ah': 50,
+        'lidar': '360_40m',
+        'has_imu': True,
+        'has_tactile': True,
+        'has_force': True,
+        'can_bitrate': 1000000,
+    },
+    'XXL': {
+        'grade': 'XXL',
+        'load_kg': 1200,
+        'wheel_config': '4-wheel-diff',
+        'motor_type': 'hub_7.5inch',
+        'motor_power_w': 500 * 4,
+        'encoder_ppr': 4096,
+        'max_speed_mps': 1.0,
+        'battery_v': 72,
+        'battery_ah': 60,
+        'lidar': 'double_360_40m',
+        'has_imu': True,
+        'has_tactile': True,
+        'has_force': True,
+        'can_bitrate': 1000000,
+    },
+}
+```
+
+### 39.3 RealAGVController (真实AGV总控制器)
+
+```python
+class RealAGVController:
+    def __init__(grade: str = "M", can_interface: str = "can0")
+    def connect_all() -> bool
+    """连接所有硬件"""
+    def disconnect_all() -> None
+    """断开所有连接"""
+    def set_wheel_velocities(velocities: List[float]) -> bool
+    """设置所有轮子速度"""
+    def emergency_stop() -> None
+    """紧急停止"""
+    def release_emergency_stop() -> bool
+    """释放紧急停止"""
+    def get_current_state() -> Dict[str, Any]
+    """获取当前完整状态"""
+    def get_spec() -> Dict[str, Any]
+    """获取硬件规格"""
+```
+
+### 39.4 CANZAC8015DDriver (中菱 ZLAC8015D 驱动器)
+
+```python
+class CANZAC8015DDriver(RealAGVInterface):
+    """
+    中菱 ZLAC8015D 双路轮毂伺服驱动器 CAN总线接口
+    支持一拖二/一拖四，CANopen协议
+    """
+    def __init__(can_interface: str = "can0", node_ids: Optional[List[int]] = None, bitrate: int = 500000)
+    def connect() -> bool
+    """连接CAN总线并初始化驱动器"""
+    def disconnect() -> None
+    """断开连接"""
+    def set_velocity(motor_id: int, velocity_rad_s: float) -> bool
+    """设置电机速度 (rad/s)"""
+    def set_wheel_velocities(velocities: List[float]) -> bool
+    """设置所有轮子速度"""
+    def emergency_stop() -> None
+    """紧急停止"""
+    def release_emergency_stop() -> bool
+    """释放紧急停止"""
+    def get_motor_states() -> List[MotorState]
+    """获取所有电机状态"""
+    def get_status() -> AGVHardwareStatus
+    """获取当前状态"""
+```
+
+### 39.5 LidarN10P (镭神 N10P 激光雷达)
+
+```python
+class LidarN10P(RealAGVInterface):
+    """镭神 N10P 360° 激光雷达，25米测距"""
+    def __init__(port: str = "/dev/ttyUSB0", baudrate: int = 115200)
+    def connect() -> bool
+    def disconnect() -> None
+    def get_last_scan() -> Optional[LidarScan]
+    """获取最新扫描数据"""
+    def set_callback(callback: Callable[[LidarScan], None]) -> None
+    """设置扫描回调"""
+```
+
+### 39.6 IMUETT10APW (亿天 ETT10A-PW 六轴IMU)
+
+```python
+class IMUETT10APW(RealAGVInterface):
+    """亿天 ETT10A-PW 六轴IMU，IP67防水，内置姿态解算"""
+    def __init__(port: str = "/dev/ttyUSB1", baudrate: int = 115200)
+    def connect() -> bool
+    def disconnect() -> None
+    def get_last_data() -> Optional[IMUData]
+    """获取最新IMU数据"""
+    def set_callback(callback: Callable[[IMUData], None]) -> None
+    """设置数据回调"""
+```
+
+### 39.7 AGVTactileBridge / AGVForceBridge (触觉/力觉桥接)
+
+```python
+class AGVTactileBridge(RealAGVInterface):
+    """触觉传感器硬件桥接，连接电子皮肤触觉阵列到主控制器"""
+    def __init__(can_node_id: int = 0x05)
+    def connect() -> bool
+    def disconnect() -> None
+    def get_tactile_array() -> Optional[np.ndarray]
+    """获取触觉阵列数据 (rows x cols)"""
+
+class AGVForceBridge(RealAGVInterface):
+    """六维力矩传感器硬件桥接"""
+    def __init__(can_node_id: int = 0x06)
+    def connect() -> bool
+    def disconnect() -> None
+    def get_wrench() -> Optional[np.ndarray]
+    """获取当前力旋量 [fx, fy, fz, mx, my, mz]"""
+```
+
+### 39.8 硬件数据结构
+
+```python
+@dataclass
+class MotorState:
+    motor_id: int
+    enabled: bool = False
+    current_rpm: float = 0.0
+    current_current: float = 0.0
+    current_position: int = 0  # 编码器位置
+    temperature: float = 25.0
+    voltage: float = 24.0
+    error_code: int = 0
+
+@dataclass
+class IMUData:
+    accelerometer: np.ndarray = field(default_factory=lambda: np.zeros(3))  # m/s^2
+    gyroscope: np.ndarray = field(default_factory=lambda: np.zeros(3))  # rad/s
+    magnetometer: Optional[np.ndarray] = None  # uT
+    quaternion: Optional[np.ndarray] = None  # wxyz
+    temperature: float = 25.0
+    timestamp: float = 0.0
+
+@dataclass
+class LidarScan:
+    ranges: np.ndarray  # 距离值 (米)
+    angles: np.ndarray  # 角度 (弧度)
+    intensities: Optional[np.ndarray] = None
+    timestamp: float = 0.0
+```
+
+### 39.9 HardwareMonitor (硬件监控器)
+
+```python
+class HardwareMonitor:
+    """硬件监控器 - 定期监控所有硬件的状态"""
+    def __init__(update_rate_hz: float = 10.0)
+    def add_device(device: RealAGVInterface, name: str) -> None
+    """添加要监控的设备"""
+    def start() -> None
+    """启动监控"""
+    def stop() -> None
+    """停止监控"""
+    def get_all_status() -> Dict[str, str]
+    """获取所有设备状态"""
+```
+
+### 39.10 使用示例
+
+```python
+from hardware.real_agv_interface import RealAGVController, AGV_HARDWARE_SPECS
+
+# 创建M级AGV控制器
+controller = RealAGVController(grade="M", can_interface="can0")
+
+# 连接所有硬件
+if controller.connect_all():
+    print("All hardware connected")
+    
+    # 获取当前状态
+    state = controller.get_current_state()
+    print(f"Status: {state['status']}")
+    print(f"Battery: {state['battery']:.1%}")
+    
+    # 设置速度
+    velocities = [1.0, 1.0]  # 左右轮 rad/s
+    controller.set_wheel_velocities(velocities)
+    
+    # ... 主循环 ...
+    
+    # 断开连接
+    controller.disconnect_all()
+else:
+    print("Hardware connection failed")
+```
+
+### 39.11 AGV五级硬件接口规格表
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| 轮子数 | 2 | 2 | 4 | 4 | 4 |
+| CAN波特率 | 250kbps | 500kbps | 500kbps | 1Mbps | 1Mbps |
+| 电机功率 | 100W | 300W | 600W | 1200W | 2000W |
+| 电池容量 | 24V 10Ah | 48V 20Ah | 48V 35Ah | 48V 50Ah | 72V 60Ah |
+| 激光雷达 | - | 360° 25m | 360° 25m | 360° 40m | 双360° 40m |
+| 触觉传感器 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| 力传感器 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| IMU | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 硬件监控 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 紧急停止 | ✓ | ✓ | ✓ | ✓ | ✓ |
+
+*文档版本: v2.64.0 | 补充日期: 2026-04-10*
+
+**2026-04-10 v2.64.0**: 新增第39节真实AGV机器人硬件接口，包含 RealAGVController、CANZAC8015DDriver、LidarN10P、IMUETT10APW、AGVTactileBridge、AGVForceBridge、HardwareMonitor，完整整合所有硬件驱动，支持AGV五级规格自动适配。
+
+
+---
+
+*本文档最后编辑: 2026-04-10 v2.64.0*
+*新增三个章节 (37-39): 行为树具身任务规划 / 增强具身仿真环境 / 真实AGV硬件接口*

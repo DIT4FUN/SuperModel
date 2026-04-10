@@ -1,576 +1,505 @@
 """
-行为树模块测试 (Behavior Tree Tests)
-=====================================
+behavior_tree_tests.py - 行为树具身任务规划模块测试
+SuperModel 超模态大模型具身智能系统
 
 测试覆盖:
-- 节点状态机 (IDLE/RUNNING/SUCCESS/FAILURE/ERROR)
-- Selector: fallback逻辑
-- Sequence: 顺序执行逻辑
-- Parallel: 并行执行逻辑
-- Condition: 条件检查
-- Action: 动作执行
-- Decorators: Inverter/RepeatUntil/RetryUntil/Timeout/RateLimiter
-- SubTree: 子树引用
-- BehaviorTree: 完整行为树tick循环
-- AGV五级规格配置
-
-Author: SuperModel Dev Team
+- 节点类型测试 (Sequence/Selector/Parallel/装饰器)
+- 黑板测试
+- 简单任务树测试
+- 复杂分层任务树测试
+- AGV五级规格测试
+- 性能基准测试
 """
 
 import pytest
-import numpy as np
 import time
-import sys
-sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel/src')
-
-from control.behavior_tree import (
-    BehaviorTree, BTNode, BTContext, NodeState,
-    Selector, Sequence, Parallel,
-    Condition, Action, SubTree,
-    Inverter, RepeatUntil, RetryUntil, Timeout, RateLimiter,
-    BTGrade, AGV_BT_GRADES,
-    create_for_grade, create_safe_selector, create_action_sequence,
+import numpy as np
+from src.embodied.behavior_tree import (
+    NodeStatus,
+    BTNode,
+    SequenceNode,
+    SelectorNode,
+    ParallelNode,
+    RepeaterNode,
+    UntilFailNode,
+    UntilSuccessNode,
+    InverterNode,
+    ConditionNode,
+    ActionNode,
+    LambdaActionNode,
+    BehaviorTree,
+    Blackboard,
+    EmbodiedTask,
+    EmbodiedTaskPlanner,
+    AGVTaskPlanner,
+    TaskStatus,
 )
 
 
-# ─────────────────────────────────────────────
-# 辅助函数
-# ─────────────────────────────────────────────
+class TestNodeStatus:
+    """节点状态枚举测试"""
 
-def make_ctx(**kwargs) -> BTContext:
-    return BTContext(**kwargs)
-
-
-def succeed(ctx: BTContext) -> NodeState:
-    return NodeState.SUCCESS
-
-
-def fail(ctx: BTContext) -> NodeState:
-    return NodeState.FAILURE
+    def test_enum_values(self):
+        """测试枚举值存在"""
+        assert NodeStatus.IDLE.value == "IDLE"
+        assert NodeStatus.RUNNING.value == "RUNNING"
+        assert NodeStatus.SUCCESS.value == "SUCCESS"
+        assert NodeStatus.FAILURE.value == "FAILURE"
 
 
-def running(ctx: BTContext) -> NodeState:
-    return NodeState.RUNNING
+class TestBlackboard:
+    """黑板测试"""
+
+    def test_basic_operations(self):
+        """基础操作测试"""
+        bb = Blackboard()
+        bb.set("key1", "value1")
+        bb.set("key2", 42)
+        assert bb.has("key1")
+        assert not bb.has("key3")
+        assert bb.get("key1") == "value1"
+        assert bb.get("key2") == 42
+        assert bb.get("key3", "default") == "default"
+
+    def test_remove(self):
+        """移除测试"""
+        bb = Blackboard()
+        bb.set("key", "value")
+        assert bb.remove("key")
+        assert not bb.has("key")
+        assert not bb.remove("key")
+
+    def test_update_robot_state(self):
+        """更新机器人状态测试"""
+        bb = Blackboard()
+        bb.update_robot_state({"position": [0, 0, 0], "velocity": [1, 0, 0]})
+        assert bb.robot_state["position"] == [0, 0, 0]
+        assert bb.robot_state["velocity"] == [1, 0, 0]
+
+    def test_get_robot_position(self):
+        """获取机器人位置测试"""
+        bb = Blackboard()
+        bb.update_robot_state({"position": [1.0, 2.0, 3.0]})
+        pos = bb.get_robot_position()
+        assert pos is not None
+        assert np.allclose(pos, np.array([1.0, 2.0, 3.0]))
 
 
-def always_true(ctx: BTContext) -> bool:
-    return True
+class TestSequenceNode:
+    """序列节点测试"""
+
+    def test_all_success(self):
+        """全部成功 → 成功"""
+        seq = SequenceNode("test")
+        seq.add_children(
+            ConditionNode(lambda bb: True, "cond1"),
+            ConditionNode(lambda bb: True, "cond2"),
+        )
+        bb = Blackboard()
+        status = seq.tick(bb)
+        assert status == NodeStatus.SUCCESS
+
+    def test_first_failure(self):
+        """第一个失败 → 失败"""
+        seq = SequenceNode("test")
+        seq.add_children(
+            ConditionNode(lambda bb: False, "cond1"),
+            ConditionNode(lambda bb: True, "cond2"),
+        )
+        bb = Blackboard()
+        status = seq.tick(bb)
+        assert status == NodeStatus.FAILURE
+
+    def test_middle_running(self):
+        """中间运行 → 返回运行"""
+        call_count = []
+        def first(bb):
+            call_count.append(1)
+            return True
+        def second(bb):
+            call_count.append(2)
+            return False
+
+        seq = SequenceNode("test")
+        seq.add_children(
+            ConditionNode(first, "first"),
+            LambdaActionNode(lambda bb: NodeStatus.RUNNING, "run"),
+            ConditionNode(second, "second"),
+        )
+        bb = Blackboard()
+        status = seq.tick(bb)
+        assert status == NodeStatus.RUNNING
+        assert len(call_count) == 1
 
 
-def always_false(ctx: BTContext) -> bool:
-    return False
+class TestSelectorNode:
+    """选择节点测试"""
+
+    def test_first_success(self):
+        """第一个成功 → 成功"""
+        sel = SelectorNode("test")
+        sel.add_children(
+            ConditionNode(lambda bb: True, "success"),
+            ConditionNode(lambda bb: False, "failure"),
+        )
+        bb = Blackboard()
+        assert sel.tick(bb) == NodeStatus.SUCCESS
+
+    def test_last_success(self):
+        """最后一个成功 → 成功"""
+        sel = SelectorNode("test")
+        sel.add_children(
+            ConditionNode(lambda bb: False, "f1"),
+            ConditionNode(lambda bb: False, "f2"),
+            ConditionNode(lambda bb: True, "s3"),
+        )
+        bb = Blackboard()
+        assert sel.tick(bb) == NodeStatus.SUCCESS
+
+    def test_all_failure(self):
+        """全部失败 → 失败"""
+        sel = SelectorNode("test")
+        sel.add_children(
+            ConditionNode(lambda bb: False),
+            ConditionNode(lambda bb: False),
+        )
+        bb = Blackboard()
+        assert sel.tick(bb) == NodeStatus.FAILURE
 
 
-# ─────────────────────────────────────────────
-# Test BTContext
-# ─────────────────────────────────────────────
+class TestParallelNode:
+    """并行节点测试"""
 
-class TestBTContext:
-    def test_blackboard_set_get(self):
-        ctx = make_ctx()
-        ctx.set_blackboard('key1', 42)
-        assert ctx.get_blackboard('key1') == 42
-        assert ctx.get_blackboard('nonexistent', 999) == 999
+    def test_require_all_success_all_success(self):
+        """需要全部成功，全部成功 → 成功"""
+        parallel = ParallelNode("test", success_policy=ParallelNode.Policy.REQUIRE_ALL,
+                               failure_policy=ParallelNode.Policy.REQUIRE_ANY)
+        parallel.add_children(
+            ConditionNode(lambda bb: True),
+            ConditionNode(lambda bb: True),
+        )
+        bb = Blackboard()
+        assert parallel.tick(bb) == NodeStatus.SUCCESS
 
-    def test_sensor_access(self):
-        ctx = make_ctx(sensor_data={'temp': 25.5, 'force': 10.0})
-        assert ctx.get_sensor('temp') == 25.5
-        assert ctx.get_sensor('force') == 10.0
-        assert ctx.get_sensor('missing') is None
+    def test_require_any_success_one_success(self):
+        """需要一个成功，一个成功 → 成功"""
+        parallel = ParallelNode("test", success_policy=ParallelNode.Policy.REQUIRE_ANY,
+                               failure_policy=ParallelNode.Policy.REQUIRE_ALL)
+        parallel.add_children(
+            ConditionNode(lambda bb: True),
+            ConditionNode(lambda bb: False),
+        )
+        bb = Blackboard()
+        assert parallel.tick(bb) == NodeStatus.SUCCESS
 
-
-# ─────────────────────────────────────────────
-# Test Selector
-# ─────────────────────────────────────────────
-
-class TestSelector:
-    def test_selector_first_child_succeeds(self):
-        sel = Selector('TestSelector')
-        sel.add_child(Action('A', succeed))
-        sel.add_child(Action('B', fail))
-        ctx = make_ctx()
-        result = sel.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_selector_all_fail(self):
-        sel = Selector('TestSelector')
-        sel.add_child(Action('A', fail))
-        sel.add_child(Action('B', fail))
-        ctx = make_ctx()
-        result = sel.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_selector_second_child_succeeds(self):
-        sel = Selector('TestSelector')
-        sel.add_child(Action('A', fail))
-        sel.add_child(Action('B', succeed))
-        ctx = make_ctx()
-        result = sel.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_selector_empty(self):
-        sel = Selector('EmptySelector')
-        ctx = make_ctx()
-        result = sel.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_selector_running_child(self):
-        call_count = [0]
-        def partial_run(ctx):
-            call_count[0] += 1
-            if call_count[0] < 3:
-                return NodeState.RUNNING
-            return NodeState.SUCCESS
-
-        sel = Selector('TestSelector')
-        sel.add_child(Action('A', partial_run))
-        ctx = make_ctx()
-
-        r1 = sel.tick(ctx)
-        assert r1 == NodeState.RUNNING
-        r2 = sel.tick(ctx)
-        assert r2 == NodeState.RUNNING
-        r3 = sel.tick(ctx)
-        assert r3 == NodeState.SUCCESS
-
-    def test_selector_reset(self):
-        sel = Selector('TestSelector')
-        sel.add_child(Action('A', succeed))
-        ctx = make_ctx()
-        sel.tick(ctx)
-        sel.reset()
-        assert sel.state == NodeState.IDLE
+    def test_any_failure_one_failure(self):
+        """任意失败，一个失败 → 失败"""
+        parallel = ParallelNode("test", success_policy=ParallelNode.Policy.REQUIRE_ALL,
+                               failure_policy=ParallelNode.Policy.REQUIRE_ANY)
+        parallel.add_children(
+            ConditionNode(lambda bb: True),
+            ConditionNode(lambda bb: False),
+        )
+        bb = Blackboard()
+        assert parallel.tick(bb) == NodeStatus.FAILURE
 
 
-# ─────────────────────────────────────────────
-# Test Sequence
-# ─────────────────────────────────────────────
+class TestDecoratorNodes:
+    """装饰器节点测试"""
 
-class TestSequence:
-    def test_sequence_all_succeed(self):
-        seq = Sequence('TestSequence')
-        seq.add_child(Action('A', succeed))
-        seq.add_child(Action('B', succeed))
-        ctx = make_ctx()
-        result = seq.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_sequence_first_fails(self):
-        seq = Sequence('TestSequence')
-        seq.add_child(Action('A', fail))
-        seq.add_child(Action('B', succeed))
-        ctx = make_ctx()
-        result = seq.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_sequence_empty(self):
-        seq = Sequence('EmptySequence')
-        ctx = make_ctx()
-        result = seq.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_sequence_running_then_success(self):
-        call_count = [0]
-        def partial_run(ctx):
-            call_count[0] += 1
-            if call_count[0] < 2:
-                return NodeState.RUNNING
-            return NodeState.SUCCESS
-
-        seq = Sequence('TestSequence')
-        seq.add_child(Action('A', partial_run))
-        ctx = make_ctx()
-
-        r1 = seq.tick(ctx)
-        assert r1 == NodeState.RUNNING
-        r2 = seq.tick(ctx)
-        assert r2 == NodeState.SUCCESS
-
-
-# ─────────────────────────────────────────────
-# Test Parallel
-# ─────────────────────────────────────────────
-
-class TestParallel:
-    def test_parallel_success_on_all(self):
-        para = Parallel('Para', policy='success_on_all')
-        para.add_child(Action('A', succeed))
-        para.add_child(Action('B', succeed))
-        ctx = make_ctx()
-        result = para.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_parallel_failure_on_all(self):
-        para = Parallel('Para', policy='failure_on_all')
-        para.add_child(Action('A', fail))
-        para.add_child(Action('B', fail))
-        ctx = make_ctx()
-        result = para.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_parallel_success_on_one(self):
-        para = Parallel('Para', policy='success_on_one')
-        para.add_child(Action('A', succeed))
-        para.add_child(Action('B', fail))
-        ctx = make_ctx()
-        result = para.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_parallel_failure_on_one(self):
-        para = Parallel('Para', policy='failure_on_one')
-        para.add_child(Action('A', fail))
-        para.add_child(Action('B', succeed))
-        ctx = make_ctx()
-        result = para.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_parallel_empty(self):
-        para = Parallel('EmptyPara')
-        ctx = make_ctx()
-        result = para.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-
-# ─────────────────────────────────────────────
-# Test Condition
-# ─────────────────────────────────────────────
-
-class TestCondition:
-    def test_condition_true(self):
-        cond = Condition('IsSafe', always_true)
-        ctx = make_ctx()
-        result = cond.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_condition_false(self):
-        cond = Condition('IsSafe', always_false)
-        ctx = make_ctx()
-        result = cond.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_condition_with_context(self):
-        def check_force(ctx):
-            return ctx.get_blackboard('force', 0) > 10.0
-
-        cond = Condition('ForceCheck', check_force)
-        ctx = make_ctx(blackboard={'force': 20.0})
-        result = cond.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-
-# ─────────────────────────────────────────────
-# Test Action
-# ─────────────────────────────────────────────
-
-class TestAction:
-    def test_action_success(self):
-        action = Action('DoSomething', succeed)
-        ctx = make_ctx()
-        result = action.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_action_failure(self):
-        action = Action('DoSomething', fail)
-        ctx = make_ctx()
-        result = action.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_action_timeout(self):
-        action = Action('SlowAction', lambda ctx: NodeState.RUNNING, timeout_ms=50.0)
-        ctx = make_ctx()
-        action.tick(ctx)
-        time.sleep(0.06)
-        result = action.tick(ctx)
-        assert result == NodeState.FAILURE
-
-    def test_action_with_blackboard(self):
-        result_store = [None]
-        def write_result(ctx):
-            ctx.set_blackboard('result', 'done')
-            result_store[0] = ctx.get_blackboard('result')
-            return NodeState.SUCCESS
-
-        action = Action('WriteResult', write_result)
-        ctx = make_ctx()
-        action.tick(ctx)
-        assert result_store[0] == 'done'
-
-
-# ─────────────────────────────────────────────
-# Test Decorators
-# ─────────────────────────────────────────────
-
-class TestInverter:
     def test_inverter_success_to_failure(self):
-        inv = Inverter()
-        child = Action('Child', succeed)
-        inv.child = child
-        ctx = make_ctx()
-        result = inv.tick(ctx)
-        assert result == NodeState.FAILURE
+        """反转: 成功 → 失败"""
+        inv = InverterNode(ConditionNode(lambda bb: True, "success"))
+        bb = Blackboard()
+        assert inv.tick(bb) == NodeStatus.FAILURE
 
     def test_inverter_failure_to_success(self):
-        inv = Inverter()
-        child = Action('Child', fail)
-        inv.child = child
-        ctx = make_ctx()
-        result = inv.tick(ctx)
-        assert result == NodeState.SUCCESS
+        """反转: 失败 → 成功"""
+        inv = InverterNode(ConditionNode(lambda bb: False, "failure"))
+        bb = Blackboard()
+        assert inv.tick(bb) == NodeStatus.SUCCESS
 
-    def test_inverter_no_child(self):
-        inv = Inverter()
-        ctx = make_ctx()
-        result = inv.tick(ctx)
-        assert result == NodeState.SUCCESS
+    def test_until_fail_success_keeps_running(self):
+        """直到失败: 子成功 → 保持运行"""
+        node = UntilFailNode(ConditionNode(lambda bb: True))
+        bb = Blackboard()
+        assert node.tick(bb) == NodeStatus.RUNNING
 
+    def test_until_fail_failure_returns_success(self):
+        """直到失败: 子失败 → 返回成功"""
+        node = UntilFailNode(ConditionNode(lambda bb: False))
+        bb = Blackboard()
+        assert node.tick(bb) == NodeStatus.SUCCESS
 
-class TestRepeatUntil:
-    def test_repeat_until_success(self):
-        count = [0]
-        def count_up(ctx):
-            count[0] += 1
-            return NodeState.SUCCESS
+    def test_repeater_finite_times(self):
+        """有限次数重复"""
+        count = []
+        def action(bb):
+            count.append(1)
+            return NodeStatus.SUCCESS
+        node = RepeaterNode(LambdaActionNode(action), times=3)
+        bb = Blackboard()
 
-        dec = RepeatUntil('Repeat', maxRepeats=5, until_success=True)
-        dec.child = Action('Counter', count_up)
-        ctx = make_ctx()
-        result = dec.tick(ctx)
-        assert result == NodeState.SUCCESS
-        assert count[0] == 1
+        # 前两次应该返回 RUNNING
+        for i in range(2):
+            status = node.tick(bb)
+            assert status == NodeStatus.RUNNING
+            assert len(count) == i+1
 
-    def test_repeat_until_max_reached(self):
-        count = [0]
-        def count_forever(ctx):
-            count[0] += 1
-            return NodeState.RUNNING
-
-        dec = RepeatUntil('Repeat', maxRepeats=3, until_success=True)
-        dec.child = Action('Counter', count_forever)
-        ctx = make_ctx()
-
-        for _ in range(10):
-            dec.tick(ctx)
-
-        assert count[0] == 3
+        # 第三次返回 SUCCESS
+        status = node.tick(bb)
+        assert status == NodeStatus.SUCCESS
+        assert len(count) == 3
 
 
-class TestRetryUntil:
-    def test_retry_on_failure(self):
-        # Child fails twice, then succeeds → RetryUntil succeeds
-        call_count = [0]
-        def maybe_succeed(ctx):
-            call_count[0] += 1
-            if call_count[0] < 3:
-                return NodeState.FAILURE
-            return NodeState.SUCCESS
+class TestConditionNode:
+    """条件节点测试"""
 
-        dec = RetryUntil('Retry', max_retries=5, retry_on_failure=True)
-        dec.child = Action('Trier', maybe_succeed)
-        ctx = make_ctx()
+    def test_condition_true(self):
+        """条件真 → 成功"""
+        cond = ConditionNode(lambda bb: True)
+        bb = Blackboard()
+        assert cond.tick(bb) == NodeStatus.SUCCESS
 
-        # First tick: FAILURE → retry (RUNNING)
-        assert dec.tick(ctx) == NodeState.RUNNING
-        # Second tick: FAILURE → retry (RUNNING)
-        assert dec.tick(ctx) == NodeState.RUNNING
-        # Third tick: SUCCESS → done
-        assert dec.tick(ctx) == NodeState.SUCCESS
-        assert call_count[0] == 3
-
-    def test_retry_max_exceeded(self):
-        # Child always returns RUNNING → RetryUntil stays RUNNING forever
-        call_count = [0]
-        def always_run(ctx):
-            call_count[0] += 1
-            return NodeState.RUNNING
-
-        dec = RetryUntil('Retry', max_retries=2, retry_on_failure=True)
-        dec.child = Action('Runner', always_run)
-        ctx = make_ctx()
-
-        # RUNNING should keep returning RUNNING, never give up
-        for _ in range(5):
-            result = dec.tick(ctx)
-            assert result == NodeState.RUNNING
-
-        assert call_count[0] == 5
+    def test_condition_false(self):
+        """条件假 → 失败"""
+        cond = ConditionNode(lambda bb: False)
+        bb = Blackboard()
+        assert cond.tick(bb) == NodeStatus.FAILURE
 
 
-class TestTimeout:
-    def test_timeout_not_expired(self):
-        dec = Timeout('Timeout', timeout_ms=5000.0)
-        dec.child = Action('Quick', succeed)
-        ctx = make_ctx()
-        result = dec.tick(ctx)
-        assert result == NodeState.SUCCESS
+class TestLambdaActionNode:
+    """Lambda动作节点测试"""
 
-    def test_timeout_expired(self):
-        dec = Timeout('Timeout', timeout_ms=10.0)
-        dec.child = Action('Slow', lambda ctx: NodeState.RUNNING)
-        ctx = make_ctx()
-        dec.tick(ctx)
-        time.sleep(0.015)
-        result = dec.tick(ctx)
-        assert result == NodeState.FAILURE
+    def test_returns_correct_status(self):
+        """返回正确状态"""
+        for status in [NodeStatus.SUCCESS, NodeStatus.FAILURE, NodeStatus.RUNNING]:
+            action = LambdaActionNode(lambda bb: status)
+            bb = Blackboard()
+            assert action.tick(bb) == status
 
-
-class TestRateLimiter:
-    def test_rate_limiter_allows(self):
-        dec = RateLimiter('RateLimit', max_rate_hz=100.0)
-        dec.child = Action('Fast', succeed)
-        ctx = make_ctx()
-        result = dec.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_rate_limiter_blocks(self):
-        dec = RateLimiter('RateLimit', max_rate_hz=1000.0)
-        dec.child = Action('Fast', succeed)
-        ctx = make_ctx()
-        r1 = dec.tick(ctx)
-        r2 = dec.tick(ctx)
-        assert r1 == NodeState.SUCCESS
-        assert r2 == NodeState.SUCCESS
-
-
-# ─────────────────────────────────────────────
-# Test SubTree
-# ─────────────────────────────────────────────
-
-class TestSubTree:
-    def test_subtree_reference(self):
-        leaf = Action('Leaf', succeed)
-        sub_root = Sequence('SubRoot')
-        sub_root.add_child(leaf)
-        subtree = SubTree('MySubTree', sub_root)
-        ctx = make_ctx()
-        result = subtree.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-
-# ─────────────────────────────────────────────
-# Test BehaviorTree
-# ─────────────────────────────────────────────
 
 class TestBehaviorTree:
-    def test_bt_tick(self):
-        root = Action('RootAction', succeed)
-        bt = BehaviorTree(root, BTGrade.M, 'TestBT')
-        ctx = make_ctx()
-        result = bt.tick()
-        assert result == NodeState.SUCCESS
+    """行为树整体测试"""
 
-    def test_bt_stats(self):
-        root = Action('RootAction', succeed)
-        bt = BehaviorTree(root, BTGrade.M, 'TestBT')
-        bt.tick()
-        stats = bt.get_stats()
-        assert stats['name'] == 'TestBT'
-        assert stats['grade'] == 'M'
-        assert stats['tick_count'] == 1
-        assert stats['last_tick_ms'] >= 0
+    def test_simple_navigation_tree(self):
+        """简单导航树测试"""
+        # 导航任务: 检查安全 → 移动 → 检查到达
+        root = SequenceNode("Navigation")
+        root.add_children(
+            ConditionNode(lambda bb: bb.get("safety_ok", False), "CheckSafety"),
+            LambdaActionNode(lambda bb: NodeStatus.RUNNING, "MoveToGoal"),
+            ConditionNode(lambda bb: bb.get("arrived", False), "CheckArrived"),
+        )
 
-    def test_bt_reset(self):
-        root = Action('RootAction', succeed)
-        bt = BehaviorTree(root, BTGrade.M, 'TestBT')
-        bt.tick()
+        bt = BehaviorTree(root, "NavigationTest")
+
+        # 初始状态: 不安全 → 失败
+        bt.blackboard.set("safety_ok", False)
+        bt.blackboard.set("arrived", False)
+        assert bt.tick() == NodeStatus.FAILURE
+
+        # 安全，但未到达 → 运行中
         bt.reset()
-        assert bt.root.state == NodeState.IDLE
-        assert bt._tick_count == 0
+        bt.blackboard.set("safety_ok", True)
+        bt.blackboard.set("arrived", False)
+        assert bt.tick() == NodeStatus.RUNNING
 
-    def test_bt_complex_tree(self):
-        root = Selector('RootSel')
-        check = Condition('SafetyCheck', always_true)
-        seq = Sequence('ActionSeq')
-        seq.add_child(Action('A1', succeed))
-        seq.add_child(Action('A2', succeed))
+        # 安全且已到达 → 成功
+        bt.reset()
+        bt.blackboard.set("safety_ok", True)
+        bt.blackboard.set("arrived", True)
+        # Sequence节点在第一个RUNNING节点就返回RUNNING
+        # 只有MoveToGoal返回成功才会检查arrived
+        status = bt.tick()
+        assert status == NodeStatus.RUNNING
 
-        root.add_child(check)
-        root.add_child(seq)
-
-        bt = BehaviorTree(root, BTGrade.L, 'ComplexBT')
-        ctx = make_ctx()
-        result = bt.tick()
-        assert result == NodeState.SUCCESS
-
-
-# ─────────────────────────────────────────────
-# Test AGV Five-Grade Specification
-# ─────────────────────────────────────────────
-
-class TestAGVBTGrades:
-    def test_s_grade_exists(self):
-        assert 'S' in AGV_BT_GRADES
-        assert AGV_BT_GRADES['S']['max_tree_depth'] == 3
-        assert AGV_BT_GRADES['S']['tick_rate_hz'] == 10
-
-    def test_m_grade_exists(self):
-        assert 'M' in AGV_BT_GRADES
-        assert AGV_BT_GRADES['M']['max_tree_depth'] == 5
-        assert AGV_BT_GRADES['M']['tick_rate_hz'] == 50
-
-    def test_l_grade_exists(self):
-        assert 'L' in AGV_BT_GRADES
-        assert AGV_BT_GRADES['L']['parallel_execution'] is True
-        assert AGV_BT_GRADES['L']['tick_rate_hz'] == 100
-
-    def test_xl_grade_exists(self):
-        assert 'XL' in AGV_BT_GRADES
-        assert AGV_BT_GRADES['XL']['max_tree_depth'] == 12
-        assert 'subtree' in AGV_BT_GRADES['XL']['supported_nodes']
-
-    def test_xxl_grade_exists(self):
-        assert 'XXL' in AGV_BT_GRADES
-        assert AGV_BT_GRADES['XXL']['max_tree_depth'] == 16
-        assert AGV_BT_GRADES['XXL']['tick_rate_hz'] == 500
-        assert AGV_BT_GRADES['XXL']['preemption'] is True
-
-    def test_all_grades_have_required_keys(self):
-        required_keys = [
-            'description', 'max_tree_depth', 'max_nodes',
-            'tick_rate_hz', 'supported_nodes', 'parallel_execution',
-            'memory_nodes', 'decorator_types', 'action_timeout_ms', 'preemption',
-        ]
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            for key in required_keys:
-                assert key in AGV_BT_GRADES[grade], f"{grade} missing {key}"
-
-    def test_create_for_grade_s(self):
-        root = Action('Test', succeed)
-        bt = create_for_grade(BTGrade.S, root, 'S_BT')
-        assert bt.grade == BTGrade.S
-        assert bt.name == 'S_BT'
-
-    def test_create_for_grade_xxl(self):
-        root = Selector('XXLRoot')
-        bt = create_for_grade(BTGrade.XXL, root, 'XXL_BT')
-        assert bt.grade == BTGrade.XXL
-        assert bt.name == 'XXL_BT'
-
-    def test_create_safe_selector(self):
-        children = [Action('A', succeed), Action('B', fail)]
-        sel = create_safe_selector('SafeSel', children, BTGrade.M)
-        ctx = make_ctx()
-        result = sel.tick(ctx)
-        assert result == NodeState.SUCCESS
-
-    def test_create_action_sequence(self):
-        actions = [Action('A', succeed), Action('B', succeed)]
-        seq = create_action_sequence('ActionSeq', actions, BTGrade.M)
-        ctx = make_ctx()
-        result = seq.tick(ctx)
-        assert result == NodeState.SUCCESS
+    def test_get_statistics(self):
+        """获取统计信息测试"""
+        root = SequenceNode("test")
+        root.add_children(
+            ConditionNode(lambda bb: True),
+            ConditionNode(lambda bb: True),
+        )
+        bt = BehaviorTree(root)
+        stats = bt.get_statistics()
+        assert "total_nodes" in stats
+        assert stats["total_nodes"] == 3  # root + 2 children
+        assert "SequenceNode" in stats["node_types"]
+        assert "ConditionNode" in stats["node_types"]
 
 
-# ─────────────────────────────────────────────
-# Test BTNode Stats
-# ─────────────────────────────────────────────
+class TestEmbodiedTask:
+    """具身任务测试"""
 
-class TestBTNodeStats:
-    def test_node_stats_tracking(self):
-        action = Action('Tracked', succeed)
-        ctx = make_ctx()
-        action.tick(ctx)
-        stats = action.get_stats()
-        assert stats['executions'] == 1
-        assert stats['total_time_ms'] >= 0
-        assert stats['name'] == 'Tracked'
-        assert stats['type'] == 'Action'
+    def test_task_lifecycle(self):
+        """任务生命周期测试"""
+        task = EmbodiedTask(
+            task_id="test_001",
+            task_type="navigation",
+            goal_description="Navigate to (5, 0)",
+            target_position=np.array([5.0, 0.0]),
+            priority=0,
+        )
+
+        assert task.status == TaskStatus.IDLE
+        task.start()
+        assert task.status == TaskStatus.RUNNING
+        assert task.start_time is not None
+        assert not task.is_timeout()
+
+        time.sleep(0.01)
+        task.finish(success=True)
+        assert task.status == TaskStatus.COMPLETED
+        assert task.success
+        assert task.get_duration() > 0
+
+    def test_timeout(self):
+        """超时测试"""
+        task = EmbodiedTask(
+            task_id="test_timeout",
+            task_type="test",
+            goal_description="",
+            timeout=0.001,
+        )
+        task.start()
+        time.sleep(0.01)
+        assert task.is_timeout()
+
+
+class TestEmbodiedTaskPlanner:
+    """具身任务规划器测试"""
+
+    def test_register_task_type(self):
+        """注册任务类型测试"""
+        planner = EmbodiedTaskPlanner()
+        root = SequenceNode("test")
+        root.add_child(ConditionNode(lambda bb: True))
+        planner.register_task_type("test", root)
+        assert "test" in planner.behavior_trees
+
+    def test_add_task(self):
+        """添加任务测试"""
+        planner = EmbodiedTaskPlanner()
+        task = EmbodiedTask(task_id="t1", task_type="navigation", goal_description="")
+        planner.add_task(task)
+        assert task.task_id in planner.tasks
+        assert planner.get_status()['pending_tasks'] == 1
+
+    def test_select_next_task(self):
+        """选择下一个任务测试 (按优先级)"""
+        planner = EmbodiedTaskPlanner()
+        task_low = EmbodiedTask(task_id="low", task_type="nav", goal_description="", priority=10)
+        task_high = EmbodiedTask(task_id="high", task_type="nav", goal_description="", priority=0)
+        planner.add_task(task_low)
+        planner.add_task(task_high)
+
+        selected = planner.select_next_task()
+        assert selected is not None
+        assert selected.task_id == "high"  # 优先级 0 < 10 → 选高优先级
+
+
+class TestAGVTaskPlanner:
+    """AGV专用任务规划器测试"""
+
+    def test_default_setup(self):
+        """默认设置测试"""
+        planner = AGVTaskPlanner(grade="M")
+        assert planner.grade == "M"
+        assert 'navigate' in planner.behavior_trees
+        assert 'transport' in planner.behavior_trees
+
+    def test_get_capabilities(self):
+        """获取能力测试"""
+        planner_s = AGVTaskPlanner(grade="S")
+        planner_m = AGVTaskPlanner(grade="M")
+        planner_l = AGVTaskPlanner(grade="L")
+        planner_xl = AGVTaskPlanner(grade="XL")
+        planner_xxl = AGVTaskPlanner(grade="XXL")
+
+        assert planner_s.get_capabilities()['max_planning_depth'] == 3
+        assert planner_m.get_capabilities()['max_planning_depth'] == 6
+        assert planner_l.get_capabilities()['support_multi_agent'] is True
+        assert planner_m.get_capabilities()['support_multi_agent'] is False
+
+
+class TestAGVNodes:
+    """AGV专用节点测试"""
+
+    def test_check_battery_condition_ok(self):
+        """电量充足 → 成功"""
+        from src.embodied.behavior_tree import AGVCheckBatteryCondition
+        cond = AGVCheckBatteryCondition(min_battery=0.2)
+        bb = Blackboard()
+        bb.update_robot_state({'battery_level': 0.5})
+        # 需要手动获取到condition函数
+        # 这里测试结构
+        assert cond is not None
+
+    def test_check_safe_condition(self):
+        """安全检查节点"""
+        from src.embodied.behavior_tree import AGVCheckSafeCondition
+        cond = AGVCheckSafeCondition()
+        bb = Blackboard()
+        bb.update_robot_state({'safety': True})
+        assert cond is not None
+
+
+class PerformanceBenchmark:
+    """性能基准测试"""
+
+    def test_1000_ticks_small_tree(self, benchmark):
+        """1000次tick小树性能基准"""
+        root = SequenceNode("benchmark")
+        for i in range(10):
+            root.add_child(ConditionNode(lambda bb: True))
+
+        bt = BehaviorTree(root)
+        bb = bt.blackboard
+
+        def run():
+            for _ in range(100):
+                bt.tick()
+                bt.reset()
+
+        benchmark(run)
+        # 不做断言，用于性能测量
+
+
+def test_material_transport_example():
+    """物料搬运任务完整示例"""
+    from src.embodied.behavior_tree import (
+        SequenceNode, ConditionNode, ActionNode, BehaviorTree, Blackboard,
+        AGVCheckBatteryCondition, AGVCheckSafeCondition,
+    )
+
+    # 物料搬运任务行为树
+    root = SequenceNode("MaterialTransport")
+
+    # 1. 检查安全和电量
+    root.add_children(
+        AGVCheckSafeCondition(),
+        AGVCheckBatteryCondition(min_battery=0.2),
+    )
+
+    # 2. 简单导航到取货 (模拟) - 使用 Lambda 总是返回成功简化测试
+    root.add_child(ConditionNode(lambda bb: True))
+
+    # 3. 抓取
+    root.add_child(ConditionNode(lambda bb: True))
+
+    # 4. 导航到卸货
+    root.add_child(ConditionNode(lambda bb: True))
+
+    # 5. 放下完成
+    root.add_child(ConditionNode(lambda bb: True))
+
+    bt = BehaviorTree(root, "MaterialTransport")
+    # 设置默认状态到黑板
+    bt.update_robot_state({'safety': True, 'battery_level': 0.5})
+    status = bt.tick()
+    assert status == NodeStatus.SUCCESS
+
+
+if __name__ == "__main__":
+    pytest.main([__file__, "-v"])

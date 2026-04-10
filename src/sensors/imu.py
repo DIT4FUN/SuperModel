@@ -539,6 +539,10 @@ class PoseEstimator:
     
     def update(self, accel, gyro, mag=None, dt=None):
         return Pose(orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+    
+    def reset(self):
+        """重置姿态估计"""
+        pass
 
 
 class IMUCalibration:
@@ -555,14 +559,20 @@ class IMUSensorType:
 
 class VirtualIMUSensor:
     """虚拟IMU (兼容别名)"""
-    def __init__(self, sensor_id="virtual"):
+    def __init__(self, sensor_id="virtual", accel_noise=None, gyro_noise=None):
         self.sensor_id = sensor_id
+        self.accel_noise = accel_noise
+        self.gyro_noise = gyro_noise
     
     def open(self):
         return True
     
     def close(self):
         pass
+    
+    def simulate_static(self, *args, **kwargs):
+        """兼容方法 - 返回静止姿态"""
+        return np.array([0, 0, 9.81]), np.zeros(3)
 
 
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:

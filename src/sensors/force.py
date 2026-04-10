@@ -63,6 +63,16 @@ class Wrench:
     def to_array(self) -> np.ndarray:
         """转为6D数组 [fx, fy, fz, mx, my, mz]"""
         return np.concatenate([self.force, self.torque])
+    
+    @property
+    def magnitude(self) -> float:
+        """获取力的模长 (兼容旧接口)"""
+        return np.linalg.norm(self.force)
+    
+    @property
+    def torque_magnitude(self) -> float:
+        """获取力矩模长 (兼容旧接口)"""
+        return np.linalg.norm(self.torque)
 
 
 class SixAxisForceTorque:
@@ -578,11 +588,16 @@ class ContactState:
 
 class VirtualForceSensor:
     """虚拟力传感器 (兼容别名)"""
-    def __init__(self, sensor_id="virtual"):
+    def __init__(self, sensor_id="virtual", noise_level=None):
         self.sensor_id = sensor_id
+        self.noise_level = noise_level
     
     def open(self):
         return True
     
     def close(self):
         pass
+    
+    def simulate_contact(self, *args, **kwargs):
+        """兼容方法 - 返回零力旋量"""
+        return Wrench(force=np.zeros(3), torque=np.zeros(3))

@@ -484,10 +484,12 @@ class PressureProcessor:
 
 class TactileContact:
     """接触 (兼容别名)"""
-    def __init__(self, center, area, peak_pressure):
-        self.center = center
+    def __init__(self, center, area, peak_pressure, mean_pressure=None, centroid=None, contact_force=None):
+        self.center = center if centroid is None else centroid
         self.area = area
         self.peak_pressure = peak_pressure
+        self.mean_pressure = mean_pressure
+        self.contact_force = contact_force
 
 
 class TactileCalibration:
@@ -511,3 +513,7 @@ class VirtualTactileSensor:
     
     def close(self):
         pass
+    
+    def simulate_contact(self, *args, **kwargs):
+        """兼容方法 - 返回空接触"""
+        return TactileContact(center=np.zeros(2), area=0, peak_pressure=0)
