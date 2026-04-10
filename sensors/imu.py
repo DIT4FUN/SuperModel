@@ -665,3 +665,142 @@ class IMUArray:
 
     def __repr__(self) -> str:
         return f"IMUArray(sensors={list(self._sensors.keys())})"
+
+
+# =============================================================================
+# AGV五级IMU传感器规格表
+# =============================================================================
+
+AGV_IMU_GRADES = {
+    'S': {
+        'name': '小型AGV',
+        'type': 'MPU6050',
+        'accel_range': 16,    # g (BMI088 equivalent spec)
+        'gyro_range': 2000,   # deg/s
+        'sample_hz': 100,
+        'noise_density_accel': 400,   # ug/sqrt(Hz)
+        'noise_density_gyro': 0.05,    # deg/s/sqrt(Hz)
+        'magnetometer': False,
+        'temperature_comp': False,
+        'ahrs': False,
+        'typical_use': '轻载仓库AGV，基础姿态检测',
+    },
+    'M': {
+        'name': '中型AGV',
+        'type': 'BMI088',
+        'accel_range': 24,    # g (BMI088 supported: 3/6/12/24g)
+        'gyro_range': 2000,   # deg/s
+        'sample_hz': 200,
+        'noise_density_accel': 120,   # ug/sqrt(Hz)
+        'noise_density_gyro': 0.015,  # deg/s/sqrt(Hz)
+        'magnetometer': False,
+        'temperature_comp': True,
+        'ahrs': True,
+        'typical_use': '物流分拣AGV，姿态稳定',
+    },
+    'L': {
+        'name': '大型AGV',
+        'type': 'BMI088+Mag',
+        'accel_range': 24,    # g (BMI088 supported: 3/6/12/24g)
+        'gyro_range': 2000,   # deg/s
+        'sample_hz': 500,
+        'noise_density_accel': 100,   # ug/sqrt(Hz)
+        'noise_density_gyro': 0.010,  # deg/s/sqrt(Hz)
+        'magnetometer': True,
+        'temperature_comp': True,
+        'ahrs': True,
+        'typical_use': '产线配送AGV，精密导航',
+    },
+    'XL': {
+        'name': '特大型AGV',
+        'type': 'ADIS16470',
+        'accel_range': 40,    # g (ADI spec)
+        'gyro_range': 4000,   # deg/s
+        'sample_hz': 1000,
+        'noise_density_accel': 31,    # ug/sqrt(Hz)
+        'noise_density_gyro': 0.004,  # deg/s/sqrt(Hz)
+        'magnetometer': True,
+        'temperature_comp': True,
+        'ahrs': True,
+        'typical_use': '重载车间AGV，高精度定位',
+    },
+    'XXL': {
+        'name': '超大型AGV',
+        'type': 'Dual ADIS16470',
+        'accel_range': 40,    # g (ADI spec, dual redundant)
+        'gyro_range': 4000,   # deg/s
+        'sample_hz': 2000,
+        'noise_density_accel': 10,    # ug/sqrt(Hz) with dual fusion
+        'noise_density_gyro': 0.002,  # deg/s/sqrt(Hz) with dual fusion
+        'magnetometer': True,
+        'temperature_comp': True,
+        'ahrs': True,
+        'typical_use': '港口物流AGV，极限精度要求',
+    },
+}
+
+
+def get_imu_spec(grade: str) -> dict:
+    """
+    获取AGV指定等级的IMU传感器规格
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+
+    Returns:
+        IMU传感器规格字典
+    """
+    return AGV_IMU_GRADES.get(grade, AGV_IMU_GRADES['M'])
+
+
+def create_imu_sensor_for_grade(grade: str, sensor_id: str = "imu_0") -> IMUSensor:
+    """
+    创建指定AGV等级的IMU传感器
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+        sensor_id: 传感器ID
+
+    Returns:
+        IMUSensor 实例 (BMI088 或 MPU9250)
+    """
+    spec = get_imu_spec(grade)
+    # Map numeric ranges to closest supported string values
+    accel_map = {16: '16g', 24: '24g', 40: '24g'}
+    gyro_map = {2000: '2000dps', 4000: '2000dps'}
+    accel_str = accel_map.get(spec['accel_range'], '16g')
+    gyro_str = gyro_map.get(spec['gyro_range'], '2000dps')
+
+    if grade in ['S', 'M', 'L']:
+        return BMI088(
+            sensor_id=sensor_id,
+            accel_range=accel_str,
+            gyro_range=gyro_str,
+        )
+    else:
+        # XL/XXL use MPU9250 clamped to max ranges
+        return MPU9250(
+            sensor_id=sensor_id,
+            accel_range='16g',
+            gyro_range='2000dps',
+        )
+
+
+def list_imu_capabilities() -> str:
+    """列出所有AGV等级的IMU传感器能力"""
+    lines = ["AGV五级IMU传感器能力表:"]
+    header = f"{'等级':<6} {'型号':<16} {'加速度计范围':<14} {'陀螺仪范围':<14} "
+    header += f"{'采样率':<8} {'噪声密度':<16} {'磁力计':<6} {'AHRS':<6} {'典型用途'}"
+    lines.append(header)
+    lines.append("-" * 115)
+    for grade, spec in AGV_IMU_GRADES.items():
+        accel_str = f"±{spec['accel_range']}g"
+        gyro_str = f"±{spec['gyro_range']}deg/s"
+        noise_str = f"{spec['noise_density_accel']}ug/sqrtHz"
+        lines.append(
+            f"{grade:<6} {spec['type']:<16} {accel_str:<14} {gyro_str:<14} "
+            f"{spec['sample_hz']}Hz{'':<3} {noise_str:<16} "
+            f"{'Yes' if spec['magnetometer'] else 'No':<6} "
+            f"{'Yes' if spec['ahrs'] else 'No':<6} {spec['typical_use']}"
+        )
+    return "\n".join(lines)

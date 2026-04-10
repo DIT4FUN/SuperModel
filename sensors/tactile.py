@@ -49,294 +49,250 @@ class TactileData:
     def get_contact_center(self) -> Tuple[float, float]:
         """获取接触中心 (归一化坐标)"""
         if self.taxel_data is None or self.taxel_data.size == 0:
-            return (0.5, 0.5)  # 默认中心
+            return (0.0, 0.0)
 
-        # 找到最大压力位置
         rows, cols = self.taxel_data.shape
-        max_idx = np.unravel_index(np.argmax(self.taxel_data), self.taxel_data.shape)
-        return (max_idx[1] / cols, max_idx[0] / rows)
+        total = self.taxel_data.sum()
+        if total < 1e-6:
+            return (0.5, 0.5)
 
-    def get_contact_area(self, threshold: float = 0.1) -> float:
+        # 质心计算
+        row_indices, col_indices = np.indices(self.taxel_data.shape)
+        cy = row_indices.flatten() @ self.taxel_data.flatten() / total / rows
+        cx = col_indices.flatten() @ self.taxel_data.flatten() / total / cols
+
+        return (float(cx), float(cy))
+
+    def get_contact_area(self) -> float:
         """获取接触面积 (归一化)"""
-        if self.taxel_data is None or self.taxel_data.size == 0:
+        if self.taxel_data is None:
             return 0.0
-
-        normalized = self.taxel_data / (self.taxel_data.max() + 1e-6)
-        contact_ratio = np.sum(normalized > threshold) / self.taxel_data.size
-        return contact_ratio
+        active = np.count_nonzero(self.taxel_data)
+        return active / self.taxel_data.size
 
 
 class TactileSensor(ABC):
     """触觉传感器基类"""
 
-    def __init__(self, sensor_id: str, name: str = "TactileSensor"):
+    def __init__(self, sensor_id: str):
         self.sensor_id = sensor_id
-        self.name = name
-        self._calibrated = False
-        self._calibration_offset = 0.0
-        self._sensitivity = 1.0  # V/Pa 或 counts/Pa
+        self._bias = 0.0
 
     @abstractmethod
     def read(self, timestamp: float) -> TactileData:
         """读取传感器数据"""
         pass
 
-    def calibrate(self, reference_data: np.ndarray) -> bool:
-        """
-        校准传感器
+    def set_bias(self, data: TactileData) -> None:
+        """设置零偏"""
+        self._bias = data.pressure
 
-        Args:
-            reference_data: 参考压力值 (Pa)
-
-        Returns:
-            校准是否成功
-        """
-        if len(reference_data) < 10:
-            return False
-
-        self._calibration_offset = np.mean(reference_data)
-        self._calibrated = True
-        return True
-
-    def get_sensitivity(self) -> float:
-        """获取灵敏度"""
-        return self._sensitivity
-
-    def reset_calibration(self):
-        """重置校准"""
-        self._calibration_offset = 0.0
-        self._calibrated = False
+    def remove_bias(self) -> None:
+        """移除零偏"""
+        self._bias = 0.0
 
 
 class PressureSensor(TactileSensor):
-    """
-    压阻式压力传感器
-    适用于: 脚踏开关、碰撞检测、负载监测
-    """
+    """压阻式压力传感器"""
 
     def __init__(
         self,
         sensor_id: str,
-        name: str = "PressureSensor",
-        max_pressure: float = 1000.0,  # Pa
-        resolution: float = 0.01,  # Pa/bit
-        noise_floor: float = 0.1  # Pa RMS
+        max_pressure: float = 1000.0,
+        resolution: float = 0.1,
+        sampling_rate: float = 100.0,
     ):
-        super().__init__(sensor_id, name)
+        super().__init__(sensor_id)
         self.max_pressure = max_pressure
         self.resolution = resolution
-        self.noise_floor = noise_floor
-        self._sensitivity = 1.0 / resolution
-
-        # 模拟内部状态
-        self._current_pressure = 0.0
+        self.sampling_rate = sampling_rate
+        self._last_reading = 0.0
 
     def read(self, timestamp: float) -> TactileData:
-        """读取压力数据"""
-        # 模拟读取 (实际应用中从 ADC/I2C/SPI 读取)
-        # 添加一些噪声
-        noise = np.random.normal(0, self.noise_floor)
-        raw_pressure = self._current_pressure + noise
-
-        # 应用校准偏移
-        if self._calibrated:
-            raw_pressure -= self._calibration_offset
-
-        # 限幅
-        raw_pressure = np.clip(raw_pressure, 0, self.max_pressure)
+        """读取压力数据 (带噪声和零偏)"""
+        raw = np.random.normal(self._last_reading, self.resolution)
+        raw = np.clip(raw, 0, self.max_pressure)
+        self._last_reading = raw
 
         return TactileData(
             sensor_id=self.sensor_id,
             timestamp=timestamp,
-            pressure=raw_pressure,
-            raw_values=np.array([raw_pressure])
+            pressure=raw + self._bias,
+            raw_values=np.array([raw]),
         )
 
-    def set_pressure(self, pressure: float):
-        """模拟设置压力值 (用于测试)"""
-        self._current_pressure = np.clip(pressure, 0, self.max_pressure)
-
-    def apply_force(self, force: float, area: float = 0.01):
-        """施加力并转换为压力 (模拟)"""
-        # P = F / A
-        pressure = force / area if area > 0 else 0
-        self.set_pressure(pressure)
+    def set_resolution(self, resolution: float) -> None:
+        """设置分辨率"""
+        self.resolution = resolution
 
 
 class TaxelArray(TactileSensor):
     """
-    触感阵列 (仿生皮肤)
-    16x16 或可配置的 taxel 网格
+    触感阵列 (Tactile Array)
+    模拟电子皮肤多像素触觉感知
     """
 
     def __init__(
         self,
-        sensor_id: str,
-        name: str = "TaxelArray",
+        name: str,
         rows: int = 16,
         cols: int = 16,
+        resolution: float = 1.0,  # mm
         max_pressure: float = 1000.0,  # Pa
-        response_time: float = 0.001  # s (<1ms)
+        sampling_rate: float = 100.0,
     ):
-        super().__init__(sensor_id, name)
+        super().__init__(name)
+        self.name = name
         self.rows = rows
         self.cols = cols
+        self.resolution = resolution
         self.max_pressure = max_pressure
-        self.response_time = response_time
-        self._sensitivity = 255.0 / max_pressure
+        self.sampling_rate = sampling_rate
+        self._taxels = np.zeros((rows, cols), dtype=np.float32)
+        self._temperature = np.full((rows, cols), 25.0, dtype=np.float32)
 
-        # 初始化 taxel 矩阵 (存储压力值 Pa)
-        self._taxel_matrix = np.zeros((rows, cols), dtype=np.float32)
-        self._last_taxel_matrix = np.zeros((rows, cols), dtype=np.float32)
+    def simulate_contact(
+        self,
+        center: Tuple[int, int],
+        radius: int = 2,
+        pressure: float = 500.0,
+    ) -> None:
+        """
+        模拟接触事件
+
+        Args:
+            center: 接触中心 (row, col)
+            radius: 接触半径
+            pressure: 压力值 (Pa)
+        """
+        row_c, col_c = center
+        rows_i = np.arange(self.rows)
+        cols_i = np.arange(self.cols)
+        row_g, col_g = np.meshgrid(rows_i, cols_i, indexing='ij')
+
+        dist = np.sqrt((row_g - row_c) ** 2 + (col_g - col_c) ** 2)
+        contact = np.exp(-(dist ** 2) / (2 * radius ** 2)) * pressure
+        self._taxels += contact.astype(np.float32)
+
+    def simulate_proximity(self, distance_mm: float, object_pressure: float = 100.0) -> float:
+        """
+        模拟接近觉
+
+        Args:
+            distance_mm: 距离 (mm)
+            object_pressure: 物体等效压力
+
+        Returns:
+            接近觉强度 (归一化 0-1)
+        """
+        if distance_mm <= 0:
+            return 1.0
+        # 线性衰减，10mm外无响应
+        return np.clip(1.0 - distance_mm / 10.0, 0.0, 1.0) * (object_pressure / self.max_pressure)
+
+    def simulate_slip(self, force_direction: Tuple[float, float], force_magnitude: float) -> bool:
+        """
+        模拟滑移检测
+
+        Args:
+            force_direction: 滑移力方向 (dx, dy)
+            force_magnitude: 滑移力大小
+
+        Returns:
+            是否检测到滑移
+        """
+        # 库仑摩擦模型: 静摩擦阈值 = μ_s * F_n, 动摩擦 = μ_k * F_n
+        mu_static = 0.6
+        mu_dynamic = 0.4
+        # 找最大正压力
+        max_normal = self._taxels.max() if self._taxels.max() > 0 else 1.0
+        slip_threshold = mu_static * max_normal
+        return force_magnitude > slip_threshold
 
     def read(self, timestamp: float) -> TactileData:
         """读取触感阵列数据"""
-        # 模拟读取 (实际应用中从传感器读取)
-        # 添加热噪声
-        noise = np.random.normal(0, 0.5, (self.rows, self.cols))
-        self._taxel_matrix = np.clip(self._taxel_matrix + noise, 0, self.max_pressure)
-
-        # 应用校准
-        if self._calibrated:
-            self._taxel_matrix -= self._calibration_offset
-
-        # 转换为 8-bit 值用于存储
-        normalized = (self._taxel_matrix / self.max_pressure * 255).astype(np.uint8)
-
-        # 计算振动分量 (帧间差分)
-        vibration = np.abs(self._taxel_matrix - self._last_taxel_matrix).mean()
-        self._last_taxel_matrix = self._taxel_matrix.copy()
-
-        # 平均压力
-        avg_pressure = self._taxel_matrix.mean()
+        noise = np.random.normal(0, 0.5, self._taxels.shape).astype(np.float32)
+        sensed = np.clip(self._taxels + noise, 0, self.max_pressure)
 
         return TactileData(
             sensor_id=self.sensor_id,
             timestamp=timestamp,
-            pressure=avg_pressure,
-            taxel_data=normalized,
-            vibration=vibration,
-            raw_values=self._taxel_matrix.flatten()
+            pressure=float(sensed.mean()),
+            taxel_data=sensed,
+            temperature=float(self._temperature.mean()),
+            raw_values=sensed.flatten(),
         )
 
-    def set_taxel_pressure(self, row: int, col: int, pressure: float):
-        """设置指定 taxel 的压力 (模拟, 用于测试)"""
-        if 0 <= row < self.rows and 0 <= col < self.cols:
-            self._taxel_matrix[row, col] = np.clip(pressure, 0, self.max_pressure)
+    def apply_temperature(self, temp: float) -> None:
+        """设置温度分布"""
+        self._temperature.fill(temp)
 
-    def apply_contact(self, center_row: float, center_col: float,
-                      radius: float, pressure: float):
+    def clear(self) -> None:
+        """清除所有触觉数据"""
+        self._taxels.fill(0.0)
+
+    def get_pressure_map(self) -> np.ndarray:
+        """获取压力图 (带噪声)"""
+        noise = np.random.normal(0, 0.5, self._taxels.shape).astype(np.float32)
+        return np.clip(self._taxels + noise, 0, self.max_pressure)
+
+    def get_grasp_quality(self) -> Dict[str, float]:
         """
-        模拟接触 (高斯分布压力)
+        评估抓取质量
 
-        Args:
-            center_row: 接触中心行 (归一化 0-1)
-            center_col: 接触中心列 (归一化 0-1)
-            radius: 接触半径 (归一化 0-1)
-            pressure: 接触压力 (Pa)
+        Returns:
+            抓取质量指标字典
         """
-        # 创建高斯分布
-        rows_idx, cols_idx = np.meshgrid(
-            np.arange(self.rows), np.arange(self.cols), indexing='ij'
-        )
+        if self._taxels.max() < 1.0:
+            return {'quality': 0.0, 'stability': 0.0, 'contact_ratio': 0.0}
 
-        # 中心点
-        cr = int(center_row * (self.rows - 1))
-        cc = int(center_col * (self.cols - 1))
+        # 接触比例
+        active = np.count_nonzero(self._taxels)
+        contact_ratio = active / self._taxels.size
 
-        # 计算距离
-        distances = np.sqrt(
-            ((rows_idx - cr) / (radius * self.rows))**2 +
-            ((cols_idx - cc) / (radius * self.cols))**2
-        )
+        # 压力分布均匀性 (标准差越小越均匀)
+        flat = self._taxels.flatten()
+        non_zero = flat[flat > 0]
+        uniformity = 1.0 / (1.0 + np.std(non_zero)) if len(non_zero) > 1 else 0.0
 
-        # 高斯权重
-        gaussian = np.exp(-distances**2 / 2)
+        # 综合质量
+        quality = contact_ratio * uniformity * (min(1.0, self._taxels.max() / self.max_pressure))
 
-        # 应用压力
-        self._taxel_matrix += pressure * gaussian
-
-        # 限幅
-        self._taxel_matrix = np.clip(self._taxel_matrix, 0, self.max_pressure)
-
-    def clear(self):
-        """清空所有 taxel 数据"""
-        self._taxel_matrix.fill(0)
-        self._last_taxel_matrix.fill(0)
+        return {
+            'quality': float(quality),
+            'stability': float(uniformity),
+            'contact_ratio': float(contact_ratio),
+        }
 
 
 class PiezoelectricSensor(TactileSensor):
-    """
-    压电式振动传感器
-    适用于: 振动检测、纹理识别、动态触觉
-    """
+    """压电式振动传感器"""
 
     def __init__(
         self,
         sensor_id: str,
-        name: str = "PiezoelectricSensor",
-        frequency_range: Tuple[float, float] = (0.1, 1000),  # Hz
-        sampling_rate: float = 1000,  # Hz
-        sensitivity: float = 1.0,  # V/(m/s) 或自定义
-        output_impedance: float = 100e3  # Ohm
+        sensitivity: float = 50.0,  # mV/N
+        freq_range: Tuple[float, float] = (1, 1000),  # Hz
+        sampling_rate: float = 5000.0,
     ):
-        super().__init__(sensor_id, name)
-        self.frequency_range = frequency_range
+        super().__init__(sensor_id)
+        self.sensitivity = sensitivity
+        self.freq_range = freq_range
         self.sampling_rate = sampling_rate
-        self.output_impedance = output_impedance
-        self._sensitivity = sensitivity
-
-        # 模拟振动缓冲区
-        self._vibration_buffer = np.zeros(int(sampling_rate))  # 1秒缓冲区
-        self._buffer_index = 0
-        self._current_vibration = 0.0
+        self._last_vibration = 0.0
 
     def read(self, timestamp: float) -> TactileData:
         """读取振动数据"""
-        # 模拟读取
-        # 添加随机振动 (实际应用中从 ADC 读取)
-        self._current_vibration = np.random.normal(0, 10)  # 模拟振动
-
-        # 限幅到频率范围
-        if self._current_vibration > self.frequency_range[1]:
-            self._current_vibration = self.frequency_range[1]
-        elif self._current_vibration < self.frequency_range[0]:
-            self._current_vibration = 0
-
-        # 存储到缓冲区
-        self._vibration_buffer[self._buffer_index] = self._current_vibration
-        self._buffer_index = (self._buffer_index + 1) % len(self._vibration_buffer)
+        vibration = np.random.normal(self._last_vibration, 10.0)
+        self._last_vibration = vibration * 0.9  # 衰减
+        vibration = np.clip(vibration, 0, 1000)
 
         return TactileData(
             sensor_id=self.sensor_id,
             timestamp=timestamp,
-            vibration=self._current_vibration,
-            raw_values=self._vibration_buffer.copy()
+            vibration=vibration,
+            raw_values=np.array([vibration]),
         )
-
-    def add_vibration(self, frequency: float, amplitude: float):
-        """
-        添加振动信号 (模拟, 用于测试)
-
-        Args:
-            frequency: 频率 (Hz)
-            amplitude: 幅度
-        """
-        if self.frequency_range[0] <= frequency <= self.frequency_range[1]:
-            t = np.arange(len(self._vibration_buffer)) / self.sampling_rate
-            wave = amplitude * np.sin(2 * np.pi * frequency * t)
-            self._vibration_buffer += wave
-            self._current_vibration = amplitude
-
-    def get_spectrum(self) -> np.ndarray:
-        """获取振动频谱"""
-        return np.abs(np.fft.rfft(self._vibration_buffer))
-
-    def detect_frequency(self) -> float:
-        """检测主频率"""
-        spectrum = self.get_spectrum()
-        peak_idx = np.argmax(spectrum[1:]) + 1  # 跳过 DC
-        return peak_idx * self.sampling_rate / len(self._vibration_buffer)
 
 
 class TactileArray:
@@ -388,7 +344,6 @@ class TactileArray:
         if not all_data:
             return np.array([])
 
-        # 简单拼接所有传感器的特征向量
         vectors = [data.to_vector() for data in all_data]
         return np.concatenate(vectors)
 
@@ -423,3 +378,131 @@ class TactileArray:
 
     def __repr__(self) -> str:
         return f"TactileArray(sensors={list(self._sensors.keys())})"
+
+
+# =============================================================================
+# AGV五级触觉传感器规格表
+# =============================================================================
+
+AGV_TACTILE_GRADES = {
+    'S': {
+        'name': '小型AGV',
+        'array_size': (8, 8),
+        'resolution_mm': 16,
+        'pressure_range_kpa': (0, 500),
+        'sampling_hz': 50,
+        'temperature': False,
+        'proximity': False,
+        'slip_detection': False,
+        'noise_kpa': 5.0,
+        'taxels': 64,
+        'typical_use': '轻载仓库AGV，碰撞检测',
+    },
+    'M': {
+        'name': '中型AGV',
+        'array_size': (16, 16),
+        'resolution_mm': 8,
+        'pressure_range_kpa': (0, 2000),
+        'sampling_hz': 100,
+        'temperature': True,
+        'proximity': True,
+        'slip_detection': True,
+        'noise_kpa': 2.0,
+        'taxels': 256,
+        'typical_use': '物流分拣AGV，物料搬运',
+    },
+    'L': {
+        'name': '大型AGV',
+        'array_size': (24, 24),
+        'resolution_mm': 5,
+        'pressure_range_kpa': (0, 5000),
+        'sampling_hz': 200,
+        'temperature': True,
+        'proximity': True,
+        'slip_detection': True,
+        'noise_kpa': 1.0,
+        'taxels': 576,
+        'typical_use': '产线配送AGV，重载物料输送',
+    },
+    'XL': {
+        'name': '特大型AGV',
+        'array_size': (32, 32),
+        'resolution_mm': 4,
+        'pressure_range_kpa': (0, 8000),
+        'sampling_hz': 500,
+        'temperature': True,
+        'proximity': True,
+        'slip_detection': True,
+        'noise_kpa': 0.5,
+        'taxels': 1024,
+        'typical_use': '重载车间AGV，精密装配',
+    },
+    'XXL': {
+        'name': '超大型AGV',
+        'array_size': (48, 48),
+        'resolution_mm': 2.5,
+        'pressure_range_kpa': (0, 10000),
+        'sampling_hz': 1000,
+        'temperature': True,
+        'proximity': True,
+        'slip_detection': True,
+        'noise_kpa': 0.2,
+        'taxels': 2304,
+        'typical_use': '港口物流AGV，极限负载场景',
+    },
+}
+
+
+def get_tactile_spec(grade: str) -> dict:
+    """
+    获取AGV指定等级的触觉传感器规格
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+
+    Returns:
+        触觉传感器规格字典
+    """
+    return AGV_TACTILE_GRADES.get(grade, AGV_TACTILE_GRADES['M'])
+
+
+def create_tactile_sensor_for_grade(grade: str, sensor_id: str = "tactile_0") -> TactileSensor:
+    """
+    创建指定AGV等级的触觉传感器
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+        sensor_id: 传感器ID
+
+    Returns:
+        TactileSensor 实例 (TaxelArray)
+    """
+    spec = get_tactile_spec(grade)
+    rows, cols = spec['array_size']
+
+    return TaxelArray(
+        name=sensor_id,
+        rows=rows,
+        cols=cols,
+        resolution=spec['resolution_mm'],
+        max_pressure=spec['pressure_range_kpa'][1] * 1000.0,  # kPa → Pa
+        sampling_rate=spec['sampling_hz'],
+    )
+
+
+def list_tactile_capabilities() -> str:
+    """列出所有AGV等级的触觉传感器能力"""
+    lines = ["AGV五级触觉传感器能力表:"]
+    lines.append(f"{'等级':<6} {'阵列':<10} {'分辨率':<10} {'量程(kPa)':<16} {'采样率':<10} {'温度':<6} {'接近觉':<6} {'滑移检测'}")
+    lines.append("-" * 85)
+    for grade, spec in AGV_TACTILE_GRADES.items():
+        array_str = f"{spec['array_size'][0]}x{spec['array_size'][1]}"
+        range_str = f"{spec['pressure_range_kpa'][0]}-{spec['pressure_range_kpa'][1]}"
+        lines.append(
+            f"{grade:<6} {array_str:<10} {spec['resolution_mm']}mm{'':<4} "
+            f"{range_str:<16} {spec['sampling_hz']}Hz{'':<4} "
+            f"{'Yes' if spec['temperature'] else 'No':<6} "
+            f"{'Yes' if spec['proximity'] else 'No':<6} "
+            f"{'Yes' if spec['slip_detection'] else 'No'}"
+        )
+    return "\n".join(lines)

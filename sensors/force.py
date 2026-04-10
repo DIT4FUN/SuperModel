@@ -524,3 +524,134 @@ class ForceSensorArray:
 
     def __repr__(self) -> str:
         return f"ForceSensorArray(sensors={list(self._sensors.keys())})"
+
+
+# =============================================================================
+# AGV五级力觉传感器规格表
+# =============================================================================
+
+AGV_FORCE_GRADES = {
+    'S': {
+        'name': '小型AGV',
+        'axes': 3,  # Fx, Fy, Fz
+        'force_range': 100,   # N
+        'torque_range': 10,   # Nm
+        'resolution': 0.05,   # N
+        'sampling_hz': 100,
+        'noise_density': 0.5,  # N/sqrt(Hz)
+        'temperature_comp': False,
+        'coupling_matrix': False,
+        'collision_detection': True,
+        'payload_estimation': False,
+        'typical_use': '轻载仓库AGV，碰撞检测',
+    },
+    'M': {
+        'name': '中型AGV',
+        'axes': 6,  # Fx, Fy, Fz, Mx, My, Mz
+        'force_range': 200,   # N
+        'torque_range': 20,   # Nm
+        'resolution': 0.02,   # N
+        'sampling_hz': 500,
+        'noise_density': 0.2,
+        'temperature_comp': True,
+        'coupling_matrix': True,
+        'collision_detection': True,
+        'payload_estimation': True,
+        'typical_use': '物流分拣AGV，负载称重',
+    },
+    'L': {
+        'name': '大型AGV',
+        'axes': 6,
+        'force_range': 500,   # N
+        'torque_range': 50,   # Nm
+        'resolution': 0.01,   # N
+        'sampling_hz': 1000,
+        'noise_density': 0.1,
+        'temperature_comp': True,
+        'coupling_matrix': True,
+        'collision_detection': True,
+        'payload_estimation': True,
+        'typical_use': '产线配送AGV，精密力控',
+    },
+    'XL': {
+        'name': '特大型AGV',
+        'axes': 6,
+        'force_range': 1000,  # N
+        'torque_range': 200,  # Nm
+        'resolution': 0.005,  # N
+        'sampling_hz': 2000,
+        'noise_density': 0.05,
+        'temperature_comp': True,
+        'coupling_matrix': True,
+        'collision_detection': True,
+        'payload_estimation': True,
+        'typical_use': '重载车间AGV，重型物料搬运',
+    },
+    'XXL': {
+        'name': '超大型AGV',
+        'axes': 6,
+        'force_range': 5000,  # N
+        'torque_range': 500,  # Nm
+        'resolution': 0.002,  # N
+        'sampling_hz': 5000,
+        'noise_density': 0.02,
+        'temperature_comp': True,
+        'coupling_matrix': True,
+        'collision_detection': True,
+        'payload_estimation': True,
+        'typical_use': '港口物流AGV，极限负载场景',
+    },
+}
+
+
+def get_force_spec(grade: str) -> dict:
+    """
+    获取AGV指定等级的力觉传感器规格
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+
+    Returns:
+        力觉传感器规格字典
+    """
+    return AGV_FORCE_GRADES.get(grade, AGV_FORCE_GRADES['M'])
+
+
+def create_force_sensor_for_grade(grade: str, sensor_id: str = "force_0") -> 'ForceTorqueSensor':
+    """
+    创建指定AGV等级的六维力矩传感器
+
+    Args:
+        grade: AGV等级 (S/M/L/XL/XXL)
+        sensor_id: 传感器ID
+
+    Returns:
+        ForceTorqueSensor 实例
+    """
+    spec = get_force_spec(grade)
+
+    return SixAxisFTSensor(
+        sensor_id=sensor_id,
+        force_range=(spec['force_range'], spec['force_range'], spec['force_range']),
+        torque_range=(spec['torque_range'], spec['torque_range'], spec['torque_range']),
+    )
+
+
+def list_force_capabilities() -> str:
+    """列出所有AGV等级的力觉传感器能力"""
+    lines = ["AGV五级力觉传感器能力表:"]
+    header = f"{'等级':<6} {'轴数':<6} {'力范围(N)':<12} {'力矩范围(Nm)':<14} "
+    header += f"{'采样率':<8} {'温补':<6} {'耦合矩阵':<8} {'碰撞检测':<8} {'负载估计'}"
+    lines.append(header)
+    lines.append("-" * 100)
+    for grade, spec in AGV_FORCE_GRADES.items():
+        lines.append(
+            f"{grade:<6} {spec['axes']}轴{'':<3} "
+            f"±{spec['force_range']:<10} ±{spec['torque_range']:<10} "
+            f"{spec['sampling_hz']}Hz{'':<3} "
+            f"{'Yes' if spec['temperature_comp'] else 'No':<6} "
+            f"{'Yes' if spec['coupling_matrix'] else 'No':<8} "
+            f"{'Yes' if spec['collision_detection'] else 'No':<8} "
+            f"{'Yes' if spec['payload_estimation'] else 'No'}"
+        )
+    return "\n".join(lines)
