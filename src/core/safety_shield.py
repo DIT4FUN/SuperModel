@@ -342,8 +342,11 @@ class SafetyShield:
         if human_dist < caution_d:
             return False, f"人员距离 {human_dist:.2f}m < 警告距离 {caution_d:.2f}m"
 
-        # 检查是否面向人员移动
-        if context.robot_velocity is not None and human_dist < 3.0:
+        # 检查是否面向人员移动 (仅在足够近时触发警告/停止)
+        # 1.5m以内: 直接停止
+        # 1.5-2.5m: 减速警告
+        # 2.5m以外: 正常
+        if context.robot_velocity is not None and human_dist < 2.5:
             human_vel_direction = None
             for hp in context.human_positions:
                 if context.robot_position is not None:
@@ -353,7 +356,10 @@ class SafetyShield:
                     vel_dir = context.robot_velocity / (np.linalg.norm(context.robot_velocity) + 1e-6)
                     alignment = np.dot(dir_to_human, vel_dir)
                     if alignment > 0.7:  # 夹角<45度
-                        return False, f"朝向人员移动,距离{human_dist:.2f}m"
+                        if human_dist < 1.5:
+                            return False, f"朝向人员移动,距离{human_dist:.2f}m"
+                        elif human_dist < 2.0:
+                            return False, f"接近人员,距离{human_dist:.2f}m,建议减速"
 
         return True, None
 

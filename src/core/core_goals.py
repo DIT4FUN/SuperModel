@@ -161,7 +161,135 @@ class CoreGoal:
             float: 满足度评分 [0.0, 1.0]
         """
         self.last_eval_time = time.time()
-        # 子类应覆盖此方法
+
+        # ── P0 保护人类安全 ──
+        if self.goal_id == "p0_human_safety":
+            # 基于人员距离和环境安全计算
+            score = 1.0
+
+            # 人员距离评估
+            human_dist = context.get_human_distance()
+            if human_dist is not None:
+                if human_dist < 0.3:
+                    score = 0.0  # 极危险
+                elif human_dist < 1.0:
+                    score = 0.3  # 危险
+                elif human_dist < 2.0:
+                    score = 0.6  # 警告
+                else:
+                    score = 1.0  # 安全
+
+            # 环境危险标志
+            if context.environment_hazardous:
+                score *= 0.5
+
+            # 紧急停止状态
+            if hasattr(context, 'robot_faults'):
+                score *= (1.0 - min(0.5, len(context.robot_faults) * 0.1))
+
+            self.current_score = score
+            return score
+
+        # ── P1 遵循人类指令 ──
+        if self.goal_id == "p1_follow_instructions":
+            score = 0.5  # 默认中等
+
+            if context.human_instructions:
+                score = 0.85  # 有指令时高分
+            else:
+                score = 0.5  # 无指令时中等
+
+            # 指令紧急度高时加分
+            if context.instruction_urgency > 0.7:
+                score += 0.1
+
+            self.current_score = min(1.0, score)
+            return self.current_score
+
+        # ── P2 善良品质 ──
+        if self.goal_id == "p2_kindness":
+            # 基于人类情绪状态评估
+            score = 0.7
+
+            if context.human_emotional_state in ['distressed', 'anxious']:
+                score = 0.9  # 需要同理心支持
+            elif context.human_emotional_state == 'positive':
+                score = 0.8  # 积极状态
+
+            # 信任度影响
+            if context.human_trust_level < 0.5:
+                score -= 0.2  # 信任低时需要更诚实透明
+
+            self.current_score = max(0.0, min(1.0, score))
+            return self.current_score
+
+        # ── P3 热爱世界 ──
+        if self.goal_id == "p3_love_world":
+            score = 0.6  # 默认中等
+
+            # 环境噪声低时加分
+            if hasattr(context, 'environment_noise_db'):
+                if context.environment_noise_db < 60:
+                    score += 0.2
+
+            # 电量低时体现节能意识
+            if context.robot_battery_level < 0.2:
+                score += 0.1  # 节约能源
+
+            self.current_score = min(1.0, score)
+            return self.current_score
+
+        # ── P4 自我生存安全 ──
+        if self.goal_id == "p4_self_preservation":
+            score = 1.0
+
+            # 电量影响
+            if context.robot_battery_level < 0.15:
+                score = 0.2  # 电量极低
+            elif context.robot_battery_level < 0.3:
+                score = 0.5
+            elif context.robot_battery_level < 0.5:
+                score = 0.8
+
+            # 温度影响
+            if context.robot_temperature > 60:
+                score *= 0.5
+            elif context.robot_temperature > 45:
+                score *= 0.8
+
+            # 故障影响
+            if context.robot_faults:
+                score *= max(0.2, 1.0 - len(context.robot_faults) * 0.15)
+
+            self.current_score = max(0.0, min(1.0, score))
+            return self.current_score
+
+        # ── P5 自我进化 ──
+        if self.goal_id == "p5_self_evolution":
+            # 好奇心和探索精神
+            score = 0.5
+
+            # 无危险时提高探索意愿
+            human_dist = context.get_human_distance()
+            if human_dist and human_dist > 3.0:
+                score += 0.2  # 环境安全时更有探索意愿
+
+            # 情感效价影响
+            if 0.3 <= context.emotional_valence <= 0.7:
+                score = 0.6  # 中性情感更有探索性
+
+            # 学习进度历史
+            if context.goal_satisfaction_history:
+                recent = list(context.goal_satisfaction_history.values())[-5:]
+                if recent:
+                    avg = sum(recent) / len(recent)
+                    if avg > 0.6:
+                        score += 0.1  # 成就感促进学习
+
+            self.current_score = min(1.0, score)
+            return self.current_score
+
+        # 默认返回存储的评分
         return self.current_score
 
     def to_dict(self) -> Dict[str, Any]:
