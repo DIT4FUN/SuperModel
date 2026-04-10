@@ -1,0 +1,98 @@
+{
+  "description": "AGV五级规格完整演示配置集合",
+  "generated_at": "2026-04-10T22:00:00Z",
+  "generator": "SuperModel v2.64.0 demo_data_generator",
+  "grades": {
+    "S": {
+      "name": "S级 - 小型AGV",
+      "payload_kg": 30,
+      "max_speed_mps": 2.0,
+      "sensors": {
+        "tactile": {"rows": 8, "cols": 8, "rate_hz": 50, "bits": 8},
+        "force": {"axes": 3, "range_n": [100, 100, 100, 0, 0, 0], "rate_hz": 50, "temperature_compensation": false},
+        "imu": {"type": "mpu6050", "rate_hz": 100, "accelerometer_range_g": 16, "gyro_range_dps": 2000, "ahrs": "complementary"},
+        "encoders": {"wheels": 2, "resolution": 1000, "rate_hz": 50},
+        "lidar": {"points": 180, "range_m": 10, "rate_hz": 5}
+      },
+      "control": {
+        "frequency_hz": 50,
+        "controller": "pid",
+        "safety": {"emergency_stop_distance_m": 1.0, "warning_distance_m": 2.0, "max_tilt_deg": 20}
+      },
+      "dimensions": {"length_mm": 800, "width_mm": 600, "height_mm": 250, "clearance_mm": 80}
+    },
+    "M": {
+      "name": "M级 - 中型AGV",
+      "payload_kg": 100,
+      "max_speed_mps": 1.8,
+      "sensors": {
+        "tactile": {"rows": 16, "cols": 16, "rate_hz": 100, "bits": 12},
+        "force": {"axes": 6, "range_n": [1000, 1000, 1000, 100, 100, 100], "rate_hz": 100, "temperature_compensation": true},
+        "imu": {"type": "mpu9250", "rate_hz": 200, "accelerometer_range_g": 16, "gyro_range_dps": 2000, "ahrs": "madgwick"},
+        "encoders": {"wheels": 2, "resolution": 4000, "rate_hz": 100},
+        "lidar": {"points": 270, "range_m": 15, "rate_hz": 10}
+      },
+      "control": {
+        "frequency_hz": 100,
+        "controller": "mpc",
+        "safety": {"emergency_stop_distance_m": 1.2, "warning_distance_m": 2.0, "max_tilt_deg": 18}
+      },
+      "dimensions": {"length_mm": 1200, "width_mm": 800, "height_mm": 280, "clearance_mm": 90}
+    },
+    "L": {
+      "name": "L级 - 标准AGV",
+      "payload_kg": 300,
+      "max_speed_mps": 1.5,
+      "sensors": {
+        "tactile": {"rows": 32, "cols": 32, "rate_hz": 200, "bits": 12},
+        "force": {"axes": 6, "range_n": [5000, 5000, 5000, 500, 500, 500], "rate_hz": 500, "temperature_compensation": true},
+        "imu": {"type": "dual_adis16470", "rate_hz": 1000, "accelerometer_range_g": 20, "gyro_range_dps": 2000, "ahrs": "madgwick"},
+        "encoders": {"wheels": 2, "resolution": 10000, "rate_hz": 200},
+        "lidar": {"points": 360, "range_m": 20, "rate_hz": 10}
+      },
+      "control": {
+        "frequency_hz": 200,
+        "controller": "mpc",
+        "safety": {"emergency_stop_distance_m": 1.5, "warning_distance_m": 2.5, "max_tilt_deg": 15}
+      },
+      "dimensions": {"length_mm": 1500, "width_mm": 1000, "height_mm": 300, "clearance_mm": 100}
+    },
+    "XL": {
+      "name": "XL级 - 重型AGV",
+      "payload_kg": 600,
+      "max_speed_mps": 1.2,
+      "sensors": {
+        "tactile": {"rows": 32, "cols": 32, "rate_hz": 500, "bits": 16, "event_camera": true},
+        "force": {"axes": 6, "range_n": [10000, 10000, 10000, 1000, 1000, 1000], "rate_hz": 1000, "temperature_compensation": true},
+        "imu": {"type": "dual_adis16470", "rate_hz": 2000, "accelerometer_range_g": 20, "gyro_range_dps": 2000, "ahrs": "ekf"},
+        "encoders": {"wheels": 4, "resolution": 16384, "rate_hz": 500},
+        "lidar": {"points": 720, "range_m": 30, "rate_hz": 15}
+      },
+      "control": {
+        "frequency_hz": 500,
+        "controller": "impedance_mpc",
+        "safety": {"emergency_stop_distance_m": 2.0, "warning_distance_m": 3.0, "max_tilt_deg": 10}
+      },
+      "dimensions": {"length_mm": 2000, "width_mm": 1300, "height_mm": 400, "clearance_mm": 120}
+    },
+    "XXL": {
+      "name": "XXL级 - 超重型AGV",
+      "payload_kg": 1200,
+      "max_speed_mps": 0.8,
+      "sensors": {
+        "tactile": {"rows": 48, "cols": 48, "rate_hz": 1000, "bits": 16, "event_camera": true},
+        "force": {"axes": 6, "range_n": [20000, 20000, 20000, 2000, 2000, 2000], "rate_hz": 5000, "temperature_compensation": true},
+        "imu": {"type": "triple_imu_fusion", "rate_hz": 2000, "accelerometer_range_g": 20, "gyro_range_dps": 2000, "ahrs": "ekf"},
+        "encoders": {"wheels": 8, "resolution": 32768, "rate_hz": 1000},
+        "lidar": {"points": 1080, "range_m": 50, "rate_hz": 20},
+        "vision": {"cameras": 3, "resolution": "1280x720", "fps": 30}
+      },
+      "control": {
+        "frequency_hz": 1000,
+        "controller": "full_adaptive_mpc",
+        "safety": {"emergency_stop_distance_m": 2.5, "warning_distance_m": 4.0, "max_tilt_deg": 8}
+      },
+      "dimensions": {"length_mm": 2500, "width_mm": 1800, "height_mm": 500, "clearance_mm": 150}
+    }
+  }
+}

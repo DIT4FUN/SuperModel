@@ -2,6 +2,25 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.65.0] - 2026-04-10
+
+### Added
+- **演示数据目录** (`data/demo/`)
+  - `agv_demo_config.json`: L级AGV完整演示配置
+  - `all_grades_config.json`: S/M/L/XL/XXL五级AGV完整配置集合
+- **五级规格演示脚本** (`examples/demo_five_grades.py`)
+  - 加载所有五级配置并验证规格一致性
+  - 5/5 等级测试通过，规格完全匹配
+
+### Documentation
+- 更新 `docs/MODULE_INDEX.md` 文档版本到 v2.65.0
+- 补充数据目录说明
+
+### Test Results
+- **完整测试套件**: 2729 passed, 38 skipped
+- **所有测试**: 100% 通过
+- **五级规格验证**: 5/5 通过
+
 ## [2.64.0] - 2026-04-10
 
 ### Added
