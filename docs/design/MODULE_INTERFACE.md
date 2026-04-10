@@ -4220,6 +4220,486 @@ for step in range(1000):
 
 ---
 
+## 37. 具身智能仿真增强模块 (Embodied Simulation Enhancement)
+
+### 37.1 模块概述
+
+`embodied/simulation_enhancement.py` — 增强型仿真环境，为具身智能训练提供物理参数、传感器噪声、时延、环境随机化等功能，支持PyBullet、MuJoCo、Gymnasium多引擎适配。
+
+### 37.2 物理参数类 — PhysicsParameters
+
+```python
+class PhysicsParameters:
+    """AGV五级物理参数配置"""
+    def __init__(self, grade: str = "M")
+        # mass: kg, inertia: kg·m², friction, restitution
+    def calculate_max_speed(self) -> float
+    def calculate_max_acceleration(self) -> float
+    @classmethod
+    def from_grade(cls, grade: str) -> 'PhysicsParameters'
+```
+
+物理参数五级规格:
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 质量 (kg) | 50 | 150 | 300 | 600 | 1200 |
+| 最大速度 (m/s) | 0.3 | 0.6 | 1.0 | 1.5 | 2.0 |
+| 最大加速度 (m/s²) | 0.1 | 0.3 | 0.5 | 0.8 | 1.2 |
+| 摩擦系数 | 0.3 | 0.4 | 0.5 | 0.6 | 0.7 |
+| 恢复系数 | 0.2 | 0.3 | 0.4 | 0.5 | 0.6 |
+
+### 37.3 传感器噪声模型 — SensorNoiseModel
+
+```python
+class SensorNoiseModel:
+    """传感器噪声建模，包括漂移、高斯噪声"""
+    def __init__(self, grade: str = "M")
+    def add_noise_lidar(self, raw_data: np.ndarray) -> np.ndarray
+    def add_noise_camera(self, raw_image: np.ndarray) -> np.ndarray
+    def add_noise_tactile(self, pressure: np.ndarray) -> np.ndarray
+    def add_noise_force(self, wrench: np.ndarray) -> np.ndarray
+    def add_noise_imu(self, accel: np.ndarray, gyro: np.ndarray) -> Tuple[np.ndarray, np.ndarray]
+    def reset_drift(self)
+```
+
+噪声参数五级规格:
+
+| 噪声 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 激光雷达标准差 (m) | 0.05 | 0.03 | 0.02 | 0.01 | 0.005 |
+| IMU加速度噪声 (m/s²) | 0.1 | 0.05 | 0.02 | 0.01 | 0.005 |
+| 漂移速率 (°/h) | 10 | 5 | 2 | 1 | 0.5 |
+
+### 37.4 通信时延模拟器 — DelaySimulator
+
+```python
+class DelaySimulator:
+    """传感器/控制数据传输时延模拟，支持丢包"""
+    def __init__(self, grade: str = "M")
+    def buffer_and_get_delayed(self, data: np.ndarray, timestamp: float) -> Optional[np.ndarray]
+    def should_drop(self) -> bool
+    def clear(self)
+```
+
+时延参数五级规格:
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 平均传感器时延 (ms) | 50 | 20 | 10 | 5 | 2 |
+| 丢包率 (%) | 5 | 2 | 1 | 0.5 | 0.1 |
+
+### 37.5 碰撞增强检测 — CollisionEnhancer
+
+```python
+class CollisionEnhancer:
+    """增强型碰撞检测，包括力估计"""
+    def __init__(self, physics: PhysicsParameters)
+    def check_proximity(self, pos1: np.ndarray, pos2: np.ndarray, radius1: float, radius2: float) -> bool
+    def estimate_collision_force(self, penetration: float, stiffness: float) -> float
+```
+
+### 37.6 随机环境生成器 — EnvironmentGenerator
+
+```python
+class EnvironmentGenerator:
+    """生成随机障碍场景用于具身训练"""
+    def __init__(self, world_size: Tuple[float, float] = (10.0, 10.0))
+    def generate_random_obstacles(num_obstacles: int, min_radius: float, max_radius: float) -> List[Obstacle]
+    def generate_cluttered(num_static: int, num_dynamic: int) -> Tuple[List[Obstacle], List[Obstacle]]
+    def obstacle_bounding_box_contains(obstacle: Obstacle, point: np.ndarray) -> bool
+```
+
+### 37.7 仓库场景生成器 — WarehouseSceneGenerator
+
+```python
+class WarehouseSceneGenerator:
+    """生成AGV仓库拣选场景"""
+    def __init__(self, shelf_rows: int = 4, shelf_cols: int = 10)
+    def generate_warehouse(self) -> Dict
+    def generate_picking_task() -> Dict
+```
+
+### 37.8 增强型仿真入口 — EmbodiedSimulationEnhancer
+
+```python
+class EmbodiedSimulationEnhancer:
+    """统一入口整合增强仿真功能"""
+    def __init__(self, grade: str = "M", engine: str = "pybullet")
+    def generate_warehouse_scene(self, num_agvs: int = 1) -> Dict
+    def process_sensor_data(self, raw_data: Dict[str, np.ndarray]) -> Dict[str, np.ndarray]
+    def set_load(self, load_mass: float)
+    def reset(self)
+```
+
+**增强仿真模块五级规格总结:**
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 物理参数 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 传感器噪声 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 时延模拟 | - | ✓ | ✓ | ✓ | ✓ |
+| 随机障碍生成 | - | ✓ | ✓ | ✓ | ✓ |
+| 仓库场景生成 | - | - | ✓ | ✓ | ✓ |
+| 多引擎支持 | pybullet | pybullet | pybullet+mujoco | all | all |
+
+---
+
+## 38. 真实AGV机器人接口适配 (Real AGV Interface)
+
+### 38.1 模块概述
+
+`embodied/real_agv_interface.py` — 真实工业AGV机器人硬件接口适配，支持多种通信协议、CAN总线、以太网，提供统一API封装。
+
+### 38.2 驱动类型 — AGVDriverType
+
+```python
+class AGVDriverType(Enum):
+    CAN_OPEN = "canopen"        # CANopen 协议
+    ETHERNET_IP = "ethernet_ip"  # Ethernet/IP
+    MODBUS_TCP = "modbus_tcp"    # Modbus TCP
+    PROFINET = "profinet"        # PROFINET
+    ROS2 = "ros2"               # ROS2 话题
+```
+
+### 38.3 状态数据结构 — AGVStatus
+
+```python
+@dataclass
+class AGVStatus:
+    """AGV实时状态"""
+    pose: Tuple[float, float, float]  # x (m), y (m), theta (rad)
+    velocity: Tuple[float, float, float]  # vx, vy, omega
+    battery_voltage: float  # V
+    battery_percent: float  # 0-100
+    motor_temperature: List[float]  # 四个驱动电机
+    encoder_counts: List[int]  # 四个编码器
+    emergency_stop: bool
+    fault_codes: List[int]
+    timestamp: float
+```
+
+### 38.4 速度指令 — AGVVelocityCommand
+
+```python
+@dataclass
+class AGVVelocityCommand:
+    """AGV速度指令"""
+    vx: float      # m/s
+    vy: float      # m/s (全向轮)
+    omega: float   # rad/s
+```
+
+### 38.5 位置目标 — AGVPositionTarget
+
+```python
+@dataclass
+class AGVPositionTarget:
+    """AGV位置目标"""
+    x: float
+    y: float
+    theta: float
+    tolerance_xy: float = 0.05   # m
+    tolerance_theta: float = 0.05  # rad
+```
+
+### 38.6 真实AGV接口基类 — RealAGVInterface
+
+```python
+class RealAGVInterface:
+    """真实AGV接口抽象基类"""
+    def __init__(self, config: RealAGVConfig)
+    def connect(self) -> bool
+    def disconnect(self)
+    def is_connected(self) -> bool
+    def get_status(self) -> AGVStatus
+    def send_velocity_command(self, cmd: AGVVelocityCommand) -> bool
+    def send_position_target(self, target: AGVPositionTarget) -> bool
+    def stop(self) -> bool
+    def emergency_stop(self) -> bool
+    def clear_fault(self) -> bool
+```
+
+### 38.7 具体实现
+
+| 实现类 | 协议 | 说明 |
+|--------|------|------|
+| `CANopenAGVInterface` | CANopen | CAN总线驱动 |
+| `EtherNetIPAGVInterface` | Ethernet/IP | 工业以太网 |
+| `ModbusTCPAGVInterface` | Modbus TCP | 简单Modbus通信 |
+| `ProfinetAGVInterface` | PROFINET | 实时PROFINET |
+| `ROS2AGVInterface` | ROS2 | ROS2话题通信 |
+| `SimulatedAGVInterface` | 仿真 | 仿真接口，用于调试 |
+
+### 38.8 工厂方法
+
+```python
+def create_real_agv_interface(
+    driver_type: AGVDriverType,
+    config: RealAGVConfig,
+    grade: str = "M"
+) -> RealAGVInterface
+```
+
+根据驱动类型和AGV等级创建适配接口。
+
+### 38.9 五级规格通信延迟
+
+| 等级 | 通信协议 | 平均延迟 (ms) | 刷新率 (Hz) |
+|------|----------|--------------|------------|
+| S | CANopen | 50 | 20 |
+| M | CANopen/Ethernet/IP | 20 | 50 |
+| L | Ethernet/IP | 10 | 100 |
+| XL | PROFINET | 5 | 200 |
+| XXL | PROFINET | 2 | 500 |
+
+---
+
+## 39. 行为树具身任务规划 (Behavior Tree for Embodied Task Planning)
+
+### 39.1 模块概述
+
+`embodied/behavior_tree.py` — 基于行为树的分层任务规划，为具身智能提供任务分解、条件判断、并行执行、重试等功能，支持动态 replan。
+
+### 39.2 节点状态 — NodeStatus
+
+```python
+class NodeStatus(Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    SUCCESS = "success"
+    FAILURE = "failure"
+```
+
+### 39.3 基类 — BTNode
+
+```python
+class BTNode:
+    """行为树节点基类"""
+    def __init__(self, name: str)
+    def tick(self, blackboard: Blackboard) -> NodeStatus
+    def reset(self)
+    @property
+    def name(self) -> str
+```
+
+### 39.4 组合节点
+
+| 节点类型 | 功能 |
+|----------|------|
+| `SelectorNode` | 依次执行，第一个成功即返回成功，全部失败返回失败 |
+| `SequenceNode` | 依次执行，第一个失败即返回失败，全部成功返回成功 |
+| `ParallelNode` | 并行执行所有子节点，根据策略判断成功/失败 |
+| `DecoratorNode` | 装饰节点基类 (反转、重复、直到...) |
+| `InverterNode` | 反转子节点状态 (SUCCESS ↔ FAILURE) |
+| `RepeaterNode` | 重复执行N次或无限 |
+| `UntilFailNode` | 一直执行直到失败 |
+| `UntilSuccessNode` | 一直执行直到成功 |
+
+### 39.5 AGV专用条件节点
+
+```python
+# 条件节点: 返回 SUCCESS 或 FAILURE
+class CheckBatteryLow(BTConditionNode):
+    """检查电池电量是否过低"""
+    def tick(self, blackboard) -> NodeStatus
+
+class CheckBatteryOK(BTConditionNode):
+    """检查电池电量是否足够"""
+    def tick(self, blackboard) -> NodeStatus
+
+class CheckPositionReached(BTConditionNode):
+    """检查是否到达目标位置"""
+    def tick(self, blackboard) -> NodeStatus
+
+class CheckSafe(BTConditionNode):
+    """检查环境是否安全"""
+    def tick(self, blackboard) -> NodeStatus
+
+class CheckObstacleNear(BTConditionNode):
+    """检查障碍物是否过近"""
+    def tick(self, blackboard) -> NodeStatus
+```
+
+### 39.6 AGV专用动作节点
+
+```python
+# 动作节点: 执行动作，返回 RUNNING/SUCCESS/FAILURE
+class MoveToPosition(BTActionNode):
+    """移动到目标位置"""
+    def tick(self, blackboard) -> NodeStatus
+
+class RotateToAngle(BTActionNode):
+    """旋转到目标角度"""
+    def tick(self, blackboard) -> NodeStatus
+
+class FollowPath(BTActionNode):
+    """跟踪预规划路径"""
+    def tick(self, blackboard) -> NodeStatus
+
+class Wait(BTActionNode):
+    """等待指定时间"""
+    def tick(self, blackboard) -> NodeStatus
+
+class ClearFault(BTActionNode):
+    """清除故障"""
+    def tick(self, blackboard) -> NodeStatus
+
+class ReplanPath(BTActionNode):
+    """重新规划路径"""
+    def tick(self, blackboard) -> NodeStatus
+```
+
+### 39.7 黑板 — Blackboard
+
+```python
+class Blackboard:
+    """行为树共享数据黑板"""
+    def __init__()
+    def set(self, key: str, value: Any)
+    def get(self, key: str, default: Any = None) -> Optional[Any]
+    def has(self, key: str) -> bool
+    def remove(self, key: str)
+    def update_robot_state(self, status: AGVStatus)
+    def get_robot_position(self) -> Optional[Tuple[float, float, float]]
+```
+
+### 39.8 行为树 — BehaviorTree
+
+```python
+class BehaviorTree:
+    """完整行为树"""
+    def __init__(self, root: BTNode)
+    def tick(self, blackboard: Blackboard) -> NodeStatus
+    def reset(self)
+    def get_statistics(self) -> Dict[str, Any]  # 总tick数，成功率等
+```
+
+### 39.9 具身任务规划器 — EmbodiedTaskPlanner
+
+```python
+class EmbodiedTaskPlanner:
+    """AGV具身任务规划器，整合行为树"""
+    def __init__(self, grade: str = "M")
+    def add_task(self, task_name: str, root: BTNode, priority: int = 0)
+    def initialize_task(self, task_name: str, blackboard: Blackboard)
+    def tick_current(self, blackboard: Blackboard) -> NodeStatus
+    def abort_current(self)
+    def get_status(self) -> Dict
+    def select_next_task_by_priority(self) -> Optional[str]
+```
+
+### 39.10 AGV任务规划器 — AGVTaskPlanner
+
+```python
+class AGVTaskPlanner(EmbodiedTaskPlanner):
+    """专门针对AGV的行为树任务规划器"""
+    def __init__(self, grade: str = "M")
+        # 初始化默认任务节点
+    def build_default_behavior_tree(self) -> BehaviorTree
+    def add_custom_node(self, node: BTNode)
+```
+
+### 39.11 五级规格能力
+
+| 功能 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 基本组合节点 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 装饰节点 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| AGV专用条件节点 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| AGV专用动作节点 | ✓ | ✓ | ✓ | ✓ | ✓ |
+| 多任务优先级调度 | - | ✓ | ✓ | ✓ | ✓ |
+| 动态重规划 | - | - | ✓ | ✓ | ✓ |
+| 并行任务执行 | - | - | ✓ | ✓ | ✓ |
+| 分层规划深度 | 2 | 3 | 5 | 8 | 12 |
+| 重规划间隔 (ms) | 1000 | 500 | 200 | 100 | 50 |
+
+**默认AGV行为树结构:**
+```
+Root (Sequence)
+├── CheckBatteryOK
+├── CheckSafe
+├── MoveToGoal
+│   ├── CheckPositionReached?
+│   ├── CheckObstacleNear?
+│   │   ├── Yes → ReplanPath
+│   │   └── No → FollowPath
+│   └── Tick
+└── TaskComplete
+```
+
+---
+
+## 40. 具身智能控制流程总结
+
+### 40.1 完整控制闭环
+
+```
+1. 感知层
+   RealAGVInterface / EmbodiedSimulationEnhancer
+   ↓
+   传感器数据采集 + 噪声模型 + 时延模拟
+   ↓
+2. 融合层
+   CrossModalFusion 多模态融合
+   ↓
+3. 规划层
+   BehaviorTree 任务分解 + 条件判断
+   ↓
+   动作节点输出速度/位置指令
+   ↓
+4. 控制层
+   AGVMotionController 计算轮子速度
+   ↓
+5. 执行层
+   RealAGVInterface 发送指令到硬件 / 仿真步进
+   ↓
+6. 反馈
+   回到感知层
+```
+
+### 40.2 部署要求
+
+| 依赖项 | 版本要求 |
+|--------|----------|
+| Python | ≥ 3.10 |
+| NumPy | ≥ 1.24 |
+| PyTorch | ≥ 2.0 |
+| canlib | (可选，CANopen) |
+| python-can | ≥ 4.0 |
+| pybullet | (可选，仿真) |
+| mujoco | (可选，仿真) |
+| gymnasium | ≥ 0.28 |
+
+### 40.3 环境变量配置
+
+```bash
+# 真实AGV通信配置
+export AGV_CAN_INTERFACE=can0
+export AGV_IP_ADDRESS=192.168.1.100
+export AGV_PORT=502
+
+# 仿真配置
+export AGV_SIMULATION_ENGINE=pybullet
+
+# 日志配置
+export AGV_LOG_LEVEL=info
+export AGV_LOG_DIR=./logs
+```
+
+---
+
+*文档版本: v2.65.0*
+*最后更新: 2026-04-11*
+
+**2026-04-11 v2.65.0**: 新增第37-40节:
+- **第37节** 具身智能仿真增强模块 (embodied/simulation_enhancement.py) — 物理参数、传感器噪声、时延模拟、随机环境生成、仓库场景生成，五级规格完整
+- **第38节** 真实AGV机器人接口适配 (embodied/real_agv_interface.py) — CANopen/Ethernet/IP/ModbusTCP/PROFINET/ROS2五种协议适配，统一API，五级通信规格
+- **第39节** 行为树具身任务规划 (embodied/behavior_tree.py) — 基础组合节点、装饰节点、AGV专用条件/动作节点、黑板、行为树、任务规划器，五级能力规划深度
+- **第40节** 具身智能完整控制流程总结，闭环流程，部署要求，环境变量配置
+
+---
+
 ## 33. 触觉-控制集成实战 (Tactile-Control Integration)
 
 ### 33.1 触觉伺服控制
