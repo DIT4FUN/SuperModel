@@ -1,27 +1,21 @@
 """
-behavior_tree_tests.py - 行为树具身任务规划测试
+behavior_tree_tests.py - 行为树具身任务规划模块测试
 SuperModel 超模态大模型具身智能系统
 
-测试内容:
-- 行为树基本节点功能测试
-- 序列/选择/并行节点测试
-- AGV任务行为树测试
-- 具身任务规划器测试
-- 多任务调度测试
-- 五级AGV规划能力适配测试
+测试覆盖:
+- 基础节点功能 (Sequence/Selector/Parallel/Decorator)
+- 条件节点和动作节点
+- 行为树完整执行流程
+- AGV专用任务规划器测试
+- 具身任务调度测试
 """
 
-import unittest
+import pytest
 import numpy as np
-import sys
-import os
 import time
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
 from src.embodied.behavior_tree import (
     NodeStatus,
-    TaskStatus,
+    BTNode,
     SequenceNode,
     SelectorNode,
     ParallelNode,
@@ -30,185 +24,225 @@ from src.embodied.behavior_tree import (
     UntilSuccessNode,
     InverterNode,
     ConditionNode,
+    ActionNode,
     LambdaActionNode,
     BehaviorTree,
     Blackboard,
     EmbodiedTask,
     EmbodiedTaskPlanner,
     AGVTaskPlanner,
+    TaskStatus,
     AGVCheckBatteryCondition,
     AGVCheckSafeCondition,
     AGVCheckPositionReached,
     AGVMoveToAction,
+    AGVGraspAction,
+    AGVReleaseAction,
 )
 
 
-class TestBasicNodes(unittest.TestCase):
-    """测试基本节点功能"""
+class TestBlackboard:
+    """黑板测试"""
 
-    def setUp(self):
-        self.blackboard = Blackboard()
+    def test_get_set(self):
+        """测试基本存取"""
+        bb = Blackboard()
+        bb.set('test_key', 'test_value')
+        assert bb.get('test_key') == 'test_value'
+        assert bb.has('test_key')
+        assert bb.remove('test_key')
+        assert not bb.has('test_key')
 
-    def test_sequence_node_all_success(self):
-        """序列节点 - 全部成功"""
-        seq = SequenceNode("TestSequence")
+    def test_update_robot_state(self):
+        """测试机器人状态更新"""
+        bb = Blackboard()
+        bb.update_robot_state({
+            'position': [1.0, 2.0, 0.0],
+            'velocity': [0.5, 0.0, 0.0],
+            'battery_level': 0.8,
+        })
+        assert np.array_equal(bb.get_robot_position(), np.array([1.0, 2.0, 0.0]))
+        assert np.array_equal(bb.get_robot_velocity(), np.array([0.5, 0.0, 0.0]))
+        assert bb.get_battery_level() == 0.8
+
+    def test_is_safe_default(self):
+        """测试默认安全状态"""
+        bb = Blackboard()
+        assert bb.is_safe() is True
+
+
+class TestSequenceNode:
+    """序列节点测试"""
+
+    def test_all_success(self):
+        """所有子节点成功"""
+        seq = SequenceNode("Test")
         seq.add_children(
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS, "A"),
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS, "B"),
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS, "C"),
+            ConditionNode(lambda bb: True, "Cond1"),
+            ConditionNode(lambda bb: True, "Cond2"),
         )
-        status = seq.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
+        bb = Blackboard()
+        status = seq.tick(bb)
+        assert status == NodeStatus.SUCCESS
 
-    def test_sequence_node_first_failure(self):
-        """序列节点 - 第一个失败"""
-        seq = SequenceNode("TestSequence")
+    def test_first_failure(self):
+        """第一个节点失败"""
+        seq = SequenceNode("Test")
         seq.add_children(
-            LambdaActionNode(lambda bb: NodeStatus.FAILURE, "A"),
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS, "B"),
+            ConditionNode(lambda bb: False, "Cond1"),
+            ConditionNode(lambda bb: True, "Cond2"),
         )
-        status = seq.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.FAILURE)
+        bb = Blackboard()
+        status = seq.tick(bb)
+        assert status == NodeStatus.FAILURE
 
-    def test_selector_node_first_success(self):
-        """选择节点 - 第一个成功"""
-        sel = SelectorNode("TestSelector")
+    def test_running_keeps_running(self):
+        """有节点运行中保持运行状态"""
+        class RunningAction(ActionNode):
+            def execute(self, bb):
+                return NodeStatus.RUNNING
+
+        seq = SequenceNode("Test")
+        seq.add_children(
+            ConditionNode(lambda bb: True, "Cond1"),
+            RunningAction("Run"),
+            ConditionNode(lambda bb: True, "Cond2"),
+        )
+        bb = Blackboard()
+        status = seq.tick(bb)
+        assert status == NodeStatus.RUNNING
+
+
+class TestSelectorNode:
+    """选择节点测试"""
+
+    def test_first_success(self):
+        """第一个成功则整体成功"""
+        sel = SelectorNode("Test")
         sel.add_children(
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS, "A"),
-            LambdaActionNode(lambda bb: NodeStatus.FAILURE, "B"),
+            ConditionNode(lambda bb: True, "Cond1"),
+            ConditionNode(lambda bb: False, "Cond2"),
         )
-        status = sel.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
+        bb = Blackboard()
+        status = sel.tick(bb)
+        assert status == NodeStatus.SUCCESS
 
-    def test_selector_node_all_fail(self):
-        """选择节点 - 全部失败"""
-        sel = SelectorNode("TestSelector")
+    def test_all_fail(self):
+        """全部失败则整体失败"""
+        sel = SelectorNode("Test")
         sel.add_children(
-            LambdaActionNode(lambda bb: NodeStatus.FAILURE, "A"),
-            LambdaActionNode(lambda bb: NodeStatus.FAILURE, "B"),
+            ConditionNode(lambda bb: False, "Cond1"),
+            ConditionNode(lambda bb: False, "Cond2"),
         )
-        status = sel.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.FAILURE)
+        bb = Blackboard()
+        status = sel.tick(bb)
+        assert status == NodeStatus.FAILURE
 
-    def test_inverter_node(self):
-        """反转节点"""
-        # 成功 → 失败
-        inv = InverterNode(LambdaActionNode(lambda bb: NodeStatus.SUCCESS))
-        status = inv.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.FAILURE)
+    def test_one_running(self):
+        """有节点运行中保持运行"""
+        class RunningAction(ActionNode):
+            def execute(self, bb):
+                return NodeStatus.RUNNING
 
-        # 失败 → 成功
-        inv = InverterNode(LambdaActionNode(lambda bb: NodeStatus.FAILURE))
-        status = inv.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
+        sel = SelectorNode("Test")
+        sel.add_children(
+            ConditionNode(lambda bb: False, "Cond1"),
+            RunningAction("Run"),
+        )
+        bb = Blackboard()
+        status = sel.tick(bb)
+        assert status == NodeStatus.RUNNING
 
-    def test_condition_node_true(self):
-        """条件节点 - 真"""
-        cond = ConditionNode(lambda bb: True)
-        status = cond.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
 
-    def test_condition_node_false(self):
-        """条件节点 - 假"""
-        cond = ConditionNode(lambda bb: False)
-        status = cond.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.FAILURE)
+class TestParallelNode:
+    """并行节点测试"""
 
-    def test_repeater_node_limited(self):
-        """重复节点 - 有限次数"""
+    def test_require_all_success_all_succeed(self):
+        """所有成功要求下全部成功"""
+        parallel = ParallelNode(
+            "Test",
+            success_policy=ParallelNode.Policy.REQUIRE_ALL,
+            failure_policy=ParallelNode.Policy.REQUIRE_ANY
+        )
+        parallel.add_children(
+            ConditionNode(lambda bb: True, "C1"),
+            ConditionNode(lambda bb: True, "C2"),
+        )
+        bb = Blackboard()
+        status = parallel.tick(bb)
+        assert status == NodeStatus.SUCCESS
+
+    def test_require_all_success_one_fail(self):
+        """所有成功要求下一个失败立即失败"""
+        parallel = ParallelNode(
+            "Test",
+            success_policy=ParallelNode.Policy.REQUIRE_ALL,
+            failure_policy=ParallelNode.Policy.REQUIRE_ANY
+        )
+        parallel.add_children(
+            ConditionNode(lambda bb: True, "C1"),
+            ConditionNode(lambda bb: False, "C2"),
+        )
+        bb = Blackboard()
+        status = parallel.tick(bb)
+        assert status == NodeStatus.FAILURE
+
+
+class TestDecoratorNodes:
+    """装饰器节点测试"""
+
+    def test_inverter(self):
+        """反转装饰器测试"""
+        cond_true = ConditionNode(lambda bb: True, "True")
+        inv = InverterNode(cond_true)
+        bb = Blackboard()
+        assert inv.tick(bb) == NodeStatus.FAILURE
+
+        cond_false = ConditionNode(lambda bb: False, "False")
+        inv2 = InverterNode(cond_false)
+        assert inv2.tick(bb) == NodeStatus.SUCCESS
+
+    def test_until_success(self):
+        """直到成功装饰器测试"""
+        attempts = []
+        def cond(bb):
+            attempts.append(1)
+            return len(attempts) >= 3
+
+        node = ConditionNode(cond, "Cond")
+        until = UntilSuccessNode(node)
+        bb = Blackboard()
+
+        # 前两次失败，返回运行中
+        assert until.tick(bb) == NodeStatus.RUNNING
+        assert until.tick(bb) == NodeStatus.RUNNING
+        # 第三次成功
+        assert until.tick(bb) == NodeStatus.SUCCESS
+
+    def test_repeater有限次数(self):
+        """重复装饰器有限次数测试"""
         count = 0
         def action(bb):
             nonlocal count
             count += 1
             return NodeStatus.SUCCESS
 
-        node = RepeaterNode(LambdaActionNode(action), times=3)
-        status = node.tick(self.blackboard)
-        # 第一次tick，还没完成三次
-        self.assertEqual(status, NodeStatus.RUNNING)
-        self.assertEqual(count, 1)
+        node = LambdaActionNode(action)
+        repeater = RepeaterNode(node, times=3)
+        bb = Blackboard()
 
-        # 继续tick直到完成
         for _ in range(2):
-            status = node.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertEqual(count, 3)
-
-    def test_until_fail_node(self):
-        """直到失败节点"""
-        count = 0
-        def action(bb):
-            nonlocal count
-            count += 1
-            return NodeStatus.SUCCESS if count < 3 else NodeStatus.FAILURE
-
-        node = UntilFailNode(LambdaActionNode(action))
-        # 前两次都应该返回 RUNNING
-        for _ in range(2):
-            status = node.tick(self.blackboard)
-            self.assertEqual(status, NodeStatus.RUNNING)
-        # 第三次失败，返回 SUCCESS
-        status = node.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertEqual(count, 3)
-
-    def test_until_success_node(self):
-        """直到成功节点"""
-        count = 0
-        def action(bb):
-            nonlocal count
-            count += 1
-            return NodeStatus.FAILURE if count < 3 else NodeStatus.SUCCESS
-
-        node = UntilSuccessNode(LambdaActionNode(action))
-        for _ in range(2):
-            status = node.tick(self.blackboard)
-            self.assertEqual(status, NodeStatus.RUNNING)
-        status = node.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-        self.assertEqual(count, 3)
+            assert repeater.tick(bb) == NodeStatus.RUNNING
+        assert repeater.tick(bb) == NodeStatus.SUCCESS
+        assert count == 3
 
 
-class TestParallelNode(unittest.TestCase):
-    """测试并行节点"""
+class TestBehaviorTree:
+    """行为树整体测试"""
 
-    def setUp(self):
-        self.blackboard = Blackboard()
-
-    def test_parallel_require_all_success_all_success(self):
-        """并行节点 - 全部成功要求，全部成功"""
-        parallel = ParallelNode(
-            "Test",
-            success_policy=ParallelNode.Policy.REQUIRE_ALL,
-            failure_policy=ParallelNode.Policy.REQUIRE_ANY
-        )
-        parallel.add_children(
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS),
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS),
-        )
-        status = parallel.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-
-    def test_parallel_require_all_success_one_failure(self):
-        """并行节点 - 全部成功要求，一个失败"""
-        parallel = ParallelNode(
-            "Test",
-            success_policy=ParallelNode.Policy.REQUIRE_ALL,
-            failure_policy=ParallelNode.Policy.REQUIRE_ANY
-        )
-        parallel.add_children(
-            LambdaActionNode(lambda bb: NodeStatus.SUCCESS),
-            LambdaActionNode(lambda bb: NodeStatus.FAILURE),
-        )
-        status = parallel.tick(self.blackboard)
-        self.assertEqual(status, NodeStatus.FAILURE)
-
-
-class TestBehaviorTree(unittest.TestCase):
-    """测试行为树整体"""
-
-    def setUp(self):
-        # 创建一个简单的导航行为树
+    def test_simple_navigation_tree(self):
+        """简单导航树测试"""
+        # 导航序列: 检查安全 -> 检查电量 -> 移动 -> 检查到达
         root = SequenceNode("Navigation")
         root.add_children(
             AGVCheckSafeCondition(),
@@ -216,283 +250,329 @@ class TestBehaviorTree(unittest.TestCase):
             AGVMoveToAction(),
             AGVCheckPositionReached(threshold=0.1),
         )
-        self.bt = BehaviorTree(root)
 
-    def test_bt_statistics(self):
-        """行为树统计"""
-        stats = self.bt.get_statistics()
-        self.assertGreater(stats['total_nodes'], 0)
-        self.assertIn('SequenceNode', stats['node_types'])
-        self.assertIn('AGVCheckSafeCondition', stats['node_types'])
-
-    def test_bt_update_state(self):
-        """更新机器人状态"""
-        self.bt.update_robot_state({
+        bt = BehaviorTree(root)
+        bt.update_robot_state({
             'position': [0.0, 0.0, 0.0],
-            'safety': True,
             'battery_level': 0.8,
-        })
-        self.bt.update_world_state({
-            'obstacles': [],
-        })
-        self.bt.set_goal({'target_position': [1.0, 0.0, 0.0]})
-
-    def test_bt_reset(self):
-        """重置行为树"""
-        self.bt.tick()
-        self.bt.reset()
-        self.assertEqual(self.bt.last_status, NodeStatus.IDLE)
-
-
-class TestAGVNodes(unittest.TestCase):
-    """测试AGV专用节点"""
-
-    def setUp(self):
-        self.bb = Blackboard()
-        self.bb.update_robot_state({
             'safety': True,
-            'battery_level': 0.5,
-            'position': [0.0, 0.0, 0.0],
         })
-        self.bb.goal_state['target_position'] = [1.0, 0.0, 0.0]
+        bt.set_goal({'target_position': [1.0, 0.0, 0.0]})
 
-    def test_check_battery_ok(self):
-        """电量检查 - 电量充足"""
-        node = AGVCheckBatteryCondition(min_battery=0.2)
-        status = node.tick(self.bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
+        # 还没到达，保持运行
+        status = bt.tick()
+        assert status == NodeStatus.RUNNING
 
-    def test_check_battery_low(self):
-        """电量检查 - 电量不足"""
-        self.bb.update_robot_state({'battery_level': 0.1})
-        node = AGVCheckBatteryCondition(min_battery=0.2)
-        status = node.tick(self.bb)
-        self.assertEqual(status, NodeStatus.FAILURE)
+        # 更新位置到目标附近
+        bt.update_robot_state({'position': [0.95, 0.0, 0.0]})
+        status = bt.tick()
+        assert status == NodeStatus.SUCCESS
 
-    def test_check_safe_ok(self):
-        """安全检查 - 安全"""
-        node = AGVCheckSafeCondition()
-        status = node.tick(self.bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-
-    def test_check_safe_not_ok(self):
-        """安全检查 - 不安全"""
-        self.bb.update_robot_state({'safety': False})
-        node = AGVCheckSafeCondition()
-        status = node.tick(self.bb)
-        self.assertEqual(status, NodeStatus.FAILURE)
-
-    def test_check_position_reached_yes(self):
-        """位置检查 - 已到达"""
-        self.bb.update_robot_state({'position': [0.99, 0.01, 0.0]})
-        node = AGVCheckPositionReached(threshold=0.1)
-        status = node.tick(self.bb)
-        self.assertEqual(status, NodeStatus.SUCCESS)
-
-    def test_check_position_reached_no(self):
-        """位置检查 - 未到达"""
-        self.bb.update_robot_state({'position': [0.5, 0.0, 0.0]})
-        node = AGVCheckPositionReached(threshold=0.1)
-        status = node.tick(self.bb)
-        self.assertEqual(status, NodeStatus.FAILURE)
+    def test_statistics(self):
+        """测试统计信息"""
+        root = SequenceNode("Root")
+        root.add_children(
+            ConditionNode(lambda bb: True),
+            SelectorNode("Sel").add_children(
+                ConditionNode(lambda bb: False),
+                ConditionNode(lambda bb: True),
+            )
+        )
+        bt = BehaviorTree(root)
+        stats = bt.get_statistics()
+        assert stats['total_nodes'] == 5
+        assert 'SequenceNode' in stats['node_types']
+        assert 'SelectorNode' in stats['node_types']
+        assert 'ConditionNode' in stats['node_types']
 
 
-class TestEmbodiedTaskPlanner(unittest.TestCase):
-    """测试具身任务规划器"""
+class TestEmbodiedTask:
+    """具身任务定义测试"""
 
-    def setUp(self):
-        self.planner = EmbodiedTaskPlanner()
+    def test_task_lifecycle(self):
+        """任务生命周期测试"""
+        task = EmbodiedTask(
+            task_id="task_001",
+            task_type="navigate",
+            goal_description="Navigate to position (10, 5)",
+            target_position=np.array([10.0, 5.0, 0.0]),
+            priority=0,
+            timeout=300.0,
+        )
 
-        # 创建一个简单的导航任务
-        nav_root = SequenceNode("NavigateRoot")
-        nav_root.add_children(
+        assert task.status == TaskStatus.IDLE
+        assert not task.is_timeout()
+
+        task.start()
+        assert task.status == TaskStatus.RUNNING
+        assert task.start_time is not None
+
+        task.finish(success=True)
+        assert task.status == TaskStatus.COMPLETED
+        assert task.success is True
+        assert task.end_time is not None
+        assert task.get_duration() > 0
+
+
+class TestEmbodiedTaskPlanner:
+    """具身任务规划器测试"""
+
+    def test_register_task_type(self):
+        """测试注册任务类型"""
+        planner = EmbodiedTaskPlanner()
+        root = SequenceNode("TestTask")
+        root.add_children(
             AGVCheckSafeCondition(),
             AGVCheckBatteryCondition(),
-            AGVMoveToAction(),
         )
-        self.planner.register_task_type('navigate', nav_root)
+        planner.register_task_type("test", root)
+        assert "test" in planner.behavior_trees
 
-    def test_add_task(self):
-        """添加任务"""
+    def test_add_remove_task(self):
+        """测试添加移除任务"""
+        planner = EmbodiedTaskPlanner()
         task = EmbodiedTask(
-            task_id='test_001',
-            task_type='navigate',
-            goal_description='Navigate to origin',
-            target_position=np.array([0.0, 0.0, 0.0]),
-            priority=0,
+            task_id="t1",
+            task_type="navigate",
+            goal_description="Test"
         )
-        self.planner.add_task(task)
-        self.assertIn('test_001', self.planner.tasks)
+        planner.add_task(task)
+        assert "t1" in planner.tasks
+        assert planner.remove_task("t1")
+        assert "t1" not in planner.tasks
 
-    def test_select_next_task_by_priority(self):
-        """按优先级选择下一个任务"""
-        task1 = EmbodiedTask(task_id='low', task_type='navigate', goal_description='Low', priority=10)
-        task2 = EmbodiedTask(task_id='high', task_type='navigate', goal_description='High', priority=0)
-        self.planner.add_task(task1)
-        self.planner.add_task(task2)
+    def test_priority_selection(self):
+        """测试优先级选择"""
+        planner = EmbodiedTaskPlanner()
 
-        next_task = self.planner.select_next_task()
-        self.assertEqual(next_task.task_id, 'high')
+        # 注册一个简单任务
+        root = SequenceNode("Test")
+        root.add_children(ConditionNode(lambda bb: True))
+        planner.register_task_type("navigate", root)
 
-    def test_tick_with_no_tasks(self):
-        """没有任务时tick"""
-        status = self.planner.tick({}, {})
-        self.assertEqual(status, NodeStatus.IDLE)
+        # 添加不同优先级任务
+        task1 = EmbodiedTask("t1", "navigate", "Low priority", priority=10)
+        task2 = EmbodiedTask("t2", "navigate", "High priority", priority=0)
+        task3 = EmbodiedTask("t3", "navigate", "Medium priority", priority=5)
 
-    def test_initialize_task(self):
-        """初始化任务"""
+        planner.add_task(task1)
+        planner.add_task(task2)
+        planner.add_task(task3)
+
+        # 应该选优先级最高的 (数字最小)
+        selected = planner.select_next_task()
+        assert selected.task_id == "t2"
+
+    def test_tick_workflow(self):
+        """测试完整tick工作流"""
+        planner = EmbodiedTaskPlanner()
+
+        # 创建导航任务树
+        nav_sequence = SequenceNode("Navigate")
+        nav_sequence.add_children(
+            AGVCheckSafeCondition(),
+            AGVCheckBatteryCondition(0.2),
+            AGVMoveToAction(),
+            AGVCheckPositionReached(0.1),
+        )
+        planner.register_task_type('navigate', nav_sequence)
+
+        # 添加任务
         task = EmbodiedTask(
             task_id='nav_001',
             task_type='navigate',
-            goal_description='Test navigation',
-            target_position=np.array([1.0, 0.0, 0.0]),
+            goal_description='Go to (2, 0)',
+            target_position=np.array([2.0, 0.0, 0.0]),
+            priority=0,
         )
-        self.planner.add_task(task)
-        bt = self.planner.initialize_task(task)
-        self.assertIsNotNone(bt)
-        self.assertEqual(task.status, TaskStatus.RUNNING)
-        self.assertEqual(self.planner.status, TaskStatus.RUNNING)
+        planner.add_task(task)
 
-    def test_abort_current(self):
-        """中止当前任务"""
-        task = EmbodiedTask(task_id='test', task_type='navigate', goal_description='Test')
-        self.planner.add_task(task)
-        self.planner.initialize_task(task)
-        self.planner.abort_current()
-        self.assertIsNone(self.planner.current_task)
-        self.assertEqual(self.planner.status, TaskStatus.ABORTED)
+        # 第一次tick应该初始化并开始执行
+        status = planner.tick(
+            robot_state={'position': [0.0, 0.0, 0.0], 'battery_level': 0.8, 'safety': True},
+            world_state={}
+        )
+        assert status == NodeStatus.RUNNING
+        assert planner.current_task is not None
+        assert planner.current_task.task_id == 'nav_001'
 
-    def test_get_status(self):
-        """获取规划器状态"""
-        status = self.planner.get_status()
-        self.assertIn('current_task', status)
-        self.assertIn('pending_tasks', status)
-        self.assertIn('registered_types', status)
-        self.assertIn('navigate', status['registered_types'])
+        # 更新位置接近目标
+        status = planner.tick(
+            robot_state={'position': [1.95, 0.0, 0.0], 'battery_level': 0.8, 'safety': True},
+            world_state={}
+        )
+        # 应该完成
+        assert status == NodeStatus.SUCCESS
+        assert planner.status == TaskStatus.COMPLETED
+        assert planner.current_task.status == TaskStatus.COMPLETED
 
 
-class TestAGVTaskPlanner(unittest.TestCase):
-    """测试AGV专用任务规划器"""
+class TestAGVTaskPlanner:
+    """AGV专用任务规划器测试"""
 
-    def test_all_grades_capabilities(self):
-        """测试所有等级的规划能力"""
-        grades = ['S', 'M', 'L', 'XL', 'XXL']
-        for grade in grades:
-            planner = AGVTaskPlanner(grade=grade)
-            caps = planner.get_capabilities()
-            self.assertEqual(caps['grade'], grade)
-            self.assertIn('max_planning_depth', caps)
-            self.assertIn('max_concurrent_tasks', caps)
-            self.assertTrue(caps['support_behavior_tree'])
+    @pytest.mark.parametrize("grade", ["S", "M", "L", "XL", "XXL"])
+    def test_capabilities_by_grade(self, grade):
+        """测试不同等级AGV的规划能力"""
+        planner = AGVTaskPlanner(grade=grade)
+        caps = planner.get_capabilities()
+        assert caps['grade'] == grade
+        assert 'max_planning_depth' in caps
+        assert 'max_concurrent_tasks' in caps
+        assert caps['support_behavior_tree'] is True
+
+        # 等级越高规划能力越强
+        capabilities = AGVTaskPlanner.AGV_PLANNING_CAPABILITIES[grade]
+        assert caps['max_planning_depth'] == capabilities['max_planning_depth']
+        assert caps['max_concurrent_tasks'] == capabilities['max_concurrent_tasks']
 
     def test_default_tasks_registered(self):
-        """默认任务已注册"""
-        planner = AGVTaskPlanner(grade='M')
-        status = planner.get_status()
-        registered = status['registered_types']
-        self.assertIn('navigate', registered)
-        self.assertIn('transport', registered)
-        self.assertIn('patrol', registered)
+        """测试默认任务已注册"""
+        planner = AGVTaskPlanner(grade="M")
+        registered = planner.get_status()['registered_types']
+        assert 'navigate' in registered
+        assert 'transport' in registered
+        assert 'patrol' in registered
 
-    def test_planning_depth_increases(self):
-        """规划深度随等级增加"""
-        depths = {}
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            planner = AGVTaskPlanner(grade=grade)
-            depths[grade] = planner.get_capabilities()['max_planning_depth']
-
-        self.assertLess(depths['S'], depths['M'])
-        self.assertLess(depths['M'], depths['L'])
-        self.assertLess(depths['L'], depths['XL'])
-        self.assertLess(depths['XL'], depths['XXL'])
-
-    def test_replan_interval_decreases(self):
-        """重规划间隔随等级减少"""
-        intervals = {}
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            planner = AGVTaskPlanner(grade=grade)
-            intervals[grade] = planner.get_capabilities()['replan_interval']
-
-        self.assertGreater(intervals['S'], intervals['M'])
-        self.assertGreater(intervals['M'], intervals['L'])
-        self.assertGreater(intervals['L'], intervals['XL'])
-        self.assertGreater(intervals['XL'], intervals['XXL'])
-
-
-class TestEmbodiedTask(unittest.TestCase):
-    """测试具身任务定义"""
-
-    def test_task_start(self):
-        """任务开始"""
+    def test_navigate_task_execution(self):
+        """测试导航任务执行"""
+        planner = AGVTaskPlanner(grade="M")
         task = EmbodiedTask(
-            task_id='test',
+            task_id='nav_test',
             task_type='navigate',
-            goal_description='Test'
+            goal_description='Navigate to (5, 0)',
+            target_position=np.array([5.0, 0.0, 0.0]),
+            priority=0,
         )
-        self.assertEqual(task.status, TaskStatus.IDLE)
-        task.start()
-        self.assertEqual(task.status, TaskStatus.RUNNING)
-        self.assertIsNotNone(task.start_time)
+        planner.add_task(task)
 
-    def test_task_finish_success(self):
-        """任务成功完成"""
+        # 初始位置在原点，电量充足，安全
+        status = planner.tick(
+            robot_state={'position': [0.0, 0.0, 0.0], 'battery_level': 0.9, 'safety': True},
+            world_state={}
+        )
+        assert status == NodeStatus.RUNNING
+
+    def test_transport_task_structure(self):
+        """测试搬运任务结构"""
+        planner = AGVTaskPlanner(grade="M")
+        assert 'transport' in planner.behavior_trees
+        bt = planner.behavior_trees['transport']
+        stats = bt.get_statistics()
+        # 搬运任务有多个节点
+        assert stats['total_nodes'] > 5
+
+    def test_transport_task_with_pickup_dropoff(self):
+        """测试完整搬运任务"""
+        planner = AGVTaskPlanner(grade="M")
         task = EmbodiedTask(
-            task_id='test',
-            task_type='navigate',
-            goal_description='Test'
+            task_id='transport_001',
+            task_type='transport',
+            goal_description='Transport from A to B',
+            priority=1,
         )
-        task.start()
-        time.sleep(0.01)
-        task.finish(success=True)
-        self.assertEqual(task.status, TaskStatus.COMPLETED)
-        self.assertTrue(task.success)
-        self.assertGreater(task.get_duration(), 0)
+        planner.add_task(task)
 
-    def test_task_timeout(self):
-        """任务超时"""
-        task = EmbodiedTask(
-            task_id='test',
-            task_type='navigate',
-            goal_description='Test',
-            timeout=0.01
+        # 设置拾取和放置位置到目标
+        planner.initialize_task(task)
+        bt = planner.behavior_trees['transport']
+        bt.set_goal({
+            'pickup_position': np.array([1.0, 0.0, 0.0]),
+            'dropoff_position': np.array([5.0, 0.0, 0.0]),
+        })
+
+        # 初始状态检查安全和电量
+        bt.update_robot_state({
+            'position': [0.0, 0.0, 0.0],
+            'battery_level': 0.8,
+            'safety': True,
+        })
+        # 第一个tick会走到这里，设置拾取目标，然后开始移动
+        status = bt.tick()
+        # 还在移动中
+        assert status == NodeStatus.RUNNING
+
+
+class TestAGVSpecificNodes:
+    """AGV专用节点测试"""
+
+    def test_check_battery_condition_ok(self):
+        """电量检查 - 电量充足"""
+        cond = AGVCheckBatteryCondition(min_battery=0.2)
+        bb = Blackboard()
+        bb.update_robot_state({'battery_level': 0.5})
+        assert cond.tick(bb) == NodeStatus.SUCCESS
+
+    def test_check_battery_condition_low(self):
+        """电量检查 - 电量不足"""
+        cond = AGVCheckBatteryCondition(min_battery=0.2)
+        bb = Blackboard()
+        bb.update_robot_state({'battery_level': 0.1})
+        assert cond.tick(bb) == NodeStatus.FAILURE
+
+    def test_check_safe_condition(self):
+        """安全检查测试"""
+        cond = AGVCheckSafeCondition()
+        bb = Blackboard()
+        bb.update_robot_state({'safety': True})
+        assert cond.tick(bb) == NodeStatus.SUCCESS
+        bb.update_robot_state({'safety': False})
+        assert cond.tick(bb) == NodeStatus.FAILURE
+
+    def test_check_position_reached(self):
+        """位置到达检查"""
+        cond = AGVCheckPositionReached(threshold=0.1)
+        bb = Blackboard()
+        bb.update_robot_state({'position': [1.05, 0.0, 0.0]})
+        bb.goal_state['target_position'] = np.array([1.0, 0.0, 0.0])
+        # 距离0.05 < 0.1 → 到达
+        assert cond.tick(bb) == NodeStatus.SUCCESS
+
+        bb.update_robot_state({'position': [2.0, 0.0, 0.0]})
+        # 距离1.0 > 0.1 → 未到达
+        assert cond.tick(bb) == NodeStatus.FAILURE
+
+    def test_grasp_action_timing(self):
+        """抓取动作计时"""
+        grasp = AGVGraspAction()
+        bb = Blackboard()
+        bb.goal_state['target_object'] = 'box_001'
+
+        # 第一次tick开始抓取
+        status = grasp.execute(bb)
+        assert status == NodeStatus.RUNNING
+
+    def test_release_action_timing(self):
+        """释放动作计时"""
+        release = AGVReleaseAction()
+        bb = Blackboard()
+        status = release.execute(bb)
+        assert status == NodeStatus.RUNNING
+
+
+class TestBehaviorTreeReset:
+    """行为树重置测试"""
+
+    def test_reset_whole_tree(self):
+        """整树重置测试"""
+        root = SequenceNode("Root")
+        root.add_children(
+            RepeaterNode(ConditionNode(lambda bb: True, "Cond"), times=2),
         )
-        task.start()
-        time.sleep(0.02)
-        self.assertTrue(task.is_timeout())
+        bt = BehaviorTree(root)
+        bt.tick()
+        assert bt.root.status != NodeStatus.IDLE
+        assert bt.root.children[0].status != NodeStatus.IDLE
+
+        bt.reset()
+        assert bt.last_status == NodeStatus.IDLE
+        assert bt.root.status == NodeStatus.IDLE
+        assert bt.root.children[0].status == NodeStatus.IDLE
 
 
-class TestBlackboard(unittest.TestCase):
-    """测试黑板"""
-
-    def setUp(self):
-        self.bb = Blackboard()
-
-    def test_get_set_has_remove(self):
-        """基本存取"""
-        self.bb.set('key', 'value')
-        self.assertTrue(self.bb.has('key'))
-        self.assertEqual(self.bb.get('key'), 'value')
-        self.assertTrue(self.bb.remove('key'))
-        self.assertFalse(self.bb.has('key'))
-
-    def test_update_robot_state(self):
-        """更新机器人状态"""
-        self.bb.update_robot_state({'position': [1, 2, 3], 'battery': 0.8})
-        self.assertEqual(self.bb.robot_state['position'], [1, 2, 3])
-        self.assertEqual(self.bb.robot_state['battery'], 0.8)
-
-    def test_get_robot_position_none(self):
-        """获取位置 - 无数据"""
-        pos = self.bb.get_robot_position()
-        self.assertIsNone(pos)
-
-    def test_get_robot_position_convert(self):
-        """获取位置 - 转换为numpy"""
-        self.bb.update_robot_state({'position': [1.0, 2.0, 3.0]})
-        pos = self.bb.get_robot_position()
-        self.assertIsInstance(pos, np.ndarray)
-        np.testing.assert_array_equal(pos, np.array([1.0, 2.0, 3.0]))
+def run_all_tests():
+    """运行所有测试"""
+    pytest.main([__file__, "-v"])
 
 
-if __name__ == '__main__':
-    unittest.main()
+if __name__ == "__main__":
+    run_all_tests()

@@ -876,6 +876,7 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
         pickup_pos = blackboard.goal_state.get('pickup_position')
         if pickup_pos is not None:
             blackboard.set('current_target', pickup_pos)
+            blackboard.goal_state['target_position'] = pickup_pos
             return NodeStatus.SUCCESS
         return NodeStatus.FAILURE
 
@@ -884,6 +885,7 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
         dropoff_pos = blackboard.goal_state.get('dropoff_position')
         if dropoff_pos is not None:
             blackboard.set('current_target', dropoff_pos)
+            blackboard.goal_state['target_position'] = dropoff_pos
             return NodeStatus.SUCCESS
         return NodeStatus.FAILURE
 

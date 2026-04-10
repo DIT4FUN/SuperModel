@@ -45,6 +45,9 @@
 | 34 | [力觉-控制集成实战](#34-力觉-控制集成实战-force-control-integration) | 4371-4737 | ForceController |
 | 35 | [IMU-控制集成实战](#35-imu-控制集成实战-imu-control-integration) | 4738-5030 | AttitudeStabilizer |
 | 36 | [多传感器-控制联合集成](#36-多传感器-控制联合集成) | 5031-5240 | 联合集成实战 |
+| 37 | [行为树具身任务规划](#37-行为树具身任务规划-behavior-tree) | 5241-5780 | 行为树战术执行框架 |
+| 38 | [增强具身仿真环境](#38-增强具身仿真环境-embodied-simulation) | 5781-6160 | 多模态传感器增强仿真 |
+| 39 | [真实AGV机器人硬件接口](#39-真实agv机器人硬件接口-real-agv-hardware-interface) | 6161-8123 | 真实硬件驱动整合 |
 
 ---
 

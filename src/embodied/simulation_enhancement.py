@@ -101,7 +101,9 @@ class PhysicsParameters:
 
     def calculate_max_speed(self) -> float:
         """计算最大线速度 (m/s)"""
-        return self.motor_max_speed * self.wheel_radius / self.gear_ratio * self.efficiency
+        # motor_max_speed is RPM → convert to rad/s
+        motor_max_speed_rad_s = self.motor_max_speed * 2 * np.pi / 60
+        return motor_max_speed_rad_s * self.wheel_radius / self.gear_ratio * self.efficiency
 
     def calculate_max_acceleration(self, current_load: float = 0.0) -> float:
         """计算最大加速度 (m/s²)"""
