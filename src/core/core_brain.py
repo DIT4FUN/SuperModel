@@ -81,6 +81,10 @@ from .decision_making import DecisionMaking
 from .interaction import InteractionManager
 from .goal_dispatcher import GoalDispatcher, DispatcherConfig
 
+# 长期记忆 (延迟导入避免循环依赖)
+LongTermMemory = None
+MemoryConfig = None
+
 
 class CoreBrain:
     """
@@ -109,6 +113,8 @@ class CoreBrain:
         enable_value_judgment: bool = True,
         enable_self_evolution: bool = True,
         enable_goal_dispatcher: bool = True,
+        enable_memory: bool = True,
+        memory_config: Optional["MemoryConfig"] = None,
     ):
         """
         初始化核心大脑
@@ -192,6 +198,21 @@ class CoreBrain:
         # 统计
         self._start_time: Optional[float] = None
         self._total_cycles = 0
+
+        # ── 长期记忆系统 ──
+        self._memory = None
+        if enable_memory:
+            try:
+                from ..memory.long_term_memory import LongTermMemory, MemoryConfig
+                mem_cfg = memory_config or MemoryConfig(
+                    store_path=f"./memory_data/grade_{grade}",
+                    auto_save=True,
+                    save_interval_s=30.0,
+                )
+                self._memory = LongTermMemory(config=mem_cfg)
+                self._logger.info(f"长期记忆系统已启用: {mem_cfg.store_path}")
+            except Exception as e:
+                self._logger.warning(f"长期记忆系统初始化失败: {e}")
 
     def start(self):
         """启动核心大脑"""
@@ -425,6 +446,7 @@ class CoreBrain:
                 time.time() - self._start_time
                 if self._start_time else 0.0
             ),
+            "memory_enabled": self._memory is not None,
         }
 
         # 目标系统
@@ -463,7 +485,132 @@ class CoreBrain:
         if self._dispatcher:
             status["dispatcher"] = self._dispatcher.get_status()
 
+        # 记忆系统
+        if self._memory:
+            try:
+                status["memory"] = self._memory.get_status()
+            except Exception:
+                status["memory"] = {"enabled": True, "status": "unknown"}
+
         return status
+
+    # ── 记忆系统接口 ──
+
+    def store_experience(
+        self,
+        summary: str,
+        context: Optional[Dict[str, Any]] = None,
+        actions: Optional[List[Dict[str, Any]]] = None,
+        outcomes: Optional[Dict[str, Any]] = None,
+        importance_score: float = 5.0,
+        tags: Optional[List[str]] = None,
+    ) -> bool:
+        """
+        存储经验到长期记忆
+
+        Args:
+            summary: 经验摘要
+            context: 上下文数据
+            actions: 执行的动作列表
+            outcomes: 执行结果
+            importance_score: 重要性评分 (0-10)
+            tags: 标签列表
+
+        Returns:
+            是否成功
+        """
+        if self._memory is None:
+            return False
+        try:
+            self._memory.store_episode(
+                summary=summary,
+                context=context or {},
+                actions=actions or [],
+                outcomes=outcomes or {},
+                importance_score=importance_score,
+                tags=tags or [],
+            )
+            return True
+        except Exception as e:
+            self._logger.warning(f"存储经验失败: {e}")
+            return False
+
+    def retrieve_experiences(
+        self,
+        query: str,
+        top_k: int = 5,
+    ) -> List[Any]:
+        """
+        从长期记忆检索相关经验
+
+        Args:
+            query: 检索查询
+            top_k: 返回前k个最相关结果
+
+        Returns:
+            相关经验列表
+        """
+        if self._memory is None:
+            return []
+        try:
+            results = self._memory.retrieve(query, top_k=top_k)
+            return results
+        except Exception as e:
+            self._logger.warning(f"检索经验失败: {e}")
+            return []
+
+    def store_knowledge(
+        self,
+        name: str,
+        category: str,
+        description: str = "",
+        properties: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """存储知识到语义记忆"""
+        if self._memory is None:
+            return False
+        try:
+            self._memory.store_knowledge(
+                name=name,
+                category=category,
+                description=description,
+                properties=properties or {},
+            )
+            return True
+        except Exception as e:
+            self._logger.warning(f"存储知识失败: {e}")
+            return False
+
+    def store_skill(
+        self,
+        name: str,
+        steps: List[Dict[str, Any]],
+        description: str = "",
+        level: str = "intermediate",
+    ) -> bool:
+        """存储技能到程序记忆"""
+        if self._memory is None:
+            return False
+        try:
+            self._memory.store_skill(
+                name=name,
+                steps=steps,
+                description=description,
+                level=level,
+            )
+            return True
+        except Exception as e:
+            self._logger.warning(f"存储技能失败: {e}")
+            return False
+
+    def get_memory_status(self) -> Dict[str, Any]:
+        """获取记忆系统状态"""
+        if self._memory is None:
+            return {"enabled": False}
+        try:
+            return self._memory.get_status()
+        except Exception:
+            return {"enabled": True, "status": "unknown"}
 
     def __repr__(self) -> str:
         return (

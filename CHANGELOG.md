@@ -1,3 +1,34 @@
+## [2.66.0] - 2026-04-11
+
+### Added
+- **场景化具身智能模块** (`src/embodied/scene_intelligence.py`, 530行)
+  - `SceneType`: 9种场景类型 (仓库/工厂/医院/餐厅/办公室/户外/实验室/家庭/未知)
+  - `SceneClassifier`: 基于传感器和位置提示的场景分类器
+  - `SceneRuleEngine`: 场景规则引擎 (SafetyRule/NavigationRule/InteractionRule)
+  - `SceneIntelligence`: 场景感知决策系统，支持场景自适应速度和距离
+  - 场景历史追踪与转换检测，长期记忆集成
+
+- **场景感知多机协同模块** (`src/embodied/scene_coordination.py`, 380行)
+  - `AGVSceneRole`: AGV场景角色 (Leader/Follower/Scout/Guard/Coordinator)
+  - `SceneCoordinator`: 场景感知任务协调器
+  - `MultiSceneSwarmController`: 多场景蜂群控制器
+  - 场景自适应编队参数，角色动态分配与重评估
+
+- **CoreBrain长期记忆集成** (`src/core/core_brain.py`)
+  - `enable_memory` 参数启用长期记忆系统
+  - `store_experience()` / `retrieve_experiences()` 经验存取
+  - `store_knowledge()` / `store_skill()` 语义/程序记忆存储
+
+- **记忆系统** (`src/memory/`, 4000+行)
+  - LongTermMemory / EpisodicMemory / SemanticMemory / ProceduralMemory
+  - WorkingMemory / MemoryConsolidation / MemoryRetrieval
+
+### Tests
+- `tests/scene_intelligence_tests.py`: 30项场景智能测试
+- `tests/scene_coordination_tests.py`: 26项场景协同测试
+- `src/memory/memory_tests.py`: 32项记忆系统测试
+- **新增测试**: 88项全部通过
+
 # Changelog
 
 All notable changes to SuperModel will be documented in this file.

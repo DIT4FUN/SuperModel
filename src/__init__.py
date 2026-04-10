@@ -10,6 +10,7 @@ SuperModel - 超模态机器人具身智能大脑
 - fusion: 跨模态融合
 - learning: 自主学习
 - control: 动作控制
+- memory: 长期记忆系统
 """
 
 __version__ = "2.32.0"
@@ -45,6 +46,18 @@ from .learning import (
     get_learning_spec
 )
 
+from .memory import (
+    LongTermMemory,
+    MemoryConfig,
+    EpisodicMemory,
+    SemanticMemory,
+    ProceduralMemory,
+    WorkingMemory,
+    MemoryStore,
+    MemoryRetrieval,
+    MemoryConsolidation,
+)
+
 from . import utils_pkg
 
 __all__ = [
@@ -72,6 +85,17 @@ __all__ = [
     'IntrinsicCuriosity',
     'AutonomousLearning',
     'get_learning_spec',
+
+    # 记忆系统
+    'LongTermMemory',
+    'MemoryConfig',
+    'EpisodicMemory',
+    'SemanticMemory',
+    'ProceduralMemory',
+    'WorkingMemory',
+    'MemoryStore',
+    'MemoryRetrieval',
+    'MemoryConsolidation',
 
     # 工具
     'utils_pkg'

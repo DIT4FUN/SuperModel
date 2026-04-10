@@ -55,6 +55,27 @@ from .real_agv_interface import (
     ThreadedSensorReader,
 )
 
+from .scene_intelligence import (
+    SceneType,
+    SceneContext,
+    SceneRule,
+    SafetyRule,
+    NavigationRule,
+    InteractionRule,
+    SceneFeatures,
+    SceneIntelligence,
+    SceneConfig,
+    get_scene_intelligence,
+)
+
+from .scene_coordination import (
+    AGVSceneRole,
+    SceneCoordinationConfig,
+    AGVSceneState,
+    SceneCoordinator,
+    MultiSceneSwarmController,
+)
+
 __all__ = [
     # 枚举
     'NodeStatus',
@@ -102,6 +123,23 @@ __all__ = [
     'ForceSensorInterface',
     'RealAGVController',
     'ThreadedSensorReader',
+    # 场景智能
+    'SceneType',
+    'SceneContext',
+    'SceneRule',
+    'SafetyRule',
+    'NavigationRule',
+    'InteractionRule',
+    'SceneFeatures',
+    'SceneIntelligence',
+    'SceneConfig',
+    'get_scene_intelligence',
+    # 场景协同
+    'AGVSceneRole',
+    'SceneCoordinationConfig',
+    'AGVSceneState',
+    'SceneCoordinator',
+    'MultiSceneSwarmController',
 ]
 
 __version__ = "2.0.0"

@@ -180,7 +180,7 @@ class EpisodicMemory:
     def store(
         self,
         summary: str,
-        context: Dict[str, Any],
+        context: Optional[Dict[str, Any]] = None,
         actions: Optional[List[Dict[str, Any]]] = None,
         outcomes: Optional[Dict[str, Any]] = None,
         emotional_tag: EmotionalTag = EmotionalTag.NEUTRAL,
@@ -216,7 +216,7 @@ class EpisodicMemory:
             id=episode_id,
             timestamp=time.time(),
             summary=summary,
-            context=context,
+            context=context or {},
             actions=actions or [],
             outcomes=outcomes or {},
             emotional_tag=emotional_tag,
