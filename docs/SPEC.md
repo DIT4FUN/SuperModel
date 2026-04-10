@@ -1787,10 +1787,151 @@ print(f"左力矩: {left_tau:.3f} Nm, 误差: {state.left_error:.2f} rps")
 
 ---
 
-## 22. 版本历史
+## 22. AGV五极控制规格模块 (Grade-Aware Control)
+
+### 22.1 概述
+
+`control/grade_control.py` 为不同AGV等级(S/M/L/XL/XXL)提供自适应控制参数和控制策略,包括PID配置、安全监控、轨迹规划的五级规格映射。
+
+### 22.2 核心组件
+
+| 类 | 功能 |
+|----|------|
+| `AGVGrade` | 五极等级枚举 (S/M/L/XL/XXL) |
+| `GradePIDConfig` | 五极PID参数配置 |
+| `GradeControllerConfig` | 五极控制器配置 |
+| `GradeAwarePID` | 五极感知PID控制器 |
+| `GradeAwareSafetyMonitor` | 五极感知安全监控器 |
+| `GradeAwareTrajectoryPlanner` | 五极感知轨迹规划器 |
+
+### 22.3 五极控制规格详细表
+
+#### 22.3.1 控制器频率与周期
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 20Hz | 50Hz | 100Hz | 200Hz | 1000Hz |
+| **控制周期** | 50ms | 20ms | 10ms | 5ms | 1ms |
+| **实时内核** | ✗ | ✗ | PREEMPT_RT | Xenomai | Xenomai+FPGA |
+
+#### 22.3.2 PID参数
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **Kp** | 2.0 | 3.0 | 4.0 | 5.0 | 6.0 |
+| **Ki** | 0.1 | 0.2 | 0.3 | 0.5 | 0.8 |
+| **Kd** | 0.05 | 0.1 | 0.2 | 0.3 | 0.5 |
+| **输出限幅** | 10 | 20 | 30 | 50 | 80 |
+| **积分限幅** | 5 | 10 | 15 | 25 | 40 |
+| **前馈控制** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **自适应增益** | ✗ | ✗ | ✓ | ✓ | ✓ |
+
+#### 22.3.3 运动限制
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **最大线速度** | 0.5m/s | 1.5m/s | 2.0m/s | 2.5m/s | 3.0m/s |
+| **最大角速度** | 1.5rad/s | 3.0rad/s | 2.5rad/s | 2.0rad/s | 1.5rad/s |
+| **最大加速度** | 0.5m/s² | 1.0m/s² | 1.5m/s² | 2.0m/s² | 2.5m/s² |
+| **摩擦补偿** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **打滑检测** | ✗ | ✓ | ✓ | ✓ | ✓ |
+
+#### 22.3.4 轨迹规划
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **规划模式** | 直线插补 | 梯形 | S曲线 | S曲线 | Minimum Snap |
+| **规划算法** | line | trapezoidal | s_curve | rrt | rrt_star |
+| **速度曲线** | 直线 | 梯形 | S曲线 | S曲线 | S曲线 |
+| **最大加加速度** | — | — | 5.0m/s³ | 10.0m/s³ | 15.0m/s³ |
+
+#### 22.3.5 安全与容错
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **安全等级** | PLd | PLd | PLe | PLe+SIL2 | PLe+SIL3 |
+| **故障容错** | ✗ | ✗ | ✗ | ✓ | ✓ |
+| **冗余设计** | ✗ | ✗ | ✗ | ✗ | ✓ |
+
+#### 22.3.6 技能调度
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **最大并发技能** | 1 | 2 | 3 | 4 | 6 |
+| **技能超时** | 60s | 45s | 30s | 15s | 5s |
+| **收敛样本数** | 10K | 50K | 200K | 500K | 1M+ |
+
+### 22.4 接口方法
+
+#### GradeAwarePID
+
+| 方法 | 说明 |
+|------|------|
+| `compute(error, dt, measurement, feedforward)` | PID计算,返回控制输出 |
+| `reset()` | 重置PID状态 |
+| `set_setpoint(setpoint)` | 设置设定值 |
+| `get_state()` | 获取PID状态字典 |
+
+#### GradeAwareSafetyMonitor
+
+| 方法 | 说明 |
+|------|------|
+| `check_velocity(velocity, dt, timestamp)` | 速度限制检查 |
+| `check_boundary(position, ...)` | 位置边界检查 |
+| `check_force(force_magnitude, torque_magnitude)` | 力/力矩检查 |
+| `check_slip(left, right, expected)` | 打滑检测 (M+) |
+| `trigger_estop(reason)` | 触发紧急停止 |
+| `reset_estop()` | 重置紧急停止 |
+| `get_capabilities()` | 获取该等级安全能力 |
+
+#### GradeAwareTrajectoryPlanner
+
+| 方法 | 说明 |
+|------|------|
+| `plan_line(start, end)` | 直线轨迹规划 |
+| `plan_trapezoidal(start, end, max_v, max_a)` | 梯形速度规划 |
+| `plan_s_curve(start, end, max_v, max_a, max_j)` | S曲线速度规划 |
+| `get_current_trajectory()` | 获取当前轨迹 |
+
+### 22.5 使用示例
+
+```python
+from control.grade_control import (
+    AGVGrade, GradeAwarePID, GradeAwareSafetyMonitor,
+    GradeAwareTrajectoryPlanner, list_grade_capabilities
+)
+
+# 按AGV等级获取控制器
+grade = AGVGrade.M
+caps = list_grade_capabilities(grade)
+print(f"{grade}级: {caps['control_frequency']}Hz, 最大速度 {caps['max_velocity']}m/s")
+
+# 五极PID控制器
+pid = GradeAwarePID(AGVGrade.XXL)
+output = pid.compute(error=0.5, dt=0.001, feedforward=2.0)
+print(f"PID输出: {output:.3f}")
+
+# 五极安全监控
+mon = GradeAwareSafetyMonitor(AGVGrade.XL)
+level, msg = mon.check_velocity(velocity=3.0, dt=0.005)
+print(f"安全检查: {level} - {msg}")
+
+# 五极轨迹规划
+planner = GradeAwareTrajectoryPlanner(AGVGrade.XXL)
+traj = planner.plan_s_curve(
+    start=(0, 0, 0), end=(2.0, 0, 0),
+    max_jerk=15.0
+)
+print(f"轨迹点数: {len(traj)}")
+```
+
+---
+
+## 23. 版本历史
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v2.46.1 | 2026-04-10 | 新增AGV五极控制规格模块(control/grade_control.py); 五极PID/安全监控/轨迹规划器; grade_control_tests.py 100项测试; SPEC.md第22章五极控制规格; 583项测试全通过 |
 | v2.45.0 | 2026-04-10 | 新增velocity_control.py速度控制模块(S曲线规划/摩擦补偿/PID闭环/AGV五级规格); velocity_control_tests.py 78项测试全通过; SPEC.md第21章速度控制规格; 483项测试全通过 |
 | v2.43.0 | 2026-04-10 | 补充SPEC.md第20章AGV五级规格总表(7大子系统完整对照表); 传感器+融合+控制全链路五级规格完善; 2327项测试全通过 |
 | v2.42.0 | 2026-04-10 | 新增核心目标系统(src/core/: core_goals/safety_shield/value_judgment/self_preservation); 更新MODULE_INDEX.md核心层章节; 2327项测试全通过 |

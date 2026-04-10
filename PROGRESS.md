@@ -1,7 +1,59 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 11:42 (v2.45.0)
+> Last Updated: 2026-04-10 12:46 (v2.46.1)
+
+---
+
+## v2.46.1 (2026-04-10 12:46) - AGV五极控制规格模块 + 58项测试
+
+### 本次更新
+
+1. **新增AGV五极控制规格模块** (`control/grade_control.py` + `src/control/grade_control.py`, 650行)
+   - `AGVGrade`: 五极等级枚举 (S/M/L/XL/XXL)
+   - `GRADE_CONTROL_SPECS`: 完整五极规格表 (PID/频率/速度/规划/安全/容错)
+   - `GradePIDConfig`: 五极PID参数配置
+   - `GradeControllerConfig`: 五极控制器配置 (含from_grade工厂方法)
+   - `GradeAwarePID`: 五极感知PID控制器 (积分抗饱和/微分滤波/前馈/自适应增益)
+   - `GradeAwareSafetyMonitor`: 五极感知安全监控 (速度/边界/力/打滑/急停)
+   - `GradeAwareTrajectoryPlanner`: 五极感知轨迹规划器 (直线/梯形/S曲线)
+   - `get_grade_control_spec()` / `list_grade_capabilities()` 辅助函数
+
+2. **测试用例** (`tests/grade_control_tests.py`, 58项)
+   - `TestGradeSpecsConsistency`: 五极规格一致性验证 (16项)
+   - `TestGradePIDConfig`: PID配置测试 (3项)
+   - `TestGradeControllerConfig`: 控制器配置测试 (3项)
+   - `TestGradeAwarePID`: PID控制器测试 (9项)
+   - `TestGradeAwareSafetyMonitor`: 安全监控测试 (10项)
+   - `TestGradeAwareTrajectoryPlanner`: 轨迹规划测试 (6项)
+   - `TestGradeControlFunctions`: 辅助函数测试 (2项)
+   - `TestGradeConsistencyAcrossModules`: 模块间一致性 (3项)
+   - `TestBoundaryConditions`: 边界条件测试 (4项)
+   - **58项全部通过** ✅
+
+3. **文档更新** (`docs/SPEC.md`, 新增第22章)
+   - AGV五极控制规格模块 (22.1-22.5)
+   - 控制频率/周期详细表
+   - PID参数五极规格详细表
+   - 运动限制/轨迹规划/安全容错详细表
+   - 技能调度五极规格表
+   - 完整接口方法说明
+   - 版本历史更新至v2.46.1
+
+4. **模块导出更新**
+   - `control/__init__.py`: 新增grade_control全部导出
+   - `src/control/__init__.py`: 新增grade_control全部导出
+
+### 测试结果
+```
+pytest tests/grade_control_tests.py -q --tb=no
+============================== 58 passed in 0.05s ============================
+pytest tests/sensor_tests.py tests/fusion_tests.py tests/velocity_control_tests.py tests/grade_control_tests.py -q --tb=no
+============================== 541 passed in 3.48s ============================
+pytest tests/control_tests.py -q --tb=no
+============================== 244 passed in 1.83s ============================
+合计: 785项测试全通过 ✅
+```
 
 ---
 

@@ -41,6 +41,17 @@ from control.autotune import (
     SimulatedPlant,
     autotune_pid
 )
+from control.grade_control import (
+    AGVGrade,
+    GRADE_CONTROL_SPECS,
+    GradePIDConfig,
+    GradeControllerConfig,
+    GradeAwarePID,
+    GradeAwareSafetyMonitor,
+    GradeAwareTrajectoryPlanner,
+    get_grade_control_spec,
+    list_grade_capabilities
+)
 
 __all__ = [
     # motor
@@ -56,5 +67,9 @@ __all__ = [
     'SafetyMonitor', 'EmergencyStopController',
     # autotune
     'AutoTuner', 'TunerConfig', 'TunerResult', 'TuningMethod',
-    'SimulatedPlant', 'autotune_pid'
+    'SimulatedPlant', 'autotune_pid',
+    # grade control
+    'AGVGrade', 'GRADE_CONTROL_SPECS', 'GradePIDConfig', 'GradeControllerConfig',
+    'GradeAwarePID', 'GradeAwareSafetyMonitor', 'GradeAwareTrajectoryPlanner',
+    'get_grade_control_spec', 'list_grade_capabilities',
 ]

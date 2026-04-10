@@ -181,6 +181,12 @@ from .embodied_sim import (
     EmbodiedSimGrade, SimBackend,
     AGV_SIM_GRADES, get_sim_grade_spec, create_sim_env, get_grade_summary,
 )
+from .grade_control import (
+    AGVGrade, GRADE_CONTROL_SPECS,
+    GradePIDConfig, GradeControllerConfig,
+    GradeAwarePID, GradeAwareSafetyMonitor, GradeAwareTrajectoryPlanner,
+    get_grade_control_spec, list_grade_capabilities,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -295,4 +301,8 @@ __all__ = [
     'SensorNoiseModel', 'PhysicsSimulator', 'TactileSimulator',
     'EmbodiedSimGrade', 'SimBackend',
     'AGV_SIM_GRADES', 'get_sim_grade_spec', 'create_sim_env', 'get_grade_summary',
+    # grade_control
+    'AGVGrade', 'GRADE_CONTROL_SPECS', 'GradePIDConfig', 'GradeControllerConfig',
+    'GradeAwarePID', 'GradeAwareSafetyMonitor', 'GradeAwareTrajectoryPlanner',
+    'get_grade_control_spec', 'list_grade_capabilities',
 ]
