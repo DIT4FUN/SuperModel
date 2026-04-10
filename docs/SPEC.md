@@ -1708,10 +1708,90 @@ print(f"Grasp {result.status}: {result.output}")
 
 ---
 
-## 21. 版本历史
+## 21. 速度控制模块规格 (Velocity Control)
+
+### 21.1 概述
+
+速度控制模块 (`src/control/velocity_control.py`) 为差速驱动AGV提供先进的速度控制能力，包括S曲线速度规划、摩擦补偿、双轮PID闭环和打滑检测。
+
+### 21.2 核心组件
+
+| 类 | 功能 |
+|----|------|
+| `AGVVelocityController` | AGV完整速度控制器，整合运动学/PID/规划 |
+| `SVelocityProfilePlanner` | S曲线速度规划器（梯形/S曲线） |
+| `FrictionCompensator` | 库伦+粘滞摩擦补偿器 |
+| `WheelVelocitySynchronizer` | 轮速同步与打滑检测 |
+| `VelocityPIDController` | 自适应PID控制器 |
+
+### 21.3 AGV五级速度控制规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **最大线速度** | 0.5m/s | 1.5m/s | 2.0m/s | 3.0m/s | 3.5m/s |
+| **最大角速度** | 1.5rad/s | 3.0rad/s | 2.5rad/s | 2.0rad/s | 1.5rad/s |
+| **速度PID Kp** | 2.0 | 3.0 | 4.0 | 5.0 | 6.0 |
+| **速度PID Ki** | 0.1 | 0.2 | 0.3 | 0.5 | 0.8 |
+| **速度PID Kd** | 0.05 | 0.1 | 0.2 | 0.3 | 0.5 |
+| **摩擦补偿** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **前馈控制** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **打滑检测** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **自适应增益** | ✗ | ✗ | ✓ | ✓ | ✓ |
+| **速度规划** | 梯形 | 梯形 | S曲线 | S曲线 | S曲线 |
+| **加速度限制** | 0.5m/s² | 1.0m/s² | 1.5m/s² | 2.0m/s² | 2.5m/s² |
+| **加加速度限制** | — | — | 5.0m/s³ | 10.0m/s³ | 15.0m/s³ |
+| **实时内核** | ✗ | ✗ | Xenomai | RT-PREEMPT | Xenomai+FPGA |
+
+### 21.4 接口方法
+
+#### AGVVelocityController
+
+| 方法 | 说明 |
+|------|------|
+| `compute(target_linear, target_angular, meas_l, meas_r)` | 闭环速度控制，返回(左力矩, 右力矩, 状态) |
+| `compute_openloop(linear, angular)` | 开环轮速计算 |
+| `plan_trajectory(start_pos, end_pos)` | 规划线速度+角速度轨迹 |
+| `start_trajectory(lp, ap)` | 启动轨迹执行 |
+| `reset()` | 重置控制器状态 |
+| `get_state()` | 获取完整状态字典 |
+
+#### SVelocityProfilePlanner
+
+| 方法 | 说明 |
+|------|------|
+| `plan(start, end, max_v, max_a, max_j)` | 生成速度剖面 |
+
+### 21.5 使用示例
+
+```python
+from src.control.velocity_control import AGVVelocityController
+
+# 创建M级速度控制器
+ctrl = AGVVelocityController(grade="M")
+
+# 开环速度控制
+cmd = ctrl.compute_openloop(linear_vel=1.0, angular_vel=0.0)
+print(f"左轮: {cmd.left_velocity_rps:.2f} rps")
+print(f"右轮: {cmd.right_velocity_rps:.2f} rps")
+
+# 闭环PID控制
+left_tau, right_tau, state = ctrl.compute(
+    target_linear_vel=1.0,
+    target_angular_vel=0.0,
+    measurement_left_rps=14.0,
+    measurement_right_rps=14.1,
+)
+print(f"左力矩: {left_tau:.3f} Nm, 误差: {state.left_error:.2f} rps")
+```
+
+---
+
+## 22. 版本历史
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v2.45.0 | 2026-04-10 | 新增velocity_control.py速度控制模块(S曲线规划/摩擦补偿/PID闭环/AGV五级规格); velocity_control_tests.py 78项测试全通过; SPEC.md第21章速度控制规格; 483项测试全通过 |
 | v2.43.0 | 2026-04-10 | 补充SPEC.md第20章AGV五级规格总表(7大子系统完整对照表); 传感器+融合+控制全链路五级规格完善; 2327项测试全通过 |
 | v2.42.0 | 2026-04-10 | 新增核心目标系统(src/core/: core_goals/safety_shield/value_judgment/self_preservation); 更新MODULE_INDEX.md核心层章节; 2327项测试全通过 |
 | v2.40.0 | 2026-04-10 | 完善触觉/力觉/IMU控制模块 + 修复标定管理器; 37项测试全通过; 2297项测试全通过 |

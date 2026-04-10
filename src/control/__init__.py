@@ -80,6 +80,13 @@ from .imu_control import (
     AttitudeStabilizer, IMUControlParams, MotionEstimator,
     AGV_IMU_CONTROL_GRADES, get_imu_control_spec
 )
+from .velocity_control import (
+    AGV_VELOCITY_CONTROL_GRADES, get_velocity_control_spec,
+    VelocityProfileType, VelocityProfile1D,
+    WheelVelocityCommand, WheelVelocityState, VelocityControllerState,
+    SVelocityProfilePlanner, FrictionCompensator,
+    WheelVelocitySynchronizer, VelocityPIDController, AGVVelocityController,
+)
 from .supervisor import (
     ControlSupervisor, ControllerInterface, SupervisorConfig,
     ControlState, ControllerMetrics, ControlMode, HealthStatus,
@@ -211,6 +218,12 @@ __all__ = [
     'AGV_FORCE_CONTROL_GRADES', 'get_force_control_spec',
     'AttitudeStabilizer', 'IMUControlParams', 'MotionEstimator',
     'AGV_IMU_CONTROL_GRADES', 'get_imu_control_spec',
+    # velocity_control
+    'AGV_VELOCITY_CONTROL_GRADES', 'get_velocity_control_spec',
+    'VelocityProfileType', 'VelocityProfile1D',
+    'WheelVelocityCommand', 'WheelVelocityState', 'VelocityControllerState',
+    'SVelocityProfilePlanner', 'FrictionCompensator',
+    'WheelVelocitySynchronizer', 'VelocityPIDController', 'AGVVelocityController',
     'ControlSupervisor', 'ControllerInterface', 'SupervisorConfig',
     'ControlState', 'ControllerMetrics', 'ControlMode', 'HealthStatus',
     'MockJointController', 'MockCartesianController', 'MockImpedanceController',

@@ -1,7 +1,48 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 11:01 (v2.43.0)
+> Last Updated: 2026-04-10 11:42 (v2.45.0)
+
+---
+
+## v2.45.0 (2026-04-10 11:42) - 速度控制模块 + 78项测试
+
+### 本次更新
+
+1. **新增速度控制模块** (`src/control/velocity_control.py`, 988行)
+   - `AGVVelocityController`: AGV完整速度控制器 (运动学/PID/规划/打滑检测)
+   - `SVelocityProfilePlanner`: S曲线速度规划器 (梯形+S曲线双模式)
+   - `FrictionCompensator`: 库伦+粘滞摩擦补偿器
+   - `WheelVelocitySynchronizer`: 轮速同步与自适应打滑校正
+   - `VelocityPIDController`: 自适应PID控制器 (积分抗饱和/微分滤波/前馈)
+   - AGV五级规格 (S/M/L/XL/XXL): 50Hz→1000Hz, 摩擦补偿, 自适应增益, S曲线
+
+2. **测试用例** (`tests/velocity_control_tests.py`, 78项)
+   - `TestVelocityControlGrades`: AGV五级规格验证 (10项)
+   - `TestSVelocityProfilePlanner`: S曲线规划 (15项)
+   - `TestFrictionCompensator`: 摩擦补偿 (7项)
+   - `TestWheelVelocitySynchronizer`: 轮速同步 (7项)
+   - `TestVelocityPIDController`: PID控制器 (10项)
+   - `TestAGVVelocityController`: AGV速度控制器 (11项)
+   - `TestVelocityControlIntegration`: 集成测试 (5项)
+   - `TestDataStructures` + `TestBoundaryConditions`: 边界条件 (13项)
+   - **78项全部通过** ✅
+
+3. **文档更新** (`docs/SPEC.md`, 新增第21章)
+   - 速度控制模块规格 (概述/核心组件/AGV五级规格/接口方法/使用示例)
+   - 版本历史更新至v2.45.0
+
+4. **模块导出更新** (`src/control/__init__.py`)
+   - 新增velocity_control全部类和函数导出
+
+### 测试结果
+```
+pytest tests/velocity_control_tests.py -q --tb=no
+============================== 78 passed in 0.18s ============================
+pytest tests/sensor_tests.py tests/fusion_tests.py -q --tb=no
+============================== 405 passed in 3.39s ============================
+合计: 483项测试全通过 ✅
+```
 
 ---
 
