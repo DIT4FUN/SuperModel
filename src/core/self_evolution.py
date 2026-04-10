@@ -246,7 +246,7 @@ class SelfEvolution:
     def _update_evolution_metrics(self, outcome: float):
         """更新进化指标"""
         # 认知进化 - 从结果中学习
-        cog = self._evolution_metrics[EvolutionDimension.COGGNITIVE]
+        cog = self._evolution_metrics[EvolutionDimension.COGNITIVE]
         cog.total_learning_cycles += 1
         if outcome > 0:
             cog.successful_adaptations += 1

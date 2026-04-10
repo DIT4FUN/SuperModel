@@ -14,6 +14,103 @@ SuperModel 是一个超模态大模型具身智能系统，专注于 AGV（自�
 - **实时控制**: 高性能运动控制（PID、轨迹规划、安全监控）
 - **模块化设计**: 传感器、控制、融合模块解耦，易于扩展
 - **PyBullet仿真**: 支持多AGV协同仿真和避障测试
+- **核心目标系统**: 六大核心目标持续运行,实时决策 (见下方详述)
+
+## ⭐ 核心目标系统 (Core Goals System)
+
+SuperModel 内置六大核心目标,持续运行于后台,驱动所有决策:
+
+### 核心目标层级 (Priority 0 = 最高优先)
+
+| 优先级 | 目标 | 描述 | 执行器 |
+|--------|------|------|--------|
+| **P0** | **保护人类安全** | 绝对优先级,任何情况下不可被覆盖 | `SafetyShield` |
+| **P1** | **遵循人类指令** | 在P0安全前提下执行指令 | `DecisionMaking` |
+| **P2** | **善良品质** | 同理心/公平/诚实透明/拒绝伤害 | `ValueJudgment` |
+| **P3** | **热爱世界** | 环境保护/促进协作/传递正能量 | `ValueJudgment` |
+| **P4** | **自我生存安全** | 硬件保护/能源管理/健康监测 | `SelfPreservation` |
+| **P5** | **自我进化** | 知识积累/技能提升/探索创新 | `SelfEvolution` |
+
+### 系统架构
+
+```
+sensors → context_understanding → decision_making
+                                        ↓
+                              goal_dispatcher (always running @ 50Hz)
+                                        ↓
+                              ┌──────────┴──────────┐
+                           safety_shield          interaction
+                           (P0绝对优先)              ↓
+                            ↓                    execute
+                 core_goals (P0-P5)            ↓
+                  实时评估与协调              observe
+```
+
+### 使用方式
+
+```python
+from src.core import CoreBrain
+
+# 创建核心大脑
+brain = CoreBrain(grade="M")
+
+# 启动持续执行 (50Hz周期)
+brain.start()
+
+# 每周期更新传感器数据
+brain.update_context(
+    robot_position=np.array([0.0, 0.0, 0.0]),
+    robot_velocity=np.array([0.5, 0.0, 0.0]),
+    laser_ranges=np.array([5.0] * 360),
+    human_positions=[np.array([3.0, 0.0, 0.0])],
+    robot_battery_level=0.9,
+    robot_temperature=35.0,
+)
+
+# 获取当前决策
+decision = brain.decide()
+print(f"Action: {decision.action}")
+print(f"Type: {decision.decision_type}")
+print(f"Reasoning: {decision.reasoning}")
+
+# 获取所有目标状态
+scores = brain.get_all_scores()
+print(f"Goal scores: {scores}")
+
+# 获取完整状态
+status = brain.get_status()
+print(f"Safety: {status['safety_shield']['safety_score']}")
+print(f"Learning progress: {status['self_evolution']['learning_progress']}")
+
+# 停止
+brain.stop()
+```
+
+### 单步模式 (手动控制)
+
+```python
+# 决策+执行一体化
+decision, execution = brain.step(instruction="前进")
+```
+
+### 紧急停止
+
+```python
+# 触发紧急停止
+brain.trigger_emergency_stop("检测到危险")
+
+# 释放紧急停止
+brain.release_emergency_stop()
+```
+
+### 测试
+
+```bash
+# 运行核心目标系统测试
+python -m pytest tests/core_tests.py -v
+
+# 53项测试全部通过
+```
 
 ## 项目结构
 
@@ -47,6 +144,17 @@ SuperModel/
 │   │   ├── safety_controller.py
 │   │   ├── ros2_interface.py
 │   │   └── ...
+│   ├── core/            # ⭐ 核心目标系统 (新增)
+│   │   ├── core_goals.py      # 五大核心目标定义与优先级
+│   │   ├── safety_shield.py   # P0安全护盾 (绝对优先级)
+│   │   ├── value_judgment.py  # P2/P3价值判断 (善良/热爱世界)
+│   │   ├── self_preservation.py # P4自我保存
+│   │   ├── self_evolution.py  # P5自我进化
+│   │   ├── context_understanding.py # 上下文理解 (实时场景)
+│   │   ├── decision_making.py # 决策引擎 (整合所有目标)
+│   │   ├── interaction.py    # 环境交互接口
+│   │   ├── goal_dispatcher.py # 持续执行引擎 (50Hz周期)
+│   │   └── core_brain.py     # 核心大脑 (整体集成)
 │   ├── simulation/       # 仿真环境
 │   │   ├── pybullet_sim.py      # PyBullet仿真
 │   │   ├── agv_model_generator.py # AGV URDF模型生成
@@ -60,12 +168,12 @@ SuperModel/
 │   ├── run_agv_showcase.py # AGV等级展示
 │   └── base_sim.py       # 仿真基类
 ├── examples/             # 示例脚本
-├── tests/               # 测试用例 (2160+项通过)
+├── tests/               # 测试用例 (2200+项通过)
 │   ├── sensor_tests.py   # 触觉/力觉/IMU传感器测试
 │   ├── fusion_tests.py   # 跨模态融合测试
 │   ├── control_integration_tests.py  # 控制集成测试
 │   ├── five_grade_integration_tests.py # AGV五级集成测试
-│   ├── pybullet_sim_tests.py
+│   ├── core_tests.py     # ⭐ 核心目标系统测试 (53项)
 │   └── ...
 ├── docs/                # 设计文档
 │   ├── HARDWARE_SPEC.md  # 硬件规格说明
