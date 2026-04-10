@@ -973,3 +973,39 @@ class CalibratedSensor:
 def get_all_grade_spec_table():
     """获取所有等级的标定规格表"""
     return [{'grade': g, **v} for g, v in AGV_CALIBRATION_SPEC.items()]
+
+
+# 模块级 AGV 五级标定规格 (与 CalibrationManager.AGV_CALIBRATION_GRADES 同步)
+# 用于直接导入: from src.control.calibration_manager import AGV_CALIBRATION_GRADES
+AGV_CALIBRATION_GRADES = {
+    'S': {
+        'imu_poses': 4, 'imu_samples_per_pose': 200, 'imu_rate_hz': 50,
+        'force_samples': 200, 'force_rate_hz': 50,
+        'tactile_samples': 50, 'tactile_threshold': 0.02,
+    },
+    'M': {
+        'imu_poses': 6, 'imu_samples_per_pose': 500, 'imu_rate_hz': 100,
+        'force_samples': 500, 'force_rate_hz': 100,
+        'tactile_samples': 100, 'tactile_threshold': 0.01,
+    },
+    'L': {
+        'imu_poses': 6, 'imu_samples_per_pose': 1000, 'imu_rate_hz': 200,
+        'force_samples': 1000, 'force_rate_hz': 200,
+        'tactile_samples': 200, 'tactile_threshold': 0.005,
+    },
+    'XL': {
+        'imu_poses': 8, 'imu_samples_per_pose': 2000, 'imu_rate_hz': 500,
+        'force_samples': 2000, 'force_rate_hz': 500,
+        'tactile_samples': 400, 'tactile_threshold': 0.002,
+    },
+    'XXL': {
+        'imu_poses': 12, 'imu_samples_per_pose': 5000, 'imu_rate_hz': 1000,
+        'force_samples': 5000, 'force_rate_hz': 1000,
+        'tactile_samples': 1000, 'tactile_threshold': 0.001,
+    },
+}
+
+
+def get_calibration_grade_spec(grade: str) -> dict:
+    """获取指定 AGV 等级的标定规格 (模块级接口, 基于AGV_CALIBRATION_GRADES)"""
+    return AGV_CALIBRATION_GRADES.get(grade, AGV_CALIBRATION_GRADES['M'])
