@@ -569,6 +569,64 @@ class TestBehaviorTreeReset:
         assert bt.root.children[0].status == NodeStatus.IDLE
 
 
+# 新增测试: 多AGV蜂群协同行为树
+class TestMultiAGVSwarmBehaviorTree:
+    """多AGV蜂群协同行为树测试"""
+
+    def test_swarm_task_registration(self):
+        """测试蜂群任务注册"""
+        from src.embodied.behavior_tree import AGVTaskPlanner
+        # L级及以上支持多AGV
+        planner = AGVTaskPlanner(grade="L")
+        # 验证能力
+        caps = planner.get_capabilities()
+        assert caps['support_multi_agent'] is True
+
+    def test_swarm_coordination_sequence(self):
+        """测试蜂群协同序列"""
+        # 创建多机协同任务树
+        # 序列: 检查编队位置 → 同步移动 → 保持队形 → 到达目标
+        root = SequenceNode("SwarmCoordination")
+        root.add_children(
+            ConditionNode(lambda bb: bb.get('formation_complete', False), "CheckFormation"),
+            ConditionNode(lambda bb: bb.get('all_ready', False), "CheckAllReady"),
+            LambdaActionNode(lambda bb: NodeStatus.RUNNING, "CoordinateMove"),
+        )
+
+        bt = BehaviorTree(root)
+        bt.blackboard.set('formation_complete', True)
+        bt.blackboard.set('all_ready', True)
+
+        status = bt.tick()
+        assert status == NodeStatus.RUNNING
+
+
+class TestBehaviorTreeIntegration:
+    """行为树与具身智能系统集成测试"""
+
+    def test_behavior_tree_integration_with_sensors(self):
+        """测试行为树集成传感器数据"""
+        from src.embodied.simulation_enhancement import EmbodiedSimulationEnhancer
+        from src.embodied.behavior_tree import BehaviorTree, SequenceNode, AGVCheckSafeCondition
+
+        # 创建仿真增强器
+        sim_enhancer = EmbodiedSimulationEnhancer(agv_grade="M")
+        # 创建行为树
+        root = SequenceNode("IntegratedNav")
+        root.add_children(AGVCheckSafeCondition())
+        bt = BehaviorTree(root)
+
+        # 集成仿真数据到黑板
+        bt.update_robot_state({
+            'safety': True,
+            'position': [0.0, 0.0, 0.0],
+            'battery_level': 0.8,
+        })
+
+        status = bt.tick()
+        assert status == NodeStatus.SUCCESS
+
+
 def run_all_tests():
     """运行所有测试"""
     pytest.main([__file__, "-v"])
