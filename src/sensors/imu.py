@@ -12,7 +12,7 @@ IMU惯性测量单元模块
 
 import numpy as np
 from dataclasses import dataclass
-from typing import Tuple, Optional, List
+from typing import Tuple, Optional, List, Union
 from enum import Enum
 
 
@@ -35,6 +35,17 @@ class IMUReading:
     quaternion: Optional[np.ndarray] = None  # [w, x, y, z] 四元数姿态
     timestamp: float = 0.0
     frame_id: int = 0
+    sensor_id: str = "default"
+    
+    @property
+    def accel_magnitude(self) -> float:
+        """加速度模长"""
+        return np.linalg.norm(self.accel)
+    
+    @property
+    def gyro_magnitude(self) -> float:
+        """角速度模长"""
+        return np.linalg.norm(self.gyro)
     
     def euler_angles(self) -> Optional[np.ndarray]:
         """从四元数获取欧拉角 [roll, pitch, yaw] 弧度"""
@@ -60,6 +71,12 @@ class IMUReading:
         yaw = np.arctan2(siny_cosp, cosy_cosp)
         
         return np.array([roll, pitch, yaw])
+
+
+# 兼容别名 - 使用类继承以便 isinstance 检查
+class IMUFrame(IMUReading):
+    """IMU帧 (兼容别名)"""
+    pass
 
 
 
@@ -119,13 +136,16 @@ class IMU:
     
     def __init__(
         self,
-        model: IMUModel = IMUModel.ETT10A,
+        model: Union[IMUModel, str] = IMUModel.ETT10A,
         i2c_address: Optional[int] = None,
         sample_rate: int = 100,
         enable_magnetometer: bool = True,
         sensor_type: Optional[str] = None,  # 向后兼容旧接口
         sensor_id: Optional[str] = None,  # 向后兼容旧接口
     ):
+        # 支持字符串转换为枚举
+        if isinstance(model, str):
+            model = IMUModel(model)
         self.model = model
         self.i2c_address = i2c_address
         self.sample_rate = sample_rate
@@ -155,6 +175,15 @@ class IMU:
         self._accel_noise_std = 0.1  # m/s^2
         self._gyro_noise_std = 0.01  # rad/s
         self._mag_noise_std = 0.1  # uT
+        
+        # 兼容标定对象
+        self.calibration = IMUCalibration.create_default()
+        # 同步内部偏差到标定对象
+        self.calibration.accel_bias = self._accel_bias
+        self.calibration.accel_scale = self._mag_scale  # 使用现有_scale
+        self.calibration.gyro_bias = self._gyro_bias
+        self.calibration.mag_bias = self._mag_bias
+        self.calibration.mag_scale = self._mag_scale
     
     def open(self) -> bool:
         """打开IMU"""
@@ -167,7 +196,7 @@ class IMU:
                 if self.model == IMUModel.MPU6050:
                     # MPU6050 初始化
                     self._bus.write_byte_data(self.i2c_address, 0x6B, 0)  # 唤醒
-                elif self.model == IMUModel.Model.ETT10A:
+                elif self.model == IMUModel.ETT10A:
                     # 工业IMU配置
                     pass
                 self._use_i2c = True
@@ -308,6 +337,7 @@ class IMU:
         # 温度模拟
         temperature = 25.0 + np.random.randn() * 0.5
         
+        frame_id = self._frame_counter
         self._sim_time += dt
         self._frame_counter += 1
         
@@ -318,7 +348,7 @@ class IMU:
             temperature=temperature,
             quaternion=quat,
             timestamp=self._sim_time,
-            frame_id=self._frame_counter
+            frame_id=frame_id
         )
     
     def _update_mahony(self, gyro: np.ndarray, accel: np.ndarray, dt: float):
@@ -383,6 +413,10 @@ class IMU:
             orientation=self._quaternion.copy()
         )
     
+    def get_euler(self) -> np.ndarray:
+        """获取欧拉角 [roll, pitch, yaw] 弧度"""
+        return self.get_pose().euler()
+    
     def get_linear_acceleration(self, reading: IMUReading, gravity: float = 9.81) -> np.ndarray:
         """获取线性加速度 (去除重力)"""
         if reading.quaternion is None:
@@ -444,8 +478,38 @@ class IMU:
             temperature=reading.temperature,
             quaternion=reading.quaternion,
             timestamp=reading.timestamp,
-            frame_id=reading.frame_id
+            frame_id=reading.frame_id,
+            sensor_id=self.sensor_id if hasattr(self, 'sensor_id') else 'default'
         )
+    
+    # 兼容旧接口标定方法
+    def calibrate_accel(self, known_orientation="level"):
+        """标定加速度计 (兼容接口)"""
+        # 已知水平姿态标定
+        if known_orientation == "level":
+            # 采集多帧
+            samples = 1000
+            accels = []
+            for _ in range(samples):
+                accel_raw, _, _ = self._read_raw()
+                accels.append(accel_raw)
+            mean_accel = np.mean(np.array(accels), axis=0)
+            # 重力应该在 Z 轴
+            gravity = 9.81
+            self._accel_bias = mean_accel - np.array([0, 0, gravity])
+            # 同步到标定对象
+            self.calibration.accel_bias = self._accel_bias
+    
+    def calibrate_gyro_bias(self, num_samples=1000):
+        """标定陀螺仪偏置 (兼容接口)"""
+        # 静态采集多帧得到偏置
+        gyros = []
+        for _ in range(num_samples):
+            _, gyro_raw, _ = self._read_raw()
+            gyros.append(gyro_raw)
+        self._gyro_bias = np.mean(np.array(gyros), axis=0)
+        # 同步到标定对象
+        self.calibration.gyro_bias = self._gyro_bias
     
     def __enter__(self):
         self.open()
@@ -514,8 +578,11 @@ AGV_IMU_GRADES = {
         'sample_rate': 50,
         'has_mag': False,
         'output': 'raw',
-        'drift_drift_h': 10.0  # 度/小时 漂移
+        'drift_drift_h': 10.0,  # 度/小时 漂移
+        'accel_range': 8,  # g
+        'gyro_range': 1000,  # °/s
     },
+
     'M': {
         'type': 'BMI088',
         'sample_hz': 200,
@@ -525,8 +592,11 @@ AGV_IMU_GRADES = {
         'has_mag': False,
         'output': 'raw',
         'angle_random_walk': 0.1,
-        'bias_stability': 10  # °/h
+        'bias_stability': 10,  # °/h
+        'accel_range': 16,  # g
+        'gyro_range': 2000,  # °/s
     },
+
     'L': {
         'type': 'BMI088',
         'sample_hz': 500,
@@ -536,8 +606,11 @@ AGV_IMU_GRADES = {
         'has_mag': True,
         'output': 'quaternion',
         'angle_random_walk': 0.05,
-        'bias_stability': 5  # °/h
+        'bias_stability': 5,  # °/h
+        'accel_range': 24,  # g
+        'gyro_range': 4000,  # °/s
     },
+
     'XL': {
         'type': 'ADIS16470',
         'sample_hz': 1000,
@@ -547,8 +620,11 @@ AGV_IMU_GRADES = {
         'has_mag': True,
         'output': 'quaternion',
         'bias_stability': 2,  # °/h
-        'temperature_compensation': True
+        'temperature_compensation': True,
+        'accel_range': 40,  # g
+        'gyro_range': 4000,  # °/s
     },
+
     'XXL': {
         'type': 'ADIS16470',
         'sample_hz': 2000,
@@ -559,7 +635,9 @@ AGV_IMU_GRADES = {
         'output': 'quaternion',
         'bias_stability': 0.5,  # °/h
         'temperature_compensation': True,
-        'vibration_damping': True
+        'vibration_damping': True,
+        'accel_range': 80,  # g
+        'gyro_range': 8000,  # °/s
     }
 }
 
@@ -575,13 +653,19 @@ class PoseEstimator:
         self.algorithm = algorithm
         self.sample_rate = sample_rate
         self.beta = beta
+        self._last_pose = Pose(orientation=np.array([1.0, 0.0, 0.0, 0.0]))
     
     def update(self, accel, gyro, mag=None, dt=None):
-        return Pose(orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+        self._last_pose = Pose(orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+        return self._last_pose
+    
+    def get_euler(self):
+        """获取当前欧拉角 (兼容接口)"""
+        return self._last_pose.euler()
     
     def reset(self):
         """重置姿态估计"""
-        pass
+        self._last_pose = Pose(orientation=np.array([1.0, 0.0, 0.0, 0.0]))
 
 
 class IMUFrame(IMUReading):
@@ -594,11 +678,24 @@ class IMUSensor(IMU):
     pass
 
 
+@dataclass
 class IMUCalibration:
     """标定 (兼容别名)"""
+    accel_bias: np.ndarray = None
+    accel_scale: np.ndarray = None
+    gyro_bias: np.ndarray = None
+    mag_bias: np.ndarray = None
+    mag_scale: np.ndarray = None
+    
     @classmethod
     def create_default(cls):
-        return cls
+        obj = cls()
+        obj.accel_bias = np.zeros(3, dtype=np.float32)
+        obj.accel_scale = np.ones(3, dtype=np.float32)
+        obj.gyro_bias = np.zeros(3, dtype=np.float32)
+        obj.mag_bias = np.zeros(3, dtype=np.float32)
+        obj.mag_scale = np.ones(3, dtype=np.float32)
+        return obj
 
 
 class IMUSensorType:
@@ -650,7 +747,7 @@ class VirtualIMUSensor:
         if self.gyro_noise is not None:
             gyro += np.random.randn(3) * self.gyro_noise
         
-        return IMUReading(
+        return IMUFrame(
             accel=accel,
             gyro=gyro,
             mag=mag,

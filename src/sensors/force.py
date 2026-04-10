@@ -36,19 +36,19 @@ class ForceReading:
     temperature: Optional[float] = None  # 温度 °C
     timestamp: float = 0.0
     frame_id: int = 0
-    
+
     def force_vector(self) -> np.ndarray:
         """获取力向量 [fx, fy, fz]"""
         return np.array([self.fx, self.fy, self.fz])
-    
+
     def torque_vector(self) -> np.ndarray:
         """获取力矩向量 [mx, my, mz]"""
         return np.array([self.mx, self.my, self.mz])
-    
+
     def total_force(self) -> float:
         """合力大小"""
         return np.linalg.norm(self.force_vector())
-    
+
     def total_torque(self) -> float:
         """合力矩大小"""
         return np.linalg.norm(self.torque_vector())
@@ -59,22 +59,24 @@ class Wrench:
     """旋量 (力旋量)"""
     force: np.ndarray  # 3D 力向量
     torque: np.ndarray  # 3D 力矩向量
-    
+    timestamp: float = 0.0
+    frame_id: int = 0
+
     def to_array(self) -> np.ndarray:
         """转为6D数组 [fx, fy, fz, mx, my, mz]"""
         return np.concatenate([self.force, self.torque])
-    
+
     def to_vector(self) -> np.ndarray:
         """转为6D向量 (兼容别名)"""
         return self.to_array()
-    
+
     def transform(self, rotation: np.ndarray, translation: Optional[np.ndarray] = None) -> 'Wrench':
         """变换力旋量到新坐标系
-        
+
         Args:
             rotation: 3x3 旋转矩阵
             translation: 平移向量 (新坐标系原点在旧坐标系中的位置)
-            
+
         Returns:
             变换后的 Wrench
         """
@@ -85,12 +87,12 @@ class Wrench:
         else:
             new_torque = rotation @ self.torque
         return Wrench(force=new_force, torque=new_torque)
-    
+
     @property
     def magnitude(self) -> float:
         """获取力的模长 (兼容旧接口)"""
         return np.linalg.norm(self.force)
-    
+
     @property
     def torque_magnitude(self) -> float:
         """获取力矩模长 (兼容旧接口)"""
@@ -100,14 +102,14 @@ class Wrench:
 class SixAxisForceTorque:
     """
     六维力/力矩传感器
-    
+
     支持常见的六维力传感器:
     - ATI 系列
     - Robotiq FT 300
     - OnRobot
     - 国产六维力传感器
     """
-    
+
     def __init__(
         self,
         can_id: Optional[int] = None,
@@ -117,14 +119,17 @@ class SixAxisForceTorque:
         gravity_compensation: bool = True,
         sensor_type: Optional[str] = None,  # 向后兼容旧接口
         sensor_id: Optional[str] = None,  # 向后兼容旧接口
-    ):
+    ): 
+        self._is_streaming = False
+        self.calibration = ForceCalibration()
+
         self.can_id = can_id
         self.rs485_address = rs485_address
         self.sample_rate = sample_rate
         self.gravity_compensation = gravity_compensation
         self.sensor_type = sensor_type  # 兼容参数
         self.sensor_id = sensor_id  # 兼容参数
-        
+
         # 标定矩阵 (6x6 用于原始数据转换)
         # 原始 -> 实际 = calibration_matrix @ 原始
         if calibration_matrix is None:
@@ -132,15 +137,15 @@ class SixAxisForceTorque:
         else:
             assert calibration_matrix.shape == (6, 6), "Calibration matrix must be 6x6"
             self._calib = calibration_matrix
-        
+
         # 偏置 (零点)
         self._bias = np.zeros(6, dtype=np.float32)
-        
+
         # 重力补偿参数
         # 工具重力和重心位置
         self._tool_mass = 0.0  # kg
         self._tool_com = np.array([0.0, 0.0, 0.0])  # 重心在传感器坐标系中的位置
-        
+
         # 范围限制: [fx_min, fx_max, fy_min, fy_max, fz_min, fz_max, mx_min, mx_max, my_min, my_max, mz_min, mz_max]
         self._force_limits = np.array([
             -500, 500,
@@ -151,16 +156,16 @@ class SixAxisForceTorque:
             -50, 50
         ], dtype=np.float32)  # fx, fy, fz, mx, my, mz
         self._force_threshold = 5.0  # N 力检测阈值
-        
+
         # 状态
         self._is_opened = False
         self._frame_counter = 0
         self._sim_time = 0.0
-        
+
         # 低通滤波
         self._alpha = 0.1  # 滤波系数
         self._filtered = np.zeros(6, dtype=np.float32)
-    
+
     def open(self) -> bool:
         """打开传感器"""
         # 尝试CAN总线接口
@@ -174,7 +179,7 @@ class SixAxisForceTorque:
                 can_opened = True
             except (ImportError, Exception):
                 self._use_can = False
-        
+
         # 尝试RS485接口
         if not can_opened and self.rs485_address is not None:
             try:
@@ -185,17 +190,18 @@ class SixAxisForceTorque:
                 can_opened = True
             except (ImportError, Exception):
                 self._use_rs485 = False
-        
+
         if not can_opened:
             # 模拟模式
             self._use_hardware = False
             print(f"[SixAxisForceTorque] Opened in SIMULATION mode: SR={self.sample_rate}")
-        
+
         # 执行零点标定
         self.calibrate_zero()
         self._is_opened = True
+        self._is_streaming = True
         return True
-    
+
     def close(self):
         """关闭传感器"""
         if self._is_opened:
@@ -205,60 +211,64 @@ class SixAxisForceTorque:
                 self._ser.close()
             self._is_opened = False
             print("[SixAxisForceTorque] Closed")
-    
+
     def calibrate_zero(self, samples: int = 1000) -> None:
         """
         零点标定
-        
+
         在空载状态采集偏置
         """
         if not self._is_opened and not getattr(self, '_use_hardware', True):
             # 未打开时使用零偏置
             self._bias = np.zeros(6, dtype=np.float32)
             return
-        
+
         print(f"[SixAxisForceTorque] Zero calibration: {samples} samples...")
         biases = np.zeros((samples, 6), dtype=np.float32)
         for i in range(samples):
             raw = self._read_raw()
             biases[i] = raw
         self._bias = np.mean(biases, axis=0)
+        if self.calibration is not None:
+            self.calibration.bias = self._bias.copy()
         print(f"[SixAxisForceTorque] Zero calibration done: bias={self._bias}")
-    
-    def calibrate_bias(self, samples: int = 1000) -> None:
-        """偏置标定 (别名，兼容旧接口)"""
+
+    def calibrate_bias(self, samples: int = 1000, num_samples: Optional[int] = None) -> None:
+        """偏置标定 (别名,兼容旧接口)"""
+        if num_samples is not None:
+            samples = num_samples
         self.calibrate_zero(samples)
-    
+
     def set_gravity_compensation(self, mass: float, com: np.ndarray):
         """
         设置重力补偿
-        
+
         Args:
             mass: 工具质量 (kg)
             com: 重心在传感器坐标系中的位置 (m), [x, y, z]
         """
         self._tool_mass = mass
         self._tool_com = np.array(com, dtype=np.float32)
-    
+
     def _apply_gravity_compensation(self, reading: np.ndarray) -> np.ndarray:
         """应用重力补偿"""
         if self._tool_mass <= 0 or not self.gravity_compensation:
             return reading
-        
+
         # 重力在传感器坐标系中 (假设z轴向上)
         g = 9.81  # m/s^2
         gravity_force = np.array([0, 0, -self._tool_mass * g])
-        
+
         # 重力产生的力矩: r × F
         gravity_torque = np.cross(self._tool_com, gravity_force)
-        
+
         # 从读数中减去重力影响
         compensated = reading.copy()
         compensated[0:3] -= gravity_force
         compensated[3:6] -= gravity_torque
-        
+
         return compensated
-    
+
     def _read_raw(self) -> np.ndarray:
         """读取原始数据 (内部方法)"""
         if getattr(self, '_use_can', False):
@@ -272,43 +282,44 @@ class SixAxisForceTorque:
         else:
             # 模拟模式
             return self._bias + np.random.randn(6) * 0.5
-    
+
     def read(self) -> ForceReading:
         """读取一帧力/力矩数据"""
         if not self._is_opened:
             raise RuntimeError("Sensor not opened")
-        
+
         # 读取原始数据
         raw = self._read_raw()
-        
+
         # 应用标定矩阵和偏置
         calibrated = self._calib @ (raw - self._bias)
-        
+
         # 重力补偿
         compensated = self._apply_gravity_compensation(calibrated)
-        
+
         # 范围限制
         compensated = np.clip(
             compensated,
             self._force_limits[::2],
             self._force_limits[1::2]
         )
-        
+
         # 低通滤波
         if self._frame_counter == 0:
             self._filtered = compensated
         else:
             self._filtered = (1 - self._alpha) * self._filtered + self._alpha * compensated
-        
+
         fx, fy, fz, mx, my, mz = self._filtered
-        
+
         # 模拟温度
         temperature = 25.0 + np.random.randn() * 0.5
-        
+
         dt = 1.0 / self.sample_rate
+        frame_id = self._frame_counter
         self._sim_time += dt
         self._frame_counter += 1
-        
+
         return ForceReading(
             fx=float(fx),
             fy=float(fy),
@@ -318,43 +329,45 @@ class SixAxisForceTorque:
             mz=float(mz),
             temperature=temperature,
             timestamp=self._sim_time,
-            frame_id=self._frame_counter
+            frame_id=frame_id
         )
-    
+
     def read_wrench(self) -> Wrench:
         """读取为旋量格式"""
         reading = self.read()
         return Wrench(
             force=reading.force_vector(),
-            torque=reading.torque_vector()
+            torque=reading.torque_vector(),
+            timestamp=reading.timestamp,
+            frame_id=reading.frame_id
         )
-    
+
     def detect_external_force(self, reading: ForceReading, threshold: Optional[float] = None) -> Tuple[bool, np.ndarray]:
         """
         检测是否有外力作用
-        
+
         Returns:
             has_external: 是否有外力
             external_force: 外力向量
         """
         if threshold is None:
             threshold = self._force_threshold
-        
+
         force = reading.force_vector()
         magnitude = np.linalg.norm(force)
-        
+
         return magnitude > threshold, force
-    
+
     def detect_collision(self, reading: ForceReading, force_threshold: float = 50.0, torque_threshold: float = 10.0) -> bool:
         """
         碰撞检测
-        
+
         当力或力矩超过阈值时判定为碰撞
         """
         f_mag = reading.total_force()
         m_mag = reading.total_torque()
         return f_mag > force_threshold or m_mag > torque_threshold
-    
+
     def set_force_limits(self, fx_min: float, fx_max: float,
                        fy_min: float, fy_max: float,
                        fz_min: float, fz_max: float,
@@ -370,11 +383,11 @@ class SixAxisForceTorque:
             my_min, my_max,
             mz_min, mz_max
         ], dtype=np.float32)
-    
+
     def get_bias(self) -> np.ndarray:
         """获取当前偏置"""
         return self._bias.copy()
-    
+
     def detect_contact(self, wrench_or_threshold: Union[Wrench, float] = 5.0, threshold: float = None) -> 'ForceContactDetection':
         """检测是否有外力接触 - 兼容接口返回对象"""
         # 兼容关键字参数
@@ -395,18 +408,18 @@ class SixAxisForceTorque:
             force_magnitude = np.linalg.norm(wrench.force)
             threshold = wrench_or_threshold
             is_contact = force_magnitude > threshold
-        
+
         # 返回对象保持向后兼容
         class ForceContactDetection:
             def __init__(self, is_contact):
                 self.is_contact = is_contact
-        
+
         return ForceContactDetection(is_contact)
-    
+
     def capture(self) -> Wrench:
         """兼容旧接口 - capture 别名"""
         return self.read_wrench()
-    
+
     def estimate_payload(self, wrench: Optional[Wrench] = None) -> float:
         """估计负载重量 - 兼容接口"""
         if wrench is None:
@@ -414,11 +427,11 @@ class SixAxisForceTorque:
         # 垂直力估计质量 mass = fz / g
         mass = max(0.0, wrench.force[2]) / 9.81
         return mass
-    
+
     def __enter__(self):
         self.open()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -426,10 +439,10 @@ class SixAxisForceTorque:
 class WheelForceSensor:
     """
     AGV 车轮力传感器
-    
+
     每个车轮独立测量竖向负载和驱动力
     """
-    
+
     def __init__(
         self,
         num_wheels: int = 2,
@@ -437,15 +450,15 @@ class WheelForceSensor:
     ):
         self.num_wheels = num_wheels
         self.sample_rate = sample_rate
-        
+
         # 每个车轮: [垂直负载(N), 驱动力(N)]
         self._biases = np.zeros((num_wheels, 2), dtype=np.float32)
         self._calibration = np.ones((num_wheels, 2), dtype=np.float32)
-        
+
         self._is_opened = False
         self._frame_counter = 0
         self._sim_time = 0.0
-    
+
     def open(self) -> bool:
         """打开车轮力传感器"""
         try:
@@ -457,32 +470,32 @@ class WheelForceSensor:
         except (ImportError, Exception):
             self._use_can = False
             print(f"[WheelForceSensor] Opened in SIMULATION mode: {self.num_wheels} wheels")
-        
+
         self._is_opened = True
         return True
-    
+
     def close(self):
         """关闭"""
         if getattr(self, '_use_can', False) and hasattr(self, '_bus'):
             self._bus.shutdown()
         self._is_opened = False
         print("[WheelForceSensor] Closed")
-    
+
     def calibrate_zero(self):
         """零点标定"""
         # 在空载时标定
         pass
-    
+
     def read(self) -> np.ndarray:
         """
         读取所有车轮力数据
-        
+
         Returns:
             forces: [num_wheels, 2] - [垂直负载(N), 驱动力(N)]
         """
         if not self._is_opened:
             raise RuntimeError("Sensor not opened")
-        
+
         if getattr(self, '_use_can', False):
             # CAN读取
             pass
@@ -497,18 +510,18 @@ class WheelForceSensor:
                 forces[:, 1] = 20.0 + np.random.randn(self.num_wheels) * 2.0
             else:
                 forces[:, 1] = 0.0 + np.random.randn(self.num_wheels) * 0.5
-        
+
         dt = 1.0 / self.sample_rate
         self._sim_time += dt
         self._frame_counter += 1
-        
+
         return (forces - self._biases) * self._calibration
-    
+
     def get_total_weight(self) -> float:
         """获取AGV总重量 (包括负载)"""
         forces = self.read()
         return np.sum(forces[:, 0]) / 9.81  # N -> kg
-    
+
     def detect_overload(self, max_load_per_wheel: float) -> Tuple[bool, List[int]]:
         """检测过载"""
         forces = self.read()
@@ -517,11 +530,11 @@ class WheelForceSensor:
             if forces[i, 0] > max_load_per_wheel * 9.81:
                 overload_wheels.append(i)
         return len(overload_wheels) > 0, overload_wheels
-    
+
     def __enter__(self):
         self.open()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -529,11 +542,11 @@ class WheelForceSensor:
 class LiftForceSensor:
     """
     升降机构力传感器
-    
+
     用于叉举机构负载测量
     检测货物重量和过载保护
     """
-    
+
     def __init__(
         self,
         can_id: Optional[int] = None,
@@ -541,12 +554,12 @@ class LiftForceSensor:
     ):
         self.can_id = can_id
         self.max_range = max_range
-        
+
         self._bias = 0.0
         self._calibration = 1.0
         self._is_opened = False
         self._frame_counter = 0
-    
+
     def open(self) -> bool:
         self._is_opened = True
         if self.can_id is not None:
@@ -554,29 +567,29 @@ class LiftForceSensor:
         else:
             print("[LiftForceSensor] Opened in SIMULATION mode")
         return True
-    
+
     def close(self):
         self._is_opened = False
         print("[LiftForceSensor] Closed")
-    
+
     def read_force(self) -> float:
         """读取升降机构力 (N)"""
         if not self._is_opened:
             raise RuntimeError("Sensor not opened")
-        
+
         # 模拟
         base = 0.0 + np.random.randn() * 5.0
         return (base - self._bias) * self._calibration
-    
+
     def read_weight(self) -> float:
         """读取负载重量 (kg)"""
         force = self.read_force()
         return force / 9.81  # N -> kg
-    
+
     def __enter__(self):
         self.open()
         return self
-    
+
     def __exit__(self, exc_type, exc_val, exc_tb):
         self.close()
 
@@ -591,8 +604,10 @@ AGV_FORCE_GRADES = {
         'has_ft': False,
         'has_wheel_force': False,
         'has_lift_force': True,
-        'max_lift': 50  # kg
+        'max_lift': 50,  # kg
+        'resolution': 0.1,
     },
+
     'M': {
         'axes': 6,
         'force_range': 200,
@@ -602,8 +617,10 @@ AGV_FORCE_GRADES = {
         'has_wheel_force': True,
         'has_lift_force': True,
         'max_lift': 100,  # kg
-        'wheel_count': 2
+        'wheel_count': 2,
+        'resolution': 0.05,
     },
+
     'L': {
         'axes': 6,
         'force_range': 500,
@@ -614,8 +631,10 @@ AGV_FORCE_GRADES = {
         'has_lift_force': True,
         'max_lift': 300,  # kg
         'wheel_count': 4,
-        'ft_range': 1000  # N
+        'ft_range': 1000,  # N
+        'resolution': 0.02,
     },
+
     'XL': {
         'axes': 6,
         'force_range': 1000,
@@ -627,8 +646,10 @@ AGV_FORCE_GRADES = {
         'max_lift': 600,  # kg
         'wheel_count': 4,
         'ft_range': 2000,  # N
-        'ft_sample_rate': 500
+        'ft_sample_rate': 500,
+        'resolution': 0.01,
     },
+
     'XXL': {
         'axes': 6,
         'force_range': 5000,
@@ -641,7 +662,8 @@ AGV_FORCE_GRADES = {
         'wheel_count': 4,
         'ft_range': 5000,  # N
         'ft_sample_rate': 1000,
-        'temperature_compensation': True
+        'temperature_compensation': True,
+        'resolution': 0.005,
     }
 }
 
@@ -661,14 +683,18 @@ class WrenchProcessor:
     """力矩处理器 (兼容别名)"""
     def __init__(self, window_size=5):
         self.window_size = window_size
-    
+
     def filter(self, wrench):
         return wrench
 
 
+@dataclass
 class ForceCalibration:
     """标定 (兼容别名)"""
-    pass
+    bias: np.ndarray = None
+
+    def __init__(self):
+        self.bias = np.zeros(6, dtype=np.float32)
 
 
 class ContactState:
@@ -681,35 +707,35 @@ class VirtualForceSensor:
     def __init__(self, sensor_id="virtual", noise_level=None):
         self.sensor_id = sensor_id
         self.noise_level = noise_level
-    
+
     def open(self):
         return True
-    
+
     def close(self):
         pass
-    
+
     def capture(self):
         """兼容capture接口"""
         return self.simulate_contact(np.zeros(3))
-    
+
     def simulate_contact(self, force_vector=None, torque_vector=None, add_noise=False, force=None, torque=None):
-        """模拟接触力，返回Wrench"""
+        """模拟接触力,返回Wrench"""
         # 兼容关键字参数
         if force is not None:
             force_vector = force
         if torque is not None:
             torque_vector = torque
-            
+
         if force_vector is None:
             force_vector = np.zeros(3)
         if torque_vector is None:
             torque_vector = np.zeros(3)
-            
+
         force = np.array(force_vector, dtype=np.float64)
         torque = np.array(torque_vector, dtype=np.float64)
-        
+
         if add_noise and self.noise_level is not None:
             force += np.random.randn(3) * self.noise_level
             torque += np.random.randn(3) * (self.noise_level * 0.1)
-        
+
         return Wrench(force=force, torque=torque)
