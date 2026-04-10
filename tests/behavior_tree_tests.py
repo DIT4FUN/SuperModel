@@ -432,17 +432,35 @@ class TestAGVNodes:
         cond = AGVCheckBatteryCondition(min_battery=0.2)
         bb = Blackboard()
         bb.update_robot_state({'battery_level': 0.5})
-        # 需要手动获取到condition函数
-        # 这里测试结构
-        assert cond is not None
+        status = cond.tick(bb)
+        assert status == NodeStatus.SUCCESS
 
-    def test_check_safe_condition(self):
-        """安全检查节点"""
+    def test_check_battery_condition_low(self):
+        """电量不足 → 失败"""
+        from src.embodied.behavior_tree import AGVCheckBatteryCondition
+        cond = AGVCheckBatteryCondition(min_battery=0.2)
+        bb = Blackboard()
+        bb.update_robot_state({'battery_level': 0.1})
+        status = cond.tick(bb)
+        assert status == NodeStatus.FAILURE
+
+    def test_check_safe_condition_ok(self):
+        """安全状态 → 成功"""
         from src.embodied.behavior_tree import AGVCheckSafeCondition
         cond = AGVCheckSafeCondition()
         bb = Blackboard()
         bb.update_robot_state({'safety': True})
-        assert cond is not None
+        status = cond.tick(bb)
+        assert status == NodeStatus.SUCCESS
+
+    def test_check_safe_condition_unsafe(self):
+        """不安全 → 失败"""
+        from src.embodied.behavior_tree import AGVCheckSafeCondition
+        cond = AGVCheckSafeCondition()
+        bb = Blackboard()
+        bb.update_robot_state({'safety': False})
+        status = cond.tick(bb)
+        assert status == NodeStatus.FAILURE
 
 
 class PerformanceBenchmark:
@@ -469,7 +487,7 @@ class PerformanceBenchmark:
 def test_material_transport_example():
     """物料搬运任务完整示例"""
     from src.embodied.behavior_tree import (
-        SequenceNode, ConditionNode, ActionNode, BehaviorTree, Blackboard,
+        SequenceNode, ConditionNode, BehaviorTree, Blackboard,
         AGVCheckBatteryCondition, AGVCheckSafeCondition,
     )
 
@@ -499,6 +517,29 @@ def test_material_transport_example():
     bt.update_robot_state({'safety': True, 'battery_level': 0.5})
     status = bt.tick()
     assert status == NodeStatus.SUCCESS
+
+
+def test_navigation_task_in_planner():
+    """在规划器中运行导航任务测试"""
+    planner = AGVTaskPlanner(grade="M")
+    task = EmbodiedTask(
+        task_id="nav_001",
+        task_type="navigate",
+        goal_description="Navigate to (3.0, 2.0)",
+        target_position=np.array([3.0, 2.0]),
+        priority=0,
+    )
+    planner.add_task(task)
+    
+    # tick 一次应该选中并开始运行任务
+    status = planner.tick(
+        robot_state={'position': [0.0, 0.0], 'battery_level': 0.8, 'safety': True},
+        world_state={}
+    )
+    
+    # 导航任务需要多个 ticks 来完成
+    assert planner.current_task is not None
+    assert planner.current_task.status == TaskStatus.RUNNING
 
 
 if __name__ == "__main__":
