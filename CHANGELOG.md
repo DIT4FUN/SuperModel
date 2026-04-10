@@ -2,6 +2,35 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.62.0] - 2026-04-10
+
+### Added
+- **AGV五级规格总表 (Master Spec)** (`docs/design/AGV_FIVE_LEVEL_MASTER_SPEC.md`, 350行)
+  - 完整九大子系统规格总表: 物理/控制/触觉/力觉/IMU/视觉/听觉/融合认知/硬件平台
+  - AGV五级传感器异常降级策略总表
+  - 模块接口快速索引表
+  - 快速使用示例 (传感器/姿态估计/具身仿真)
+  - 测试覆盖统计总表
+- **触觉/力觉/IMU模块确认完成**
+  - `src/sensors/tactile.py`: TactileArray/VirtualTactileSensor/PressureProcessor, 347项测试全通过
+  - `src/sensors/force.py`: ForceTorqueSensor/VirtualForceSensor/WrenchProcessor, 347项测试全通过
+  - `src/sensors/imu.py`: IMUSensor/VirtualIMUSensor/PoseEstimator, 347项测试全通过
+- **控制模块确认完成**
+  - `src/control/`: velocity/force/impedance/trajectory/embodied/grade/swarm等12+子模块完整
+- **仿真环境确认完成**
+  - `src/control/embodied_sim.py`: 具身仿真环境, 50+项测试全通过
+- **测试覆盖确认完成**
+  - `tests/sensor_tests.py`: 347项测试全通过
+  - `tests/fusion_tests.py`: 79项测试全通过
+  - 414项传感器+融合测试全通过
+
+### Documentation
+- 更新 `SPEC.md` 第27章传感器-控制闭环集成规格
+- 更新 `docs/design/MODULE_INTERFACE.md` (6143行, 36章节)
+- 更新 `docs/design/AGV_FIVE_LEVEL_SPEC_GRID.md` 五级规格对照表
+
+---
+
 ## [2.60.0] - 2026-04-10
 
 ### Added
