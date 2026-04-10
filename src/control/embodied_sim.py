@@ -196,17 +196,45 @@ class SimEnvironmentState:
     external_disturbance: np.ndarray = field(default_factory=lambda: np.zeros(6))
     terrain_type: str = "flat"  # flat, rough, slope
 
+    # ============================================================
+    # 电池状态 (新增)
+    # ============================================================
+    battery_soc: float = 1.0  # 0-1
+    battery_voltage: float = 48.0  # V
+    battery_current: float = 0.0  # A
+    battery_remaining_wh: float = 500.0  # Wh
+
+    # ============================================================
+    # 车轮滑移状态 (新增)
+    # ============================================================
+    wheel_slip_l: float = 0.0  # 左轮滑移率 0-1
+    wheel_slip_r: float = 0.0  # 右轮滑移率 0-1
+    terrain_friction: float = 0.8  # 地形摩擦系数
+
+    # ============================================================
+    # 电机温度状态 (新增)
+    # ============================================================
+    motor_temp_l: float = 25.0  # 左电机温度 °C
+    motor_temp_r: float = 25.0  # 右电机温度 °C
+    motor_overheating: bool = False  # 是否过热
+
     def to_array(self) -> np.ndarray:
-        """展平为观测向量"""
+        """展平为观测向量 (扩展至27维)"""
         obs = [
-            self.position,
-            self.euler,
-            self.linear_velocity,
-            self.angular_velocity,
-            self.imu_accel_noisy,
-            self.imu_gyro_noisy,
-            self.wheel_positions,
-            self.wheel_velocities,
+            self.position,  # 3
+            self.euler,  # 3
+            self.linear_velocity,  # 3
+            self.angular_velocity,  # 3
+            self.imu_accel_noisy,  # 3
+            self.imu_gyro_noisy,  # 3
+            self.wheel_positions,  # 2
+            self.wheel_velocities,  # 2
+            # 新增: 电池/SOC (3)
+            np.array([self.battery_soc, self.battery_voltage, self.battery_current]),
+            # 新增: 车轮滑移 (3)
+            np.array([self.wheel_slip_l, self.wheel_slip_r, self.terrain_friction]),
+            # 新增: 电机温度 (3)
+            np.array([self.motor_temp_l, self.motor_temp_r, 1.0 if self.motor_overheating else 0.0]),
         ]
         return np.concatenate(obs)
 
@@ -285,6 +313,9 @@ class PhysicsSimulator:
     - 差分驱动运动学
     - 简化的接触力学
     - 有效载荷动力学
+    - 电池/SOC仿真
+    - 车轮滑移建模
+    - 电机温度仿真
     """
 
     def __init__(self, grade: str = 'M'):
@@ -316,6 +347,31 @@ class PhysicsSimulator:
         # 接触
         self.contact_z = 0.0  # 接触面高度
 
+        # ============================================================
+        # 电池/SOC仿真 (新增)
+        # ============================================================
+        self.battery_capacity_wh = 500.0  # 电池容量 Wh
+        self.battery_soc = 1.0  # 当前SOC 0-1
+        self.battery_voltage = 48.0  # 标称电压 V
+        self.battery_current_draw = 0.0  # 当前放电电流 A
+
+        # ============================================================
+        # 车轮滑移建模 (新增)
+        # ============================================================
+        self.wheel_slip_l = 0.0  # 左轮滑移率
+        self.wheel_slip_r = 0.0  # 右轮滑移率
+        self.terrain_friction = 0.8  # 地形摩擦系数
+
+        # ============================================================
+        # 电机温度仿真 (新增)
+        # ============================================================
+        self.motor_temp_l = 25.0  # 左电机温度 °C
+        self.motor_temp_r = 25.0  # 右电机温度 °C
+        self.motor_ambient_temp = 25.0  # 环境温度 °C
+        self.motor_thermal_resistance = 0.5  # 热阻 °C/W
+        self.motor_time_constant = 100.0  # 热时间常数 s
+        self.motor_max_temp = 80.0  # 电机最高允许温度 °C
+
     def reset(self, position: np.ndarray = None, orientation: np.ndarray = None):
         """重置仿真状态"""
         self.position = position if position is not None else np.zeros(3)
@@ -326,6 +382,16 @@ class PhysicsSimulator:
         self.wheel_r_pos = 0.0
         self.wheel_l_vel = 0.0
         self.wheel_r_vel = 0.0
+        # 重置电池/SOC
+        self.battery_soc = 1.0
+        self.battery_current_draw = 0.0
+        # 重置滑移
+        self.wheel_slip_l = 0.0
+        self.wheel_slip_r = 0.0
+        self.terrain_friction = 0.8
+        # 重置电机温度
+        self.motor_temp_l = 25.0
+        self.motor_temp_r = 25.0
 
     def set_payload(self, mass_kg: float):
         """设置有效载荷"""
@@ -354,10 +420,46 @@ class PhysicsSimulator:
         cmd_vx = np.clip(cmd_vx, -max_v, max_v)
         cmd_wz = np.clip(cmd_wz, -max_w, max_w)
 
-        # 速度平滑 (一阶滞后)
-        alpha = 0.8
-        vx = alpha * cmd_vx + (1 - alpha) * self.linear_vel[0]
-        wz = alpha * cmd_wz + (1 - alpha) * self.angular_vel[2]
+        # ============================================================
+        # 车轮滑移建模 (新增)
+        # ============================================================
+        r = self.wheel_radius
+        b = self.wheelbase
+        
+        # 理论车轮速度
+        wheel_vel_l_theoretical = (cmd_vx - cmd_wz * b / 2) / r
+        wheel_vel_r_theoretical = (cmd_vx + cmd_wz * b / 2) / r
+        
+        # 地形摩擦系数 (根据地形类型)
+        if self.terrain == "rough":
+            self.terrain_friction = 0.5  # 粗糙地面摩擦低
+        elif self.terrain == "slope":
+            self.terrain_friction = 0.6  # 坡道摩擦中等
+        elif self.terrain == "wet":
+            self.terrain_friction = 0.4  # 湿滑地面
+        else:  # flat
+            self.terrain_friction = 0.8  # 平地摩擦高
+        
+        # 有效摩擦力限制
+        effective_vx = cmd_vx * self.terrain_friction
+        effective_wz = cmd_wz * self.terrain_friction
+        
+        # 计算滑移率 (车轮实际速度与期望速度的差异)
+        self.wheel_slip_l = min(1.0, abs(wheel_vel_l_theoretical - cmd_vx / r) * 0.1)
+        self.wheel_slip_r = min(1.0, abs(wheel_vel_r_theoretical - cmd_vx / r) * 0.1)
+        
+        # 在粗糙地面上增加额外的随机滑移
+        if self.terrain == "rough":
+            self.wheel_slip_l += abs(np.random.randn() * 0.05)
+            self.wheel_slip_r += abs(np.random.randn() * 0.05)
+        
+        self.wheel_slip_l = min(1.0, self.wheel_slip_l)
+        self.wheel_slip_r = min(1.0, self.wheel_slip_r)
+
+        # 速度平滑 (考虑滑移影响)
+        alpha = 0.8 * self.terrain_friction
+        vx = alpha * effective_vx + (1 - alpha) * self.linear_vel[0]
+        wz = alpha * effective_wz + (1 - alpha) * self.angular_vel[2]
 
         self.linear_vel[0] = vx
         self.angular_vel[2] = wz
@@ -371,13 +473,28 @@ class PhysicsSimulator:
         yaw = self._get_yaw() + wz * dt
         self.orientation = self._euler_to_quat(np.array([0.0, 0.0, yaw]))
 
-        # 车轮编码器
-        r = self.wheel_radius
-        b = self.wheelbase
-        self.wheel_l_vel = (vx - wz * b / 2) / r
-        self.wheel_r_vel = (vx + wz * b / 2) / r
+        # 车轮编码器 (考虑滑移)
+        self.wheel_l_vel = wheel_vel_l_theoretical * (1 - self.wheel_slip_l)
+        self.wheel_r_vel = wheel_vel_r_theoretical * (1 - self.wheel_slip_r)
         self.wheel_l_pos += self.wheel_l_vel * dt
         self.wheel_r_pos += self.wheel_r_vel * dt
+
+        # ============================================================
+        # 电池/SOC仿真 (新增)
+        # ============================================================
+        # 估算电流消耗 (基于速度和加速度)
+        total_mass = self.mass + self.payload_mass
+        power_draw = (abs(vx) * total_mass * 0.5 + 
+                     abs(wz) * total_mass * 0.2 +
+                     10.0)  # 基础功耗 (控制器等)
+        
+        # 电流 = 功率 / 电压
+        self.battery_current_draw = power_draw / self.battery_voltage
+        
+        # 更新SOC (Wh -> Ah -> SOC变化)
+        energy_consumed_wh = power_draw * dt  # Wh
+        soc_delta = energy_consumed_wh / self.battery_capacity_wh
+        self.battery_soc = max(0.0, min(1.0, self.battery_soc - soc_delta))
 
         # 地形影响
         if self.terrain == "slope":
@@ -386,6 +503,54 @@ class PhysicsSimulator:
         elif self.terrain == "rough":
             disturbance = np.random.randn(3) * 0.01
             self.linear_vel += disturbance * dt
+
+        # ============================================================
+        # 电机温度仿真 (新增)
+        # ============================================================
+        # 计算电机功率消耗
+        motor_power_l = abs(self.wheel_l_vel) * 10.0 + 5.0  # W
+        motor_power_r = abs(self.wheel_r_vel) * 10.0 + 5.0  # W
+        
+        # 温升 = 功率 * 热阻 * (1 - 衰减系数)
+        temp_rise_l = motor_power_l * self.motor_thermal_resistance * (1 - self.motor_temp_l / self.motor_max_temp)
+        temp_rise_r = motor_power_r * self.motor_thermal_resistance * (1 - self.motor_temp_r / self.motor_max_temp)
+        
+        # 一阶惯性环节: T(t+dt) = T(t) + (T_ambient - T(t) + temp_rise) * dt / tau
+        self.motor_temp_l += (self.motor_ambient_temp - self.motor_temp_l + temp_rise_l) * dt / self.motor_time_constant
+        self.motor_temp_r += (self.motor_ambient_temp - self.motor_temp_r + temp_rise_r) * dt / self.motor_time_constant
+
+    def get_battery_state(self) -> Dict[str, float]:
+        """
+        获取电池状态 (新增)
+        
+        Returns:
+            包含soc、电压、电流等信息的字典
+        """
+        return {
+            'soc': self.battery_soc,
+            'voltage': self.battery_voltage,
+            'current': self.battery_current_draw,
+            'capacity_wh': self.battery_capacity_wh,
+            'remaining_wh': self.battery_soc * self.battery_capacity_wh,
+        }
+
+    def get_wheel_slip(self) -> Tuple[float, float]:
+        """
+        获取车轮滑移率 (新增)
+        
+        Returns:
+            (左轮滑移率, 右轮滑移率)
+        """
+        return self.wheel_slip_l, self.wheel_slip_r
+
+    def get_motor_temperatures(self) -> Tuple[float, float]:
+        """
+        获取电机温度 (新增)
+        
+        Returns:
+            (左电机温度, 右电机温度) °C
+        """
+        return self.motor_temp_l, self.motor_temp_r
 
     def _get_yaw(self) -> float:
         """从四元数获取偏航角"""
@@ -627,6 +792,32 @@ class EmbodiedSimulator:
         self.state.force_reading = force_reading
         self.state.tactile_pressure_map = tactile_map
 
+        # ============================================================
+        # 更新电池/SOC状态 (新增)
+        # ============================================================
+        battery_state = self.physics.get_battery_state()
+        self.state.battery_soc = battery_state['soc']
+        self.state.battery_voltage = battery_state['voltage']
+        self.state.battery_current = battery_state['current']
+        self.state.battery_remaining_wh = battery_state['remaining_wh']
+
+        # ============================================================
+        # 更新车轮滑移状态 (新增)
+        # ============================================================
+        slip_l, slip_r = self.physics.get_wheel_slip()
+        self.state.wheel_slip_l = slip_l
+        self.state.wheel_slip_r = slip_r
+        self.state.terrain_friction = self.physics.terrain_friction
+
+        # ============================================================
+        # 更新电机温度状态 (新增)
+        # ============================================================
+        temp_l, temp_r = self.physics.get_motor_temperatures()
+        self.state.motor_temp_l = temp_l
+        self.state.motor_temp_r = temp_r
+        self.state.motor_overheating = (temp_l >= self.physics.motor_max_temp or 
+                                        temp_r >= self.physics.motor_max_temp)
+
         self._step_count += 1
         self._sim_time += self.dt
 
@@ -666,7 +857,7 @@ class EmbodiedSimulator:
         return self.state.to_array()
 
     def get_sensor_dict(self) -> Dict[str, Any]:
-        """获取传感器数据字典"""
+        """获取传感器数据字典 (扩展包含电池/滑移/温度)"""
         return {
             'imu': {
                 'accel': self.state.imu_accel_noisy.copy(),
@@ -687,7 +878,26 @@ class EmbodiedSimulator:
                 'orientation': self.state.orientation.copy(),
                 'linear_vel': self.state.linear_velocity.copy(),
                 'angular_vel': self.state.angular_velocity.copy(),
-            }
+            },
+            # 新增: 电池状态
+            'battery': {
+                'soc': self.state.battery_soc,
+                'voltage': self.state.battery_voltage,
+                'current': self.state.battery_current,
+                'remaining_wh': self.state.battery_remaining_wh,
+            },
+            # 新增: 车轮滑移状态
+            'wheel_slip': {
+                'slip_l': self.state.wheel_slip_l,
+                'slip_r': self.state.wheel_slip_r,
+                'friction': self.state.terrain_friction,
+            },
+            # 新增: 电机温度状态
+            'motor_temp': {
+                'motor_l': self.state.motor_temp_l,
+                'motor_r': self.state.motor_temp_r,
+                'overheating': self.state.motor_overheating,
+            },
         }
 
 
@@ -708,7 +918,7 @@ class EmbodiedSimEnv:
     """
     Gymnasium 兼容的具身智能仿真环境
 
-    观测空间: 位置(3) + 姿态(3) + 线速度(3) + 角速度(3) + IMU加计(3) + IMU陀螺(3) + 轮位置(2) + 轮速度(2) = 22维
+    观测空间: 位置(3) + 姿态(3) + 线速度(3) + 角速度(3) + IMU加计(3) + IMU陀螺(3) + 轮位置(2) + 轮速度(2) + 电池(3) + 滑移(3) + 温度(3) = 31维
     动作空间: 线速度(-1,1) + 角速度(-1,1) = 2维
     """
 
@@ -726,9 +936,9 @@ class EmbodiedSimEnv:
 
             self.sim = EmbodiedSimulator(grade=grade)
 
-            # 观测空间: 22维
+            # 观测空间: 31维 (扩展了电池/滑移/温度)
             self.observation_space = spaces.Box(
-                low=-10.0, high=10.0, shape=(22,), dtype=np.float32
+                low=-10.0, high=10.0, shape=(31,), dtype=np.float32
             )
 
             # 动作空间: [vx_cmd, wz_cmd]，归一化到 [-1, 1]

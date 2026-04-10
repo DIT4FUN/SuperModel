@@ -345,8 +345,8 @@ class TestEmbodiedSimulator(unittest.TestCase):
 
         obs = sim.get_observation()
 
-        # 22维观测: pos(3) + euler(3) + lin_vel(3) + ang_vel(3) + imu_a(3) + imu_g(3) + wheel_pos(2) + wheel_vel(2)
-        self.assertEqual(obs.shape, (22,))
+        # 31维观测: pos(3) + euler(3) + lin_vel(3) + ang_vel(3) + imu_a(3) + imu_g(3) + wheel_pos(2) + wheel_vel(2) + battery(3) + slip(3) + temp(3)
+        self.assertEqual(obs.shape, (31,))
         self.assertFalse(np.any(np.isnan(obs)))
 
     def test_payload(self):
@@ -451,7 +451,7 @@ class TestEmbodiedSimEnv(unittest.TestCase):
         env = EmbodiedSimEnv(grade='M')
         obs, info = env.reset(seed=42)
 
-        self.assertEqual(obs.shape, (22,))
+        self.assertEqual(obs.shape, (31,))
         self.assertFalse(np.any(np.isnan(obs)))
         self.assertIsInstance(info, dict)
 
@@ -465,7 +465,7 @@ class TestEmbodiedSimEnv(unittest.TestCase):
         action = np.array([0.0, 0.0])
         obs, reward, terminated, truncated, info = env.step(action)
 
-        self.assertEqual(obs.shape, (22,))
+        self.assertEqual(obs.shape, (31,))
         self.assertIsInstance(reward, float)
         self.assertIsInstance(terminated, bool)
         self.assertIsInstance(truncated, bool)
@@ -594,8 +594,8 @@ class TestSimEnvironmentState(unittest.TestCase):
         state = SimEnvironmentState()
         arr = state.to_array()
 
-        # 检查形状
-        self.assertEqual(arr.shape, (22,))
+        # 检查形状 (31维: pos(3) + euler(3) + lin_vel(3) + ang_vel(3) + imu_a(3) + imu_g(3) + wheel_pos(2) + wheel_vel(2) + battery(3) + slip(3) + temp(3))
+        self.assertEqual(arr.shape, (31,))
         self.assertFalse(np.any(np.isnan(arr)))
 
     def test_state_initial_values(self):
@@ -608,6 +608,212 @@ class TestSimEnvironmentState(unittest.TestCase):
         self.assertEqual(state.dt, 0.01)
         self.assertTrue(np.allclose(state.position, np.zeros(3)))
         self.assertTrue(np.allclose(state.linear_velocity, np.zeros(3)))
+
+
+class TestBatterySimulation(unittest.TestCase):
+    """电池/SOC仿真测试 (新增)"""
+
+    def test_battery_soc_decreases(self):
+        """电池SOC随运动降低"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        
+        initial_soc = sim.state.battery_soc
+        
+        # 模拟多步运动
+        for _ in range(100):
+            sim.step(cmd_vx=0.5, cmd_wz=0.0)
+        
+        final_soc = sim.state.battery_soc
+        
+        # SOC应该降低
+        self.assertLess(final_soc, initial_soc)
+        # SOC不应该低于0
+        self.assertGreaterEqual(final_soc, 0.0)
+
+    def test_battery_state_dict(self):
+        """电池状态字典正确"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        sim.step(cmd_vx=0.1, cmd_wz=0.0)
+        
+        sensor_dict = sim.get_sensor_dict()
+        battery = sensor_dict['battery']
+        
+        self.assertIn('soc', battery)
+        self.assertIn('voltage', battery)
+        self.assertIn('current', battery)
+        self.assertIn('remaining_wh', battery)
+
+    def test_physics_battery_getter(self):
+        """PhysicsSimulator电池状态获取"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        physics = PhysicsSimulator(grade='M')
+        physics.reset()
+        
+        # 模拟运动
+        physics.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+        
+        battery_state = physics.get_battery_state()
+        
+        self.assertIn('soc', battery_state)
+        self.assertIn('voltage', battery_state)
+        self.assertEqual(battery_state['voltage'], 48.0)
+
+
+class TestWheelSlipSimulation(unittest.TestCase):
+    """车轮滑移仿真测试 (新增)"""
+
+    def test_wheel_slip_on_rough_terrain(self):
+        """粗糙地形上车轮滑移增加"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        
+        # 平地
+        sim.set_terrain("flat")
+        for _ in range(10):
+            sim.step(cmd_vx=0.5, cmd_wz=0.0)
+        slip_flat = sim.state.wheel_slip_l + sim.state.wheel_slip_r
+        
+        # 粗糙地形
+        sim.set_terrain("rough")
+        for _ in range(10):
+            sim.step(cmd_vx=0.5, cmd_wz=0.0)
+        slip_rough = sim.state.wheel_slip_l + sim.state.wheel_slip_r
+        
+        # 粗糙地形滑移应该更大
+        self.assertGreaterEqual(slip_rough, slip_flat)
+
+    def test_terrain_friction_change(self):
+        """地形摩擦系数随地形变化"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        physics = PhysicsSimulator(grade='M')
+        
+        physics.terrain = "flat"
+        physics.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+        friction_flat = physics.terrain_friction
+        
+        physics.terrain = "wet"
+        physics.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+        friction_wet = physics.terrain_friction
+        
+        # 湿滑地面摩擦系数更低
+        self.assertLess(friction_wet, friction_flat)
+
+    def test_wheel_slip_getter(self):
+        """车轮滑移率获取"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        physics = PhysicsSimulator(grade='M')
+        physics.reset()
+        physics.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+        
+        slip_l, slip_r = physics.get_wheel_slip()
+        
+        self.assertGreaterEqual(slip_l, 0.0)
+        self.assertLessEqual(slip_l, 1.0)
+        self.assertGreaterEqual(slip_r, 0.0)
+        self.assertLessEqual(slip_r, 1.0)
+
+
+class TestMotorTemperatureSimulation(unittest.TestCase):
+    """电机温度仿真测试 (新增)"""
+
+    def test_motor_temp_increases(self):
+        """电机温度随运动升高"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        
+        initial_temp_l = sim.state.motor_temp_l
+        initial_temp_r = sim.state.motor_temp_r
+        
+        # 模拟多步运动
+        for _ in range(100):
+            sim.step(cmd_vx=0.5, cmd_wz=0.0)
+        
+        final_temp_l = sim.state.motor_temp_l
+        final_temp_r = sim.state.motor_temp_r
+        
+        # 温度应该升高或保持
+        self.assertGreaterEqual(final_temp_l, initial_temp_l)
+        self.assertGreaterEqual(final_temp_r, initial_temp_r)
+
+    def test_motor_overheating_flag(self):
+        """电机过热标志"""
+        from src.control.embodied_sim import SimEnvironmentState
+
+        state = SimEnvironmentState()
+        state.motor_temp_l = 85.0
+        state.motor_temp_r = 75.0
+        state.motor_overheating = (state.motor_temp_l >= 80.0 or state.motor_temp_r >= 80.0)
+        
+        self.assertTrue(state.motor_overheating)
+
+    def test_motor_temp_getter(self):
+        """电机温度获取"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        physics = PhysicsSimulator(grade='M')
+        physics.reset()
+        physics.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+        
+        temp_l, temp_r = physics.get_motor_temperatures()
+        
+        self.assertGreater(temp_l, 0.0)
+        self.assertGreater(temp_r, 0.0)
+
+    def test_motor_sensor_dict(self):
+        """电机温度传感器字典"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        sim.step(cmd_vx=0.1, cmd_wz=0.0)
+        
+        sensor_dict = sim.get_sensor_dict()
+        motor_temp = sensor_dict['motor_temp']
+        
+        self.assertIn('motor_l', motor_temp)
+        self.assertIn('motor_r', motor_temp)
+        self.assertIn('overheating', motor_temp)
+
+
+class TestAGVGradesExtended(unittest.TestCase):
+    """AGV五级规格扩展测试"""
+
+    def test_battery_per_grade(self):
+        """不同AGV等级的电池容量"""
+        from src.control.embodied_sim import EmbodiedSimulator, get_sim_grade_spec
+
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            sim = EmbodiedSimulator(grade=grade, seed=42)
+            sim.reset()
+            
+            # 验证电池状态存在
+            self.assertGreater(sim.state.battery_soc, 0.0)
+            self.assertEqual(sim.state.battery_voltage, 48.0)
+
+    def test_observation_space_per_grade(self):
+        """所有AGV等级观测空间一致 (31维)"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            sim = EmbodiedSimulator(grade=grade, seed=42)
+            sim.reset()
+            sim.step(cmd_vx=0.1, cmd_wz=0.0)
+            
+            obs = sim.get_observation()
+            self.assertEqual(obs.shape[0], 31)
 
 
 if __name__ == '__main__':
