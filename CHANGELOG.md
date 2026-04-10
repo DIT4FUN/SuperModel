@@ -2,6 +2,38 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.55.0] - 2026-04-10
+
+### Added
+- **SPEC.md 第27章: 传感器-控制闭环集成规格**
+  - 27.1 闭环数据流概述 (ASCII架构图)
+  - 27.2 各等级闭环延迟预算 (S级90ms → XXL级3.5ms)
+  - 27.3 传感器采样率与控制频率映射表 (5级)
+  - 27.4 感知→控制接口契约 (IMU/力觉/触觉完整接口定义)
+  - 27.5 五级感知-控制集成能力矩阵 (11项能力对比)
+  - 27.6 传感器异常与降级策略矩阵 (7类传感器×4种异常)
+  - 27.7 完整闭环集成测试用例代码
+
+### Changed
+- `docs/MODULE_INDEX.md` 新增第27章文档索引
+
+### Tests
+- 2671项测试全通过 (341传感器测试 + 73融合测试 + 2257其他)
+
+## [2.54.0] - 2026-04-10
+
+### Added
+- **传感器AGV五级规格表完善**
+  - `src/sensors/__init__.py` 新增 AGV_TACTILE_GRADES / AGV_FORCE_GRADES / AGV_IMU_GRADES / AGV_SIGNAL_PROCESSING_GRADES 导出
+  - `get_tactile_spec()` / `get_force_spec()` / `get_imu_spec()` / `get_signal_processing_grade_spec()` 工厂函数
+  - 触觉规格: S(8×8)→XXL(48×48), 50Hz→1000Hz, 12bit→16bit
+  - 力觉规格: S(3轴±100N)→XXL(6轴±5000N), 100Hz→5000Hz
+  - IMU规格: S(MPU6050 100Hz)→XXL(ADIS16470 2000Hz)
+  - 信号处理规格: S(50Hz/单滤波器)→XXL(2000Hz/卡尔曼+自适应)
+
+### Tests
+- 2693项测试全通过
+
 ## [2.53.0] - 2026-04-10
 
 ### Added

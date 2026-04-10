@@ -1,4 +1,6 @@
 # SuperModel 模块索引 / Module Index
+- **v2.55.0** (2026-04-10): SPEC.md第27章传感器-控制闭环集成规格; 完整闭环数据流/延迟预算/采样率映射/接口契约/异常降级策略; 2671项测试全通过
+- **v2.54.0** (2026-04-10): 传感器AGV五级规格表完善(sensors/__init__.py导出); 触觉/力觉/IMU/信号处理五级规格; 2693项测试全通过
 - **v2.46.1** (2026-04-10): 新增AGV五极控制规格模块(control/grade_control.py + src/control/grade_control.py); GradeAwarePID/GradeAwareSafetyMonitor/GradeAwareTrajectoryPlanner; 58项测试全通过; 785项测试全通过
 - **v2.43.0** (2026-04-10): 补充SPEC.md第20章AGV五级规格总表(整车/感知/控制/计算/电源/自主学习/接口7大子系统); 传感器+融合+控制全链路五级规格完善; 2327项测试全通过
 - **v2.32.0** (2026-04-10): 新增行为树模块(behavior_tree.py, 795行, 51项测试); Selector/Sequence/Parallel/Condition/Action/SubTree + 5个装饰器; 456项测试全通过

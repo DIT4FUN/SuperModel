@@ -2417,6 +2417,209 @@ state = sim.step(velocity_commands=[1.0, 0.5])
 
 ---
 
+## 27. 传感器-控制闭环集成规格 (Sensor-Control Integration)
+
+### 27.1 闭环数据流概述
+
+完整的 AGV 具身智能闭环从感知到执行的完整数据流:
+
+```
+[物理世界]
+     │
+     ▼
+┌─────────────┐  capture()   ┌─────────────┐  fusion()    ┌─────────────┐
+│  IMU        │─────────────▶│  传感器融合   │─────────────▶│  姿态估计   │
+│  (100-2000Hz)│              │  (EKF/AHRS) │              │  Pose       │
+└─────────────┘              └─────────────┘              └──────┬──────┘
+     │                                                        │
+     │ capture()                                               │ update()
+     ▼                                                        ▼
+┌─────────────┐  detect_contact() ┌─────────────┐  estimate() ┌─────────────┐
+│  力觉传感器  │─────────────────▶│  接触检测    │─────────────▶│  阻抗控制   │
+│  (100-5000Hz)│              └─────────────┘              └──────┬──────┘
+└─────────────┘                                                       │
+     │                                                               │ compute()
+     │ capture()                                                      ▼
+     ▼                                                         ┌─────────────┐
+┌─────────────┐  detect_contacts() ┌─────────────┐  estimate()  │  速度控制   │
+│  触觉阵列    │─────────────────▶│  抓取质量    │─────────────▶│  (PID/MPC)  │
+│  (50-1000Hz) │              └─────────────┘              └──────┬──────┘
+└─────────────┘                                                       │
+     │                                                               │ twist
+     ▼                                                               ▼
+┌─────────────┐  read()          ┌─────────────┐  compute()    ┌─────────────┐
+│  编码器      │────────────────▶│  里程计      │──────────────▶│  电机驱动   │
+│  (每轴)      │              └─────────────┘              └─────────────┘
+└─────────────┘                                                       │
+                                                                     ▼
+                                                               [物理执行器]
+```
+
+### 27.2 各等级闭环延迟预算
+
+| 阶段 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| IMU采样→融合输出 | 20ms | 10ms | 5ms | 2ms | 1ms |
+| 力觉采样→接触检测 | 10ms | 5ms | 2ms | 1ms | 0.5ms |
+| 触觉采样→抓取估计 | 20ms | 10ms | 5ms | 2ms | 1ms |
+| 融合输出→阻抗控制 | 20ms | 5ms | 2ms | 1ms | 0.5ms |
+| 速度指令→电机响应 | 40ms | 20ms | 10ms | 5ms | 2ms |
+| **端到端延迟** | **90ms** | **40ms** | **19ms** | **8ms** | **3.5ms** |
+| 控制周期 | 20ms | 10ms | 5ms | 2ms | 1ms |
+
+### 27.3 传感器采样率与控制频率映射
+
+| AGV等级 | IMU采样 | 力觉采样 | 触觉采样 | 编码器 | 控制频率 | 融合算法 |
+|---------|---------|---------|---------|--------|---------|---------|
+| S | 100Hz | 100Hz | 50Hz | 每轴 | 50Hz | 互补滤波 |
+| M | 200Hz | 500Hz | 100Hz | 每轴 | 100Hz | Madgwick AHRS |
+| L | 500Hz | 1000Hz | 200Hz | 每轴 | 200Hz | Madgwick + EKF |
+| XL | 1000Hz | 2000Hz | 500Hz | 每轴 | 500Hz | EKF (9轴) |
+| XXL | 2000Hz | 5000Hz | 1000Hz | 每轴 | 1000Hz | EKF + Learning |
+
+### 27.4 感知→控制接口契约
+
+**IMU → 姿态估计 → 控制**:
+```python
+# 接口契约: IMUFrame
+@dataclass
+class IMUFrame:
+    accel: np.ndarray          # 3, m/s²
+    gyro: np.ndarray          # 3, rad/s
+    mag: Optional[np.ndarray]  # 3, μT
+    temperature: float        # °C
+    timestamp: float           # s
+    frame_id: int
+    sensor_id: str
+
+# 姿态估计器接口
+class PoseEstimator:
+    def update(self, accel, gyro, mag=None, dt=None) -> Pose
+    def get_pose(self) -> Pose
+    def get_euler(self) -> np.ndarray  # [roll, pitch, yaw]
+    def get_rotation_matrix(self) -> np.ndarray  # 3x3
+```
+
+**力觉 → 接触检测 → 阻抗控制**:
+```python
+# 接口契约: Wrench
+@dataclass
+class Wrench:
+    force: np.ndarray   # 3, N
+    torque: np.ndarray  # 3, N·m
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+
+# 接触检测接口
+class ForceTorqueSensor:
+    def capture(self) -> Wrench
+    def detect_contact(self, wrench=None, threshold=2.0) -> ContactState
+    def estimate_payload(self, wrench=None) -> float  # kg
+
+# 阻抗控制接口
+class ImpedanceController:
+    def compute_torque(self, desired_pose, actual_pose, desired_wrench, actual_wrench, dt) -> np.ndarray
+    def set_impedance_params(self, M, B, K)  # 惯性/阻尼/刚度矩阵
+```
+
+**触觉 → 抓取质量 → 灵巧操作控制**:
+```python
+# 接口契约: TactileFrame
+@dataclass
+class TactileFrame:
+    pressure_map: np.ndarray          # HxW
+    temperature_map: Optional[np.ndarray]
+    proximity: Optional[np.ndarray]
+    slip_signal: Optional[np.ndarray]
+    timestamp: float
+    frame_id: int
+    sensor_id: str
+
+# 抓取质量评估接口
+class TactileArray:
+    def capture(self) -> TactileFrame
+    def detect_contacts(self, frame=None) -> List[TactileContact]
+    def get_slip_signal(self, frame=None) -> np.ndarray
+    def estimate_grip_quality(self, frame=None) -> Dict[str, float]
+```
+
+### 27.5 五级感知-控制集成能力矩阵
+
+| 能力 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| 姿态稳定 | 互补滤波 | Madgwick | Madgwick+EKF | EKF 9轴 | EKF+自适应 |
+| 碰撞检测 | 阈值 | 阈值+力变化率 | 6轴力+区域 | 6轴+预测 | 6轴+AI预测 |
+| 接触力控制 | ❌ | 碰撞检测 | 5Hz阻抗 | 20Hz阻抗 | 50Hz阻抗 |
+| 抓取稳定检测 | ❌ | 16×16阵列 | 24×24阵列 | 32×32阵列 | 48×48阵列 |
+| 滑移检测与响应 | ❌ | 压力梯度 | 压力梯度+时序 | 多帧+AI | 多帧+预测+响应 |
+| 地形自适应 | ❌ | IMU倾斜 | IMU+编码器 | IMU+力觉+视觉 | 全感知融合 |
+| 动态负载补偿 | ❌ | ❌ | 在线重力补偿 | 在线重力+惯性补偿 | 在线+预测补偿 |
+| 多传感器异常检测 | ❌ | ❌ | 阈值监控 | 统计异常检测 | 统计+AI异常检测 |
+| 传感器在线标定 | ❌ | 偏置校准 | 偏置+尺度 | 偏置+尺度+温度 | 全参数自校准 |
+| 端到端闭环延迟 | <100ms | <50ms | <20ms | <10ms | <5ms |
+
+### 27.6 传感器异常与降级策略
+
+| 传感器 | 异常类型 | S | M | L | XL | XXL |
+|--------|---------|---|---|---|---|-----|
+| IMU | 通信中断 | 停机 | 降速50% | 保持速度+报警 | 降级到编码器融合 | 降级+预测+告警 |
+| IMU | 偏置漂移 | - | 偏置重校准 | 自动偏置补偿 | 在线漂移补偿 | 在线漂移补偿+告警 |
+| 力觉 | 通信中断 | 停机 | 碰撞检测失效 | 速度限制 | 触觉+视觉替代 | 传感器融合冗余 |
+| 力觉 | 饱和/过载 | 停机 | 报警 | 限幅+报警 | 限幅+记录+告警 | 限幅+预测+告警 |
+| 触觉 | 部分失效 | - | 忽略失效区 | 忽略+补全 | 忽略+补偿+告警 | 局部失效降级+告警 |
+| 编码器 | 通信中断 | 停机 | 停机 | 停机 | IMU航位推算 | IMU航位推算+告警 |
+| 激光雷达 | 降质 | 停机 | 停机 | 减速+避障 | 减速+告警 | 多传感器补偿 |
+
+### 27.7 集成测试用例
+
+```python
+# 完整闭环集成测试 (以 M 级为例)
+from src.sensors.imu import IMUSensor, PoseEstimator, IMUSensorType
+from src.sensors.force import ForceTorqueSensor, ForceSensorType
+from src.sensors.tactile import TactileArray, TactileSensorType
+from src.control.impedance import ImpedanceController
+from src.control.velocity_control import AGVVelocityController
+
+# 初始化传感器 (M级规格)
+imu = IMUSensor(IMUSensorType.BMI088, sample_rate=200)
+force = ForceTorqueSensor(ForceSensorType.SIX_AXIS)
+tactile = TactileArray(array_size=(16, 16), sensor_type=TactileSensorType.CAPACITIVE)
+
+# 初始化控制器
+pose_estimator = PoseEstimator(algorithm="madgwick", sample_rate=200.0)
+impedance_ctrl = ImpedanceController()
+velocity_ctrl = AGVVelocityController(grade="M")
+
+# 闭环迭代
+for step in range(1000):
+    dt = 1 / 200
+    
+    # 1. 感知层
+    imu_frame = imu.capture()
+    wrench = force.capture()
+    tactile_frame = tactile.capture()
+    
+    # 2. 融合层
+    pose = pose_estimator.update(imu_frame.accel, imu_frame.gyro, dt=dt)
+    
+    # 3. 控制决策
+    contact = force.detect_contact(wrench)
+    if contact.is_contact:
+        torque = impedance_ctrl.compute_torque(desired_pose, pose, desired_wrench, wrench, dt)
+    
+    # 4. 执行层
+    twist = velocity_ctrl.compute_twist(pose, target_pose)
+    
+    # 5. 状态检查
+    grip = tactile.estimate_grip_quality(tactile_frame)
+    assert grip['overall'] >= 0.0
+    assert wrench.magnitude >= 0.0
+    assert dt > 0
+```
+
+---
+
 ## 25. 版本历史
 
 | 版本 | 日期 | 更新内容 |
