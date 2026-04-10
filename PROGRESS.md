@@ -1,7 +1,41 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 07:38 (v2.36.0)
+> Last Updated: 2026-04-10 08:19 (v2.38.0)
+
+---
+
+## v2.38.0 (2026-04-10 08:19) - 传感器标定管理器 + 33项测试全通过
+
+### 本次更新
+
+1. **传感器标定管理器** (`src/control/calibration_manager.py`, 750行)
+   - `IMUCalibrator`: 六面法加速度计标定 + 翻滚法陀螺仪标定 + Allan方差噪声密度估计
+   - `ForceCalibrator`: 零点标定 + 多点力砝码标定 + 耦合矩阵估计
+   - `TactileCalibrator`: 零压力基准采集 + 触觉标定 + 温度补偿
+   - `CalibrationManager`: 统一多传感器标定流程, 支持 S/M/L/XL/XXL 五级规格
+   - AGV五级标定规格表: 各等级采样率/样本数/噪声密度要求
+
+2. **标定管理器测试** (`tests/calibration_manager_tests.py`, 530行)
+   - 33项测试全部通过 ✅ (IMU/Force/Tactile/CalibrationManager/CalibrationSpecs)
+
+### 测试规模
+- 全量测试: **2259项全部通过** ✅ + 38项跳过
+- 新增: `tests/calibration_manager_tests.py` 33项
+
+### 已完成模块清单
+- ✅ 触觉传感器模块 (tactile.py): 电子皮肤阵列, 压力/温度/接近觉/滑移检测, AGV五级规格
+- ✅ 力觉传感器模块 (force.py): 六维力矩传感器, Wrench数据, 接触检测, 负载估计, AGV五级规格
+- ✅ IMU传感器模块 (imu.py): 惯性测量, 姿态解算, PoseEstimator, VirtualIMUSensor, AGV五级规格
+- ✅ 偏置补偿模块 (bias_compensation.py): 自适应零漂/温度补偿/IMU偏置追踪/力传感器校正
+- ✅ 传感器融合控制 (sensor_fusion_control.py): 统一IMU+力觉+触觉→控制闭环
+- ✅ 传感器标定管理器 (calibration_manager.py): IMU/Force/Tactile多传感器统一标定, AGV五级规格
+- ✅ 具身智能大脑集成 (embodied_brain_integration_tests.py): 13项端到端pipeline测试
+- ✅ 实机部署验证 (embodied_deployment_tests.py): 29项实机部署测试
+- ✅ 行为树模块 (behavior_tree.py): Selector/Sequence/Parallel/Condition/Action + 5个装饰器, AGV五级规格
+- ✅ 控制模块: 20+子模块, AGV五级全覆盖
+- ✅ 仿真环境: PyBullet/Gymnasium/MuJoCo多级AGV仿真
+- ✅ 测试用例: 2259项全通过
 
 ---
 

@@ -2,6 +2,32 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.38.0] - 2026-04-10
+
+### Added
+- **传感器标定管理器** (`src/control/calibration_manager.py`, 750行)
+  - `IMUCalibrator`: 六面法加速度计标定 + 翻滚法陀螺仪标定 + Allan方差噪声估计
+  - `ForceCalibrator`: 零点标定 + 多点力砝码标定 + 温度补偿
+  - `TactileCalibrator`: 零压力基准采集 + 触觉传感器标定
+  - `CalibrationManager`: 统一多传感器标定流程, 支持 AGV 五级规格 (S/M/L/XL/XXL)
+  - `create_calibration_manager()`: 按等级创建标定管理器
+  - AGV五级标定规格表 (`AGV_CALIBRATION_SPEC`): 各等级采样率/样本数/噪声密度要求
+
+- **标定管理器测试** (`tests/calibration_manager_tests.py`, 530行)
+  - `TestIMUCalibrator`: 7项测试 (初始化/数据采集/六面法/陀螺仪/保存加载/结果获取)
+  - `TestForceCalibrator`: 4项测试 (初始化/零点采集/砝码标定/结果获取)
+  - `TestTactileCalibrator`: 3项测试 (初始化/零基准采集/标定)
+  - `TestCalibrationManager`: 9项测试 (创建/配置/IMU+力+触觉独立及联合标定/保存/状态/进度)
+  - `TestCalibrationSpecs`: 5项测试 (AGV五级标定规格完整性/递增性/一致性)
+  - `TestCalibrationConfig`: 2项测试 (默认/自定义配置)
+  - **33项测试全部通过** ✅
+
+### Test Results
+- 全量测试: **2259项全部通过** ✅ + 38项跳过 + 1项异步警告 (sensor: 405 + fusion: 原有 + simulation: 13 + calibration: 33)
+- 新增: `tests/calibration_manager_tests.py` 33项
+
+---
+
 ## [2.37.0] - 2026-04-10
 
 ### Added
