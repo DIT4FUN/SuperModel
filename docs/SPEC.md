@@ -2112,6 +2112,311 @@ pos = adm_ctrl.update(external_force=10.0, desired_position=0.0)
 
 ---
 
+## 26. 详细模块接口设计
+
+### 26.1 触觉感知模块接口 (TactileArray)
+
+**文件位置**: `src/sensors/tactile.py`
+
+**核心类**:
+- `TactileArray` - 电子皮肤触觉阵列主类
+- `PressureProcessor` - 压力信号处理器
+- `VirtualTactileSensor` - 虚拟触觉传感器(仿真)
+
+**AGV五级触觉规格表 (AGV_TACTILE_GRADES)**:
+
+| 等级 | 阵列尺寸 | ADC分辨率 | 压力范围(kPa) | 采样频率 | 温度感知 | 接近觉 | 滑移检测 | 通信接口 |
+|------|---------|----------|--------------|---------|---------|--------|---------|----------|
+| **S** | 8×8 | 12bit | 0~500 | 50Hz | 否 | 否 | 否 | I2C@0x18 |
+| **M** | 16×16 | 12bit | 0~1000 | 100Hz | 是 | 否 | 是 | SPI@50MHz |
+| **L** | 24×24 | 14bit | 0~2000 | 200Hz | 是 | 是 | 是 | SPI@50MHz |
+| **XL** | 32×32 | 14bit | 0~5000 | 500Hz | 是 | 是 | 是 | USB 3.0 |
+| **XXL** | 48×48 | 16bit | 0~10000 | 1000Hz | 是 | 是 | 是 | USB 3.0 |
+
+**接口方法**:
+
+| 方法 | 输入参数 | 输出 | 说明 |
+|------|---------|------|------|
+| `__init__(array_size, sensor_type, sensor_id, calibration)` | (rows,cols), TactileSensorType, str, TactileCalibration | TactileArray | 初始化 |
+| `open()` | - | bool | 打开传感器 |
+| `close()` | - | - | 关闭传感器 |
+| `capture()` | - | TactileFrame | 捕获触觉数据帧 |
+| `detect_contacts(frame)` | TactileFrame | List[TactileContact] | 检测接触区域 |
+| `get_slip_signal(frame)` | TactileFrame | np.ndarray | 计算滑移信号 |
+| `estimate_grip_quality(frame)` | TactileFrame | Dict[str,float] | 估计抓取质量 |
+| `calibrate(zero_pressure, known_weights)` | np.ndarray, List[float] | - | 传感器标定 |
+
+**TactileFrame 数据结构**:
+```python
+@dataclass
+class TactileFrame:
+    pressure_map: np.ndarray          # HxW, 压力值 (归一化 0-1)
+    temperature_map: np.ndarray      # HxW, 温度 (摄氏度)
+    proximity: np.ndarray             # HxW, 接近距离 (米)
+    slip_signal: np.ndarray           # HxW, 滑移信号
+    timestamp: float                  # 时间戳
+    frame_id: int                     # 帧ID
+    sensor_id: str                   # 传感器标识
+```
+
+---
+
+### 26.2 力觉感知模块接口 (ForceTorqueSensor)
+
+**文件位置**: `src/sensors/force.py`
+
+**核心类**:
+- `ForceTorqueSensor` - 六维力矩传感器主类
+- `Wrench` - 力旋量数据类 (Fx,Fy,Fz,Tx,Ty,Tz)
+- `WrenchProcessor` - 力旋量信号处理器
+- `VirtualForceSensor` - 虚拟力觉传感器(仿真)
+
+**AGV五级力觉规格表 (AGV_FORCE_GRADES)**:
+
+| 等级 | 轴数 | 力范围(N) | 力矩范围(N·m) | 分辨率(N) | 采样频率 | 通信接口 | 温漂补偿 |
+|------|-----|----------|--------------|----------|---------|----------|---------|
+| **S** | 3 | ±100 | ±10 | 0.1 | 100Hz | USB HID | 否 |
+| **M** | 6 | ±200 | ±20 | 0.05 | 500Hz | CAN/EtherCAT | 是 |
+| **L** | 6 | ±500 | ±50 | 0.02 | 1000Hz | CAN/EtherCAT | 是 |
+| **XL** | 6 | ±1000 | ±100 | 0.01 | 2000Hz | Ethernet UDP | 是 |
+| **XXL** | 6 | ±5000 | ±500 | 0.005 | 5000Hz | Ethernet UDP | 是 |
+
+**接口方法**:
+
+| 方法 | 输入参数 | 输出 | 说明 |
+|------|---------|------|------|
+| `__init__(sensor_type, sensor_id, calibration, ip_address, ethernet_type)` | ForceSensorType, str, ForceCalibration, str, str | ForceTorqueSensor | 初始化 |
+| `open()` | - | bool | 打开传感器 |
+| `close()` | - | - | 关闭传感器 |
+| `capture()` | - | Wrench | 采集六维力旋量 |
+| `get_wrench()` | - | Wrench | 获取最新力数据 |
+| `detect_contact(wrench, threshold)` | Wrench, float | ContactState | 接触检测 |
+| `estimate_payload(wrench)` | Wrench | float | 估计负载重量 |
+| `set_tool_center(tool_mass, tool_com)` | float, np.ndarray | - | 设置工具中心 |
+| `calibrate_bias(num_samples)` | int | - | 偏置校准 |
+
+**Wrench 数据结构**:
+```python
+@dataclass
+class Wrench:
+    force: np.ndarray      # 3, 力向量 (Fx,Fy,Fz), N
+    torque: np.ndarray     # 3, 力矩向量 (Tx,Ty,Tz), N·m
+    timestamp: float       # 时间戳
+    frame_id: int          # 帧ID
+    sensor_id: str         # 传感器标识
+```
+
+**VirtualForceSensor 仿真方法**:
+```python
+# 模拟表面接触 (弹簧阻尼模型)
+wrench = sensor.simulate_surface_contact(
+    surface_normal=(0.0, 0.0, 1.0),
+    contact_point=(0.0, 0.0, 0.0),
+    penetration_depth=0.001,
+    stiffness=1000.0,
+    damping=50.0,
+)
+
+# 模拟摩擦力
+wrench = sensor.simulate_friction_contact(
+    normal_force=10.0,
+    velocity=(0.1, 0.0, 0.0),
+    friction_coeff=0.3,
+    object_mass=1.0,
+)
+
+# 模拟碰撞事件
+wrenches = sensor.simulate_collision(
+    direction=(1.0, 0.0, 0.0),
+    peak_force=50.0,
+    duration_ms=100.0,
+    decay="exponential",
+)
+```
+
+---
+
+### 26.3 IMU感知模块接口 (IMUSensor)
+
+**文件位置**: `src/sensors/imu.py`
+
+**核心类**:
+- `IMUSensor` - IMU传感器主类
+- `PoseEstimator` - 姿态估计器 (Madgwick/互补滤波/卡尔曼)
+- `VirtualIMUSensor` - 虚拟IMU传感器(仿真)
+
+**AGV五级IMU规格表 (AGV_IMU_GRADES)**:
+
+| 等级 | 型号 | 加速度范围 | 陀螺仪范围 | 采样频率 | 噪声密度 | 磁力计 | 姿态算法 |
+|------|-----|----------|-----------|---------|---------|--------|---------|
+| **S** | MPU6050 | ±8g | ±1000°/s | 100Hz | 400μg/√Hz | 否 | 互补滤波 |
+| **M** | BMI088 | ±16g | ±2000°/s | 200Hz | 120μg/√Hz | 否 | Madgwick |
+| **L** | BMI088 | ±24g | ±4000°/s | 500Hz | 60μg/√Hz | 可选 | Madgwick |
+| **XL** | ADIS16470 | ±40g | ±4000°/s | 1000Hz | 20μg/√Hz | 是 | EKF |
+| **XXL** | ADIS16470 | ±80g | ±8000°/s | 2000Hz | 10μg/√Hz | 是 | EKF |
+
+**接口方法**:
+
+| 方法 | 输入参数 | 输出 | 说明 |
+|------|---------|------|------|
+| `__init__(sensor_type, sensor_id, calibration, accel_range, gyro_range, sample_rate)` | IMUSensorType, str, IMUCalibration, int, int, int | IMUSensor | 初始化 |
+| `open()` | - | bool | 打开传感器 |
+| `close()` | - | - | 关闭传感器 |
+| `capture()` | - | IMUFrame | 采集IMU数据帧 |
+| `self_test()` | - | bool | 传感器自检 |
+| `calibrate_gyro_bias(num_samples, duration_sec)` | int, float | - | 陀螺仪偏置校准 |
+| `calibrate_accel(known_orientation)` | str | - | 加速度计标定 |
+
+**PoseEstimator 姿态估计算法**:
+```python
+# 算法: "madgwick" / "complementary" / "kalman"
+estimator = PoseEstimator(
+    algorithm="madgwick",
+    sample_rate=200.0,
+    beta=0.1,
+)
+
+# 融合IMU数据更新姿态
+pose = estimator.update(
+    accel=np.array([0.0, 0.0, 9.81]),
+    gyro=np.array([0.0, 0.0, 0.0]),
+    mag=np.array([25.0, 0.0, 45.0]),  # 可选
+    dt=None,
+)
+
+# 获取姿态
+euler = estimator.get_euler()     # [roll, pitch, yaw] rad
+rotation_matrix = estimator.get_rotation_matrix()  # 3x3
+
+# 积分速度/位置 (Warning: 漂移严重)
+velocity, position = estimator.integrate_velocity(accel, dt, remove_gravity=True)
+```
+
+**VirtualIMUSensor 仿真轨迹**:
+```python
+# AGV运动仿真
+frame = sensor.simulate_agv_motion(
+    linear_velocity=(0.5, 0.0),
+    angular_velocity=0.0,
+    dt=0.01,
+    grade="M",
+)
+
+# 人类步行仿真
+frames = sensor.simulate_human_walking(
+    step_frequency=1.5,
+    walk_speed=1.0,
+    duration_s=5.0,
+)
+
+# 典型轨迹仿真
+frames = sensor.simulate_trajectory(
+    trajectory_type="circle",  # circle/figure8/linear/sine
+    duration_s=2.0,
+)
+```
+
+---
+
+### 26.4 控制模块接口 (Control)
+
+**文件位置**: `src/control/`
+
+**核心子模块**:
+- `pid.py` - PID控制器 (位置/速度/力矩模式)
+- `motor.py` - 电机驱动接口 (CANopen/EtherCAT)
+- `motion.py` - 运动规划器 (梯形/S曲线/MPC)
+- `planner.py` - 轨迹规划器 (RRT/RRT*/A*/DWA)
+- `safety.py` - 安全监控 (碰撞检测/区域限制/急停)
+- `autotune.py` - 参数自整定 (Ziegler-Nichols/频域法)
+- `grade_control.py` - AGV五级控制规格管理器
+
+**AGV五级控制子系统规格表**:
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|-----|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **控制架构** | 位置环 | 位置+速度环 | 位置+速度+阻抗 | 全模态闭环 | 全模态+MPC |
+| **核心算法** | PID | PID+前馈 | 阻抗+前馈 | 阻抗+MPC | MPC+自适应 |
+| **实时内核** | 无 | 无 | Xenomai | RT-PREEMPT | Xenomai+FPGA |
+| **力控能力** | 无 | 碰撞检测 | 5Hz力控 | 20Hz力控 | 50Hz力控 |
+| **避障响应** | >100ms | <50ms | <20ms | <10ms | <5ms |
+| **姿态稳定** | <500ms | <200ms | <100ms | <50ms | <20ms |
+| **容错机制** | 无 | 单点 | 多点冗余 | 多点+看门狗 | 多点+看门狗+故障迁移 |
+| **碰撞响应** | 停止 | 退回+报警 | 柔顺+报警 | 柔顺+记录 | 预测+分级响应 |
+
+**GradeControlManager 五级控制**:
+```python
+from src.control.grade_control import GradeControlManager, SupervisorGrade
+
+manager = GradeControlManager(grade=SupervisorGrade.M)
+params = manager.get_control_params()
+print(f"控制频率: {params['control_frequency']} Hz")
+print(f"电机类型: {params['motor_type']}")
+print(f"安全限制: {params['safety_limits']}")
+```
+
+---
+
+### 26.5 仿真环境接口 (EmbodiedSim)
+
+**文件位置**: `src/sim/embodied_sim.py`
+
+**仿真平台支持**:
+- Gymnasium (基础强化学习环境)
+- PyBullet (关节机器人仿真)
+- MuJoCo (高精度物理仿真)
+- Gazebo (ROS集成仿真)
+
+**Gymnasium 环境接口**:
+```python
+import gymnasium as gym
+from src.sim.embodied_sim import create_agv_env
+
+env = gym.make('SuperModelAGV-v0', grade='M')
+observation, info = env.reset()
+observation, reward, terminated, truncated, info = env.step(action)
+```
+
+**PyBullet 仿真接口**:
+```python
+from src.sim.pybullet_sim import PyBulletAGVSim
+
+sim = PyBulletAGVSim(enable_gui=True, grade='L')
+sim.load_agv_model()
+state = sim.step(velocity_commands=[1.0, 0.5])
+```
+
+---
+
+### 26.6 综合AGV五级规格总表
+
+**完整系统对照表**:
+
+| 系统/参数 | S | M | L | XL | XXL |
+|---------|---|---|---|---|-----|
+| **负载能力** | 30kg | 100kg | 300kg | 500kg | 1000kg |
+| **运动速度** | 0.5m/s | 1.0m/s | 1.5m/s | 2.0m/s | 2.5m/s |
+| **定位精度** | ±10mm | ±5mm | ±3mm | ±1mm | <±0.5mm |
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **触觉阵列** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **力觉轴数** | 3轴 | 6轴 | 6轴 | 6轴 | 6轴 |
+| **IMU型号** | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| **IMU采样** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **视觉** | 单目 | 双目 | RGB-D | RGB-D×2 | 全景×4 |
+| **AI算力** | - | - | ≥10TOPS | ≥100TOPS | ≥275TOPS |
+| **处理器** | PLC | ARM | ARM+GPU | ARM+GPU | AGX Orin |
+| **安全标准** | ISO 3691-2 | ISO 3691-4 | ISO 3691-4 | IEC 61508 SIL2 | IEC 61508 SIL3 |
+| **实时性** | 非实时 | 非实时 | Xenomai | RT-PREEMPT | Xenomai+FPGA |
+| **力控频率** | 无 | 碰撞检测 | 5Hz | 20Hz | 50Hz |
+| **多传感器融合** | 否 | 是 | 是 | 是 | 是 |
+| **自主学习** | 否 | 否 | 在线学习 | 持续适应 | 完全自主 |
+| **通信协议** | 有线/WiFi | WiFi/5G | WiFi6/5G | 5G/MQTT | 5G/WiFi6E |
+| **防护等级** | IP54 | IP65 | IP65 | IP67 | IP67 |
+| **典型场景** | 仓储拣选 | 产线配送 | 柔性制造 | 重载车间 | 无人化工厂 |
+
+---
+
 ## 25. 版本历史
 
 | 版本 | 日期 | 更新内容 |
