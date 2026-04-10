@@ -29,6 +29,19 @@ from .predictive_maintenance import (
     get_predictive_maintenance_spec, AGV_PREDICTIVE_MAINTENANCE_GRADES,
     create_predictive_maintenance_system
 )
+from .canbus import (
+    CANFrame, CANBusState, CANopenNodeState, CANopenPDO, SensorCANConfig,
+    VirtualCANBus, RealCANBus, create_can_bus,
+    CANopenNode, IMUCANopenNode, ForceTorqueCANopenNode, TactileCANopenNode,
+    AGV_CAN_GRADES, get_can_spec,
+)
+from .sensor_bridge import (
+    SensorDataType, SensorProtocol, SensorHealth,
+    SensorData, SensorHardwareConfig,
+    SensorHardwareInterface, SimulatedSensorInterface,
+    SensorHardwareBridge,
+    AGV_SENSOR_BRIDGE_GRADES, get_bridge_spec,
+)
 
 __all__ = [
     # 基础抽象
@@ -50,4 +63,15 @@ __all__ = [
     'MotorHealthMetrics', 'BatteryHealthMetrics', 'WheelHealthMetrics',
     'get_predictive_maintenance_spec', 'AGV_PREDICTIVE_MAINTENANCE_GRADES',
     'create_predictive_maintenance_system',
+    # CAN Bus 传感器接口
+    'CANFrame', 'CANBusState', 'CANopenNodeState', 'CANopenPDO', 'SensorCANConfig',
+    'VirtualCANBus', 'RealCANBus', 'create_can_bus',
+    'CANopenNode', 'IMUCANopenNode', 'ForceTorqueCANopenNode', 'TactileCANopenNode',
+    'AGV_CAN_GRADES', 'get_can_spec',
+    # 传感器硬件桥接器
+    'SensorDataType', 'SensorProtocol', 'SensorHealth',
+    'SensorData', 'SensorHardwareConfig',
+    'SensorHardwareInterface', 'SimulatedSensorInterface',
+    'SensorHardwareBridge',
+    'AGV_SENSOR_BRIDGE_GRADES', 'get_bridge_spec',
 ]
