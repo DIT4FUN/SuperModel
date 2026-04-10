@@ -1606,6 +1606,7 @@ print(f"Grasp {result.status}: {result.output}")
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
+| v2.42.0 | 2026-04-10 | 新增核心目标系统(src/core/: core_goals/safety_shield/value_judgment/self_preservation); 更新MODULE_INDEX.md核心层章节; 2327项测试全通过 |
 | v2.41.0 | 2026-04-10 | 新增技能调度器(skill_dispatcher.py)+30项测试; 更新SPEC.md第19章; 2331项测试全通过 |
 | v2.40.0 | 2026-04-10 | 完善触觉/力觉/IMU控制模块 + 修复标定管理器; 37项测试全通过; 2297项测试全通过 |
 | v2.39.0 | 2026-04-10 | 具身智能仿真环境(embodied_sim.py, 720行) + 42项测试全通过; 2261项测试全通过 |

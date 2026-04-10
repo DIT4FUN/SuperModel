@@ -2,6 +2,22 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.42.0] - 2026-04-10
+
+### Added
+- **核心目标系统** (`src/core/`, 5个模块)
+  - `core_goals.py`: P0-P5六层核心目标定义 (保护人类安全/遵循指令/善良品质/热爱世界/自我保存/自我进化)
+  - `safety_shield.py`: P0安全护盾执行器 (碰撞预防/紧急停止/多级安全响应, AGV五级对应 S→XXL)
+  - `value_judgment.py`: P2/P3价值判断执行器 (伦理原则/同理心/公平性/环境保护)
+  - `self_preservation.py`: P4自我保存模块 (硬件保护/能源管理/健康监测/故障检测)
+  - `__init__.py`: 核心系统整体架构文档
+
+### Updated
+- **MODULE_INDEX.md**: 新增第2章"核心层模块详情" + src/core/ 模块导航
+- **SPEC.md**: 更新版本历史至v2.42.0
+- 传感器测试套件: sensor_tests (405项) + fusion_tests (全通过)
+- **2327项测试全通过** (38项跳过)
+
 ## [2.38.0] - 2026-04-10
 
 ### Added

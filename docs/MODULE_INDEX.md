@@ -51,6 +51,13 @@ src/
 │   ├── __init__.py
 │   └── cross_modal_fusion.py  # 跨模态注意力融合网络
 │
+├── core/            # 核心层 - 目标系统与安全护盾
+│   ├── __init__.py
+│   ├── core_goals.py        # P0-P5六层核心目标定义
+│   ├── safety_shield.py     # P0安全护盾执行器
+│   ├── value_judgment.py    # P2/P3价值判断伦理执行器
+│   └── self_preservation.py # P4自我保存模块
+│
 ├── learning/         # 认知层 - 自主学习
 │   ├── __init__.py
 │   ├── dreamer_agent.py      # Dreamer 具身智能体
@@ -157,7 +164,30 @@ src/
 
 ---
 
+## 核心层模块详情 (`src/core/`)
+
+| 模块 | 文件 | 核心类 | 功能 |
+|------|------|--------|------|
+| **核心目标** | `core_goals.py` | `CoreGoal`, `Priority` | P0-P5六层目标定义与优先级管理 |
+| **安全护盾** | `safety_shield.py` | `SafetyShield`, `SafetyLevel` | P0碰撞预防/紧急停止/多级安全响应 |
+| **价值判断** | `value_judgment.py` | `EthicalPrinciple`, `ValueJudgment` | P2/P3伦理原则/同理心/公平性评估 |
+| **自我保存** | `self_preservation.py` | `HealthMonitor`, `SelfPreservationPolicy` | P4硬件保护/能源管理/健康监测 |
+
+### 核心层AGV五级安全规格
+
+| 安全功能 | S | M | L | XL | XXL |
+|---------|:--:|:--:|:--:|:--:|:--:|
+| **软限位** | ✓ | ✓ | ✓ | ✓ | ✓ |
+| **障碍检测** | 基础 | 人员检测 | 力阈值 | 预测性 | 多传感器融合 |
+| **碰撞响应** | >100ms | <50ms | <20ms | <10ms | <5ms |
+| **姿态稳定** | <500ms | <200ms | <100ms | <50ms | <20ms |
+| **安全距离** | 0.5m | 0.3m | 0.2m | 0.1m | 0.05m |
+| **实时看门狗** | ✗ | ✗ | ✓ Xenomai | ✓ RT-PREEMPT | ✓ Xenomai+FPGA |
+
+---
+
 ## 控制层模块详情 (`src/control/`)
+
 
 | 模块 | 文件 | 核心类 | 功能 |
 |------|------|--------|------|
