@@ -680,7 +680,7 @@ class AGVCheckPositionReached(ConditionNode):
     def __init__(self, threshold: float = 0.1, name: str = "CheckPositionReached"):
         def check(bb: Blackboard) -> bool:
             current_pos = bb.get_robot_position()
-            target_pos = bb.blackboard.goal_state.get('target_position')
+            target_pos = bb.goal_state.get('target_position')
             if current_pos is None or target_pos is None:
                 return False
             distance = np.linalg.norm(current_pos - np.array(target_pos))

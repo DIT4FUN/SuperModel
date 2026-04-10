@@ -3,6 +3,7 @@ embodied - 具身智能模块
 ============================
 
 行为树具身任务规划 + 层级任务分解 + AGV五级规格适配
+仿真环境增强 + 真实AGV硬件接口适配
 """
 
 from .behavior_tree import (
@@ -29,6 +30,29 @@ from .behavior_tree import (
     AGVMoveToAction,
     AGVGraspAction,
     AGVReleaseAction,
+)
+
+from .simulation_enhancement import (
+    PhysicsParameters,
+    SensorNoiseModel,
+    DelaySimulator,
+    CollisionEnhancer,
+    EnvironmentGenerator,
+    WarehouseSceneGenerator,
+    EmbodiedSimulationEnhancer,
+)
+
+from .real_agv_interface import (
+    AGVHardwareConfig,
+    HardwareInterface,
+    CANBusDriver,
+    ZLAC8015DController,
+    LidarInterface,
+    IMUInterface,
+    TactileInterface,
+    ForceSensorInterface,
+    RealAGVController,
+    ThreadedSensorReader,
 )
 
 __all__ = [
@@ -59,6 +83,25 @@ __all__ = [
     'AGVMoveToAction',
     'AGVGraspAction',
     'AGVReleaseAction',
+    # 仿真增强
+    'PhysicsParameters',
+    'SensorNoiseModel',
+    'DelaySimulator',
+    'CollisionEnhancer',
+    'EnvironmentGenerator',
+    'WarehouseSceneGenerator',
+    'EmbodiedSimulationEnhancer',
+    # 真实硬件接口
+    'AGVHardwareConfig',
+    'HardwareInterface',
+    'CANBusDriver',
+    'ZLAC8015DController',
+    'LidarInterface',
+    'IMUInterface',
+    'TactileInterface',
+    'ForceSensorInterface',
+    'RealAGVController',
+    'ThreadedSensorReader',
 ]
 
-__version__ = "1.0.0"
+__version__ = "2.0.0"
