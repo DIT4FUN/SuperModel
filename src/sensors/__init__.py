@@ -15,18 +15,20 @@ SuperModel 超模态感知模块
 from .vision import BinocularCamera, DepthProcessor
 from .audio import BinauralMic, SoundLocalizer
 from .tactile import (
-    TactileArray, TactileFrame, TactileContact, TactileCalibration,
-    TactileSensorType, PressureProcessor, VirtualTactileSensor,
+    TactileArray, TactileFrame, TactileReading, ContactEvent,
+    TactileSensorType, AGVTactileBumper, TactileGlove,
+    TactileContact, TactileCalibration, PressureProcessor, VirtualTactileSensor,
     get_tactile_spec, AGV_TACTILE_GRADES
 )
 from .force import (
-    ForceTorqueSensor, Wrench, ForceCalibration, ContactState,
-    ForceSensorType, WrenchProcessor, VirtualForceSensor,
-    get_force_spec, AGV_FORCE_GRADES
+    SixAxisForceTorque, ForceReading, Wrench, WheelForceSensor, LiftForceSensor,
+    ForceTorqueSensor, WrenchProcessor, ForceCalibration, ContactState, VirtualForceSensor,
+    ForceSensorType, get_force_spec, AGV_FORCE_GRADES
 )
 from .imu import (
-    IMUSensor, IMUFrame, Pose, PoseEstimator, IMUCalibration,
-    IMUSensorType, VirtualIMUSensor, get_imu_spec, AGV_IMU_GRADES
+    IMU, IMUReading, Pose, IMUOdometry, IMUModel,
+    IMUSensor, IMUFrame, PoseEstimator, IMUCalibration, IMUSensorType, VirtualIMUSensor,
+    quaternion_to_rotation_matrix, get_imu_spec, AGV_IMU_GRADES
 )
 from .encoders import (
     VisionEncoder, AudioEncoder, TactileEncoder, ForceEncoder,
@@ -44,14 +46,16 @@ from .signal_processor import (
 __all__ = [
     'BinocularCamera', 'DepthProcessor',
     'BinauralMic', 'SoundLocalizer',
-    'TactileArray', 'TactileFrame', 'TactileContact', 'TactileCalibration',
-    'TactileSensorType', 'PressureProcessor', 'VirtualTactileSensor',
+    'TactileArray', 'TactileFrame', 'TactileReading', 'ContactEvent',
+    'TactileContact', 'TactileCalibration', 'PressureProcessor', 'VirtualTactileSensor',
+    'TactileSensorType', 'AGVTactileBumper', 'TactileGlove',
     'get_tactile_spec', 'AGV_TACTILE_GRADES',
-    'ForceTorqueSensor', 'Wrench', 'ForceCalibration', 'ContactState',
-    'ForceSensorType', 'WrenchProcessor', 'VirtualForceSensor',
-    'get_force_spec', 'AGV_FORCE_GRADES',
-    'IMUSensor', 'IMUFrame', 'Pose', 'PoseEstimator', 'IMUCalibration',
-    'IMUSensorType', 'VirtualIMUSensor', 'get_imu_spec', 'AGV_IMU_GRADES',
+    'SixAxisForceTorque', 'ForceReading', 'Wrench', 'WheelForceSensor', 'LiftForceSensor',
+    'ForceTorqueSensor', 'WrenchProcessor', 'ForceCalibration', 'ContactState', 'VirtualForceSensor',
+    'ForceSensorType', 'get_force_spec', 'AGV_FORCE_GRADES',
+    'IMU', 'IMUReading', 'Pose', 'IMUOdometry', 'IMUModel',
+    'IMUSensor', 'IMUFrame', 'PoseEstimator', 'IMUCalibration', 'IMUSensorType', 'VirtualIMUSensor',
+    'quaternion_to_rotation_matrix', 'get_imu_spec', 'AGV_IMU_GRADES',
     'VisionEncoder', 'AudioEncoder', 'TactileEncoder', 'ForceEncoder',
     'IMUEncoder', 'LanguageEncoder', 'SensorEncoderWrapper', 'EncoderConfig',
     'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config',
