@@ -17,6 +17,7 @@ SuperModel 控制模块
 - teleop: 遥操作控制 (主从同步/共享控制/力反馈)
 - supervisor: 控制子系统监管 (生命周期/模式切换/故障恢复)
 - sensor_fusion_control: 传感器融合控制 (统一感知→控制闭环)
+- skill_dispatcher: 跨模态技能协调执行器 (多技能并发调度/资源仲裁)
 """
 
 from .motion import MotionController, JointTrajectory, TwistCommand, AdaptivePIDController
@@ -139,6 +140,13 @@ from .sensor_fusion_control import (
     FusionControlGrade, get_fusion_control_spec,
     AGV_FUSION_CONTROL_GRADES,
 )
+from .skill_dispatcher import (
+    SkillDispatcher, SkillRequest, SkillResult, SkillStatus,
+    SkillPriority, SkillDefinition, ResourceType,
+    AGV_SKILL_DISPATCHER_GRADES, get_skill_dispatcher_spec,
+    create_skill_dispatcher,
+    create_grasp_skill, create_navigate_skill, create_place_skill,
+)
 from .behavior_tree import (
     BehaviorTree, BTNode, BTContext, NodeState,
     Selector, Sequence, Parallel,
@@ -246,6 +254,12 @@ __all__ = [
     # sensor_fusion_control
     'SensorFusionController', 'SensorFusionControlState', 'FusionControlConfig',
     'FusionControlGrade', 'get_fusion_control_spec', 'AGV_FUSION_CONTROL_GRADES',
+    # skill_dispatcher
+    'SkillDispatcher', 'SkillRequest', 'SkillResult', 'SkillStatus',
+    'SkillPriority', 'SkillDefinition', 'ResourceType',
+    'AGV_SKILL_DISPATCHER_GRADES', 'get_skill_dispatcher_spec',
+    'create_skill_dispatcher',
+    'create_grasp_skill', 'create_navigate_skill', 'create_place_skill',
     # behavior_tree
     'BehaviorTree', 'BTNode', 'BTContext', 'NodeState',
     'Selector', 'Sequence', 'Parallel',

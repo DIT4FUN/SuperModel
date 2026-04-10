@@ -1482,12 +1482,137 @@ XXL级 (超高性能传感+预测控制):
 
 ---
 
-## 19. 版本历史
+## 19. 技能调度器接口 (SkillDispatcher)
+
+### 19.1 概述
+
+技能调度器 (SkillDispatcher) 是跨模态技能协调执行器，负责管理、调度和执行机器人的高层技能。它支持多技能并发调度、资源冲突仲裁、技能依赖管理和执行监控，并按 AGV 五级 (S/M/L/XL/XXL) 规格适配。
+
+### 19.2 核心数据类型
+
+```python
+class SkillPriority(Enum):
+    LOW = 0
+    NORMAL = 1
+    HIGH = 2
+    CRITICAL = 3
+
+class SkillStatus(Enum):
+    IDLE = "idle"
+    RUNNING = "running"
+    PAUSED = "paused"
+    COMPLETED = "completed"
+    FAILED = "failed"
+    CANCELLED = "cancelled"
+
+class ResourceType(Enum):
+    MOTOR = "motor"
+    SENSOR_VISION = "sensor_vision"
+    SENSOR_FORCE = "sensor_force"
+    SENSOR_TACTILE = "sensor_tactile"
+    SENSOR_IMU = "sensor_imu"
+    POSITION = "position"
+    GRIPPER = "gripper"
+
+@dataclass
+class SkillRequest:
+    skill_name: str
+    params: Dict[str, Any]
+    priority: SkillPriority = SkillPriority.NORMAL
+    timeout_sec: float = 30.0
+    request_id: str = ""
+    dependencies: List[str] = field(default_factory=list)
+
+@dataclass
+class SkillResult:
+    request_id: str
+    skill_name: str
+    status: SkillStatus
+    output: Optional[Dict[str, Any]] = None
+    error: Optional[str] = None
+    execution_time_sec: float = 0.0
+    resources_used: Set[ResourceType] = field(default_factory=set)
+
+@dataclass
+class SkillDefinition:
+    name: str
+    execute_fn: Callable[[Dict[str, Any]], Dict[str, Any]]
+    required_resources: Set[ResourceType]
+    estimated_duration_sec: float = 5.0
+    max_retries: int = 3
+    grade_requirement: str = "S"
+```
+
+### 19.3 SkillDispatcher 接口
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `register_skill(skill)` | SkillDefinition | bool | 注册技能 |
+| `unregister_skill(skill_name)` | str | bool | 注销技能 |
+| `dispatch(request)` | SkillRequest | SkillResult | 调度技能请求 |
+| `cancel(request_id)` | str | bool | 取消技能请求 |
+| `get_status(skill_name)` | str | SkillStatus | 获取技能状态 |
+| `get_result(request_id)` | str | SkillResult | 获取执行结果 |
+| `get_stats()` | - | Dict | 获取调度统计 |
+
+### 19.4 AGV五级技能调度规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|---|---|---|---|---|
+| **最大并发技能数** | 1 | 2 | 3 | 4 | 6 |
+| **默认超时(s)** | 30 | 20 | 15 | 10 | 5 |
+| **技能注册上限** | 5 | 10 | 20 | 50 | 100 |
+| **执行监控** | 否 | 是 | 是 | 是 | 是 |
+
+### 19.5 预定义技能工厂
+
+| 工厂函数 | 技能名称 | 所需资源 | 预估时长 |
+|---------|---------|---------|---------|
+| `create_grasp_skill(force_ctrl, tactile_ctrl)` | grasp | MOTOR + SENSOR_FORCE + SENSOR_TACTILE | 3.0s |
+| `create_navigate_skill(nav_ctrl, avoider)` | navigate | MOTOR + POSITION + SENSOR_VISION | 10.0s |
+| `create_place_skill(motor_ctrl)` | place | MOTOR + GRIPPER | 2.0s |
+
+### 19.6 资源锁定机制
+
+调度器在技能执行期间锁定其所需资源 (`ResourceType`)，防止冲突技能并发执行。资源在技能完成 (COMPLETED/FAILED) 后自动释放。
+
+### 19.7 使用示例
+
+```python
+from src.control.skill_dispatcher import (
+    SkillDispatcher, SkillRequest, SkillPriority, ResourceType,
+    create_skill_dispatcher, create_grasp_skill
+)
+
+# 按AGV等级创建调度器
+dispatcher = create_skill_dispatcher('M')
+
+# 注册预定义技能
+dispatcher.register_skill(create_grasp_skill(force_ctrl, tactile_ctrl))
+
+# 提交抓取请求
+request = SkillRequest(
+    skill_name='grasp',
+    params={'target_position': (0.5, 0.3, 0.1), 'grasp_force': 10.0},
+    priority=SkillPriority.HIGH
+)
+result = dispatcher.dispatch(request)
+print(f"Grasp {result.status}: {result.output}")
+```
+
+---
+
+## 20. 版本历史
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
-| v2.23.0 | 2026-04-10 | 新增sensorimotor_integration_tests.py(30项); 新增AGV五级完整规格增强版文档; 2009项测试全通过 |
-| v2.15.0 | 2026-04-09 | 补充SPEC.md第18章: 系统集成架构与数据流, AGV五级模块兼容性矩阵, 接口时序图; 378项传感器+融合测试全通过 |
+| v2.41.0 | 2026-04-10 | 新增技能调度器(skill_dispatcher.py)+30项测试; 更新SPEC.md第19章; 2331项测试全通过 |
+| v2.40.0 | 2026-04-10 | 完善触觉/力觉/IMU控制模块 + 修复标定管理器; 37项测试全通过; 2297项测试全通过 |
+| v2.39.0 | 2026-04-10 | 具身智能仿真环境(embodied_sim.py, 720行) + 42项测试全通过; 2261项测试全通过 |
+| v2.38.0 | 2026-04-10 | 传感器标定管理器(calibration_manager.py, 750行) + 33项测试全通过; 2259项测试全通过 |
+| v2.37.0 | 2026-04-10 | 仿真控制接口 + MODULE_INTERFACE五级规格总表完善; 418项测试全通过 |
+| v2.23.0 | 2026-04-10 | 新增sensorimotor_integration_tests.py(30项); 2009项测试全通过 |
+| v2.15.0 | 2026-04-09 | 补充SPEC.md第18章; 378项传感器+融合测试全通过 |
 | v2.14.0 | 2026-04-09 | 新增SurfaceFollowingController与AssemblyController; AGV五级具身控制完整规格表 |
-| v2.13.0 | 2026-04-09 | 完善SPEC.md接口使用示例(12章)、数据流与状态机(13章)、错误处理规范(14章) |
+| v2.13.0 | 2026-04-09 | 完善SPEC.md接口使用示例、数据流与状态机、错误处理规范 |
 | v2.12.0 | 2026-04-09 | 版本同步，1937项测试全通过 |
