@@ -2346,3 +2346,156 @@ for _ in range(1000):
 - 策略降级与升级
 - 恢复完成判定
 
+
+---
+
+## 附录L: AGV五级规格总表 (v2.60.0)
+
+> 完整的 SuperModel AGV 五级 (S/M/L/XL/XXL) 系统规格参考手册
+> 版本: v2.60.0 | 更新: 2026-04-10
+
+### L.1 整车规格总表
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **负载能力** | 30kg | 100kg | 300kg | 600kg | 1200kg |
+| **自重** | 15kg | 35kg | 80kg | 150kg | 300kg |
+| **最大总重** | 45kg | 135kg | 380kg | 750kg | 1500kg |
+| **车体尺寸** | 0.4×0.3×0.12m | 0.6×0.4×0.15m | 0.8×0.6×0.2m | 1.0×0.7×0.25m | 1.2×0.9×0.3m |
+| **轮子配置** | 2轮驱动 | 2轮驱动 | 4轮驱动 | 4轮驱动 | 4轮驱动 |
+| **轮子直径** | 100mm | 140mm | 140mm | 165mm | 200mm |
+| **电机类型** | 57步进 | 5.5寸轮毂150W | 5.5寸轮毂150W×2 | 6.5寸轮毂200W×2 | 7.5寸轮毂300W×4 |
+| **最高速度** | 0.5m/s | 1.5m/s | 2.0m/s | 2.5m/s | 3.0m/s |
+| **最大扭矩** | 5Nm | 15Nm | 30Nm | 60Nm | 120Nm |
+| **定位精度** | ±10mm | ±5mm | ±3mm | ±1mm | ±0.5mm |
+| **防护等级** | IP20 | IP30 | IP54 | IP65 | IP67 |
+| **典型价格** | ¥5-15K | ¥15-50K | ¥50-150K | ¥150-500K | >¥500K |
+
+### L.2 感知子系统规格总表
+
+| 模态 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **相机** | 单目640×480 | 双目D435i 720p | 双目D455 60fps | 双目+事件相机 | 多目+3D LiDAR |
+| **麦克风** | 1ch | 2ch阵列 | 4ch阵列 | 6ch阵列 | 8ch阵列 |
+| **触觉阵列** | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| **触觉分辨率** | 12bit | 12bit | 14bit | 14bit | 16bit |
+| **触觉压力范围** | 0-500kPa | 0-1000kPa | 0-2000kPa | 0-5000kPa | 0-10000kPa |
+| **触觉采样率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **力觉轴数** | 3轴 | 6轴 | 6轴 | 6轴 | 6轴 |
+| **力觉力范围** | ±100N | ±200N | ±500N | ±1000N | ±5000N |
+| **力觉力矩范围** | ±10Nm | ±20Nm | ±50Nm | ±100Nm | ±500Nm |
+| **力觉分辨率** | 0.1N | 0.05N | 0.02N | 0.01N | 0.005N |
+| **力觉采样率** | 100Hz | 500Hz | 1000Hz | 2000Hz | 5000Hz |
+| **IMU型号** | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| **IMU采样率** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **IMU噪声密度** | 400μg/√Hz | 120μg/√Hz | 60μg/√Hz | 20μg/√Hz | 10μg/√Hz |
+| **融合编码器** | 128CPR | 256CPR | 512CPR | 768CPR | 1024CPR |
+
+### L.3 控制子系统规格总表
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **控制频率** | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| **控制架构** | 位置环 | 位置+速度环 | 位置+速度+阻抗 | 全模态闭环 | 全模态+MPC |
+| **核心算法** | PID | PID+前馈 | 阻抗+前馈 | 阻抗+MPC | MPC+自适应 |
+| **实时性** | 非实时 | 非实时 | Xenomai | RT-PREEMPT | Xenomai+FPGA |
+| **力控能力** | 无 | 碰撞检测 | 5Hz力控 | 20Hz力控 | 50Hz力控 |
+| **避障算法** | 人工势场 | DWA | DWA+VFH+APF | 混合 | 多层融合 |
+| **轨迹规划** | 直线 | RRT | RRT*+样条 | MPC+RRT* | MPC+多次RRT* |
+| **碰撞响应** | >100ms | <50ms | <20ms | <10ms | <5ms |
+| **姿态稳定** | <500ms | <200ms | <100ms | <50ms | <20ms |
+| **卡死检测** | ❌ | ❌ | ✅ | ✅ | ✅ |
+| **自主恢复** | ❌ | 基础 | 完整 | 完整+日志 | MPC预测+云端 |
+| **多机协同** | ❌ | ❌ | ❌ | 5台 | 20台+ |
+
+### L.4 计算与通信规格总表
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **处理器** | RPi 4B | RK3588/Nano | Orin NX | Orin AGX | Orin AGX×2+GPU |
+| **AI算力** | <5 TOPS | 5-20 TOPS | 20-100 TOPS | 100-300 TOPS | >300 TOPS |
+| **内存** | 4GB | 8GB | 16-32GB | 64-128GB | 256+GB |
+| **功耗** | <10W | 15-30W | 30-80W | 80-150W | 150-500W |
+| **实时控制** | ✗ | ✗ | ✓ Xenomai | ✓ RT-PREEMPT | ✓ Xenomai+FPGA |
+| **有线通信** | USB | USB/ETH | Ethernet | EtherCAT | EtherCAT+光纤 |
+| **无线通信** | WiFi | WiFi | WiFi+5G | 5G+LoRa | 5G+卫星 |
+| **CAN总线** | ❌ | CANopen | CANopen×2 | EtherCAT | EtherCAT+双网 |
+| **传感器接口** | USB | USB/CAN | CAN/ETH | EtherCAT | EtherCAT+光纤 |
+
+### L.5 感知→控制闭环延迟规格总表
+
+| 阶段 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **传感器采样** | 20ms | 10ms | 5ms | 2ms | 1ms |
+| **特征提取** | 80ms | 30ms | 15ms | 5ms | 2ms |
+| **融合推理** | 30ms | 10ms | 5ms | 2ms | 1ms |
+| **决策规划** | 20ms | 10ms | 5ms | 2ms | 1ms |
+| **控制计算** | 10ms | 5ms | 2ms | 1ms | 0.5ms |
+| **电机响应** | 40ms | 15ms | 5ms | 2ms | 1ms |
+| **总延迟** | <200ms | <80ms | <35ms | <15ms | <7ms |
+
+### L.6 传感器模块接口速查表
+
+#### TactileArray (触觉传感器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | bool | 打开传感器连接 |
+| `close()` | - | None | 关闭传感器 |
+| `capture()` | - | TactileFrame | 捕获触觉数据帧 |
+| `detect_contacts(frame)` | TactileFrame | List[TactileContact] | 检测接触区域 |
+| `get_slip_signal(frame)` | TactileFrame | np.ndarray | 获取滑移信号 |
+| `estimate_grip_quality(frame)` | TactileFrame | Dict | 估计抓取质量 |
+| `calibrate(zero_pressure, known_weights)` | np.ndarray, List[float] | None | 传感器标定 |
+
+#### ForceTorqueSensor (力觉传感器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | bool | 打开传感器连接 |
+| `close()` | - | None | 关闭传感器 |
+| `capture()` | - | Wrench | 捕获六维力旋量 |
+| `get_wrench()` | - | Wrench | 获取最新力数据 |
+| `detect_contact(wrench, threshold)` | Wrench, float | ContactState | 接触检测 |
+| `estimate_payload(wrench)` | Wrench | float | 估计负载重量 |
+| `calibrate_bias(num_samples)` | int | None | 偏置校准 |
+| `set_tool_center(tool_mass, tool_com)` | float, np.ndarray | None | 设置工具中心 |
+
+#### IMUSensor (IMU传感器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `open()` | - | bool | 打开传感器连接 |
+| `close()` | - | None | 关闭传感器 |
+| `capture()` | - | IMUFrame | 捕获IMU数据帧 |
+| `self_test()` | - | bool | 传感器自检 |
+| `calibrate_gyro_bias(num_samples)` | int | None | 陀螺仪偏置校准 |
+| `calibrate_accel(known_orientation)` | str | None | 加速度计标定 |
+
+#### PoseEstimator (姿态估计器)
+
+| 方法 | 输入 | 输出 | 说明 |
+|------|------|------|------|
+| `update(accel, gyro, mag, dt)` | np.ndarray, np.ndarray, np.ndarray, float | Pose | 更新姿态估计 |
+| `get_pose()` | - | Pose | 获取当前姿态 |
+| `get_euler()` | - | np.ndarray | 获取当前欧拉角 |
+| `get_rotation_matrix()` | - | np.ndarray | 获取旋转矩阵 |
+| `integrate_velocity(accel, dt, remove_gravity)` | np.ndarray, float, bool | Tuple | 积分速度/位置 |
+| `reset()` | - | None | 重置积分状态 |
+
+### L.7 已完成模块清单
+
+| 模块 | 文件 | 状态 | 测试数 |
+|------|------|:----:|:------:|
+| 触觉传感器 | `sensors/tactile.py` | ✅ 完成 | 45 |
+| 力觉传感器 | `sensors/force.py` | ✅ 完成 | 52 |
+| IMU传感器 | `sensors/imu.py` | ✅ 完成 | 48 |
+| 传感器管理器 | `sensors/manager.py` | ✅ 完成 | 35 |
+| 信号处理器 | `sensors/signal_processor.py` | ✅ 完成 | 30 |
+| 编码器 | `sensors/encoders.py` | ✅ 完成 | 28 |
+| 控制模块 | `control/*.py` | ✅ 完成 | 400+ |
+| 传感器测试 | `tests/sensor_tests.py` | ✅ 完成 | 341 |
+| 融合测试 | `tests/fusion_tests.py` | ✅ 完成 | 73 |
+| 设计文档 | `docs/DESIGN.md` | ✅ 完成 | - |
+| 规格文档 | `docs/AGV_SPEC.md` | ✅ 完成 | - |
+| 控制参数文档 | `docs/AGV_CONTROL_PARAMS.md` | ✅ 完成 | - |
