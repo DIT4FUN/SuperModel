@@ -194,7 +194,7 @@ from .grade_control import (
 )
 from .swarm_control import (
     SwarmController, ConsensusController, FormationController,
-    CollisionAvoidance, SwarmAgent,
+    CollisionAvoidance, VelocityObstacle, SwarmAgent,
     FormationShape, ConsensusType, FormationSpec,
     SWARM_GRADES, get_swarm_spec, list_swarm_capabilities,
 )
@@ -322,7 +322,7 @@ __all__ = [
     'get_grade_control_spec', 'list_grade_capabilities',
     # swarm_control
     'SwarmController', 'ConsensusController', 'FormationController',
-    'CollisionAvoidance', 'SwarmAgent',
+    'CollisionAvoidance', 'VelocityObstacle', 'SwarmAgent',
     'FormationShape', 'ConsensusType', 'FormationSpec',
     'SWARM_GRADES', 'get_swarm_spec', 'list_swarm_capabilities',
 ]

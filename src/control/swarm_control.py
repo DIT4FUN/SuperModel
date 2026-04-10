@@ -386,6 +386,89 @@ class FormationController:
             self.centroid = positions.mean(axis=0)
 
 
+class VelocityObstacle:
+    """
+    速度障碍物 (Velocity Obstacle) 用于避障
+    """
+    
+    def __init__(self):
+        pass
+    
+    def check_collision(
+        self,
+        robot_pos: np.ndarray,
+        robot_vel: np.ndarray,
+        obstacle_pos: np.ndarray,
+        obstacle_vel: np.ndarray,
+        robot_radius: float,
+        obstacle_radius: float,
+        time_horizon: float = 2.0
+    ) -> bool:
+        """检查当前速度是否会在预测时间内发生碰撞"""
+        # 相对位置
+        rel_pos = obstacle_pos - robot_pos
+        # 相对速度
+        rel_vel = obstacle_vel - robot_vel
+        
+        # 合并半径
+        sum_radius = robot_radius + obstacle_radius
+        
+        # 最近距离计算
+        a = np.dot(rel_vel, rel_vel)
+        if a < 1e-6:
+            # 相对静止
+            dist = np.linalg.norm(rel_pos)
+            return dist < sum_radius
+        
+        b = 2 * np.dot(rel_pos, rel_vel)
+        c = np.dot(rel_pos, rel_pos) - sum_radius ** 2
+        
+        # 判别式
+        discriminant = b * b - 4 * a * c
+        if discriminant < 0:
+            return False  # 无碰撞
+        
+        # 计算最近时间
+        t = (-b - np.sqrt(discriminant)) / (2 * a)
+        
+        # 碰撞在时间范围内
+        return t > 0 and t < time_horizon
+    
+    def compute_avoidance_velocity(
+        self,
+        preferred_vel: np.ndarray,
+        robot_pos: np.ndarray,
+        robot_radius: float,
+        obstacles: List[Dict],
+        max_speed: float
+    ) -> np.ndarray:
+        """计算避障速度，基于速度障碍物方法"""
+        # 简单实现: 当会发生碰撞时偏离原方向
+        n_obs = len(obstacles)
+        avoided = preferred_vel.copy()
+        
+        for obs in obstacles:
+            if self.check_collision(
+                robot_pos, avoided,
+                obs['position'], obs['velocity'],
+                robot_radius, obs['radius'],
+                2.0
+            ):
+                # 横向偏移
+                dir_vec = obs['position'] - robot_pos
+                dir_vec = dir_vec / np.linalg.norm(dir_vec)
+                # 顺时针旋转90度
+                perp = np.array([-dir_vec[1], dir_vec[0]])
+                avoided += 0.5 * perp * max_speed
+        
+        # 限幅
+        speed = np.linalg.norm(avoided)
+        if speed > max_speed:
+            avoided = avoided / speed * max_speed
+        
+        return avoided
+
+
 class CollisionAvoidance:
     """
     蜂群碰撞避免
