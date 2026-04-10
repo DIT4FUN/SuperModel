@@ -203,6 +203,15 @@ class ForceController:
         
         return response.astype(np.float32)
 
+    def reset(self):
+        """重置控制器状态"""
+        self._force_error_integral = np.zeros(3)
+        self._last_error = np.zeros(3)
+        self._last_wrench = None
+        self._collision_history.clear()
+        self._in_collision = False
+        self._collision_count = 0
+
 
 class HybridForcePositionController:
     """
@@ -273,6 +282,20 @@ class HybridForcePositionController:
         self._position = target_position.copy()
         
         return position_output.astype(np.float32), force_output.astype(np.float32)
+
+    def set_force_axes(self, axes: np.ndarray):
+        """设置力控轴
+        
+        Args:
+            axes: bool数组, True=力控, False=位置控
+        """
+        self.force_control_axes = np.asarray(axes, dtype=bool)
+
+    def reset(self):
+        """重置控制器状态"""
+        self._position = np.zeros(3)
+        self._velocity = np.zeros(3)
+        self.force_controller.reset()
 
 
 # AGV五级力控规格

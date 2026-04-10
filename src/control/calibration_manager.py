@@ -80,6 +80,41 @@ class ForceCalibrationResult:
 
 
 @dataclass
+class CalibrationResult:
+    """标定结果基类"""
+    status: CalibrationStatus = CalibrationStatus.IDLE
+    timestamp: float = 0.0
+    error_message: Optional[str] = None
+
+    def apply(self, data):
+        """应用到原始数据"""
+        return data
+
+
+@dataclass
+class TactileCalibrationResult(CalibrationResult):
+    """触觉标定结果"""
+    zero_pressure: Optional[np.ndarray] = None
+    pressure_scale: float = 1.0
+    offset_map: Optional[np.ndarray] = None
+    temperature_coef: Optional[np.ndarray] = None
+
+    def apply(self, frame) -> 'TactileArray':
+        """应用触觉标定"""
+        if self.zero_pressure is None:
+            return frame
+        if not hasattr(frame, 'pressure_map'):
+            return frame
+        calibrated_map = (np.asarray(frame.pressure_map) - self.zero_pressure) * self.pressure_scale
+        if self.offset_map is not None:
+            calibrated_map -= self.offset_map
+        calibrated = object.__new__(type(frame))
+        calibrated.__dict__.update(frame.__dict__)
+        calibrated.pressure_map = np.clip(calibrated_map, 0, None)
+        return calibrated
+
+
+@dataclass
 class CalibrationConfig:
     """标定配置"""
     # IMU 标定
@@ -747,7 +782,6 @@ class CalibrationManager:
         # IMU 标定
         if self.imu_calibrator is not None:
             self._status = CalibrationStatus.COLLECTING
-            self._progress['imu'] = 0.0
 
             # 六面法采集
             orientations = ['x_up', 'x_down', 'y_up', 'y_down', 'z_up', 'z_down']
@@ -899,4 +933,43 @@ AGV_CALIBRATION_SPEC = {
 
 def get_calibration_spec(grade: str) -> dict:
     """获取 AGV 指定等级的标定规格"""
-    return AGV_CALIBRATION_SPEC.get(grade, AGV_CALIBRATION_SPEC['M'])
+    actual_grade = grade if grade in AGV_CALIBRATION_SPEC else 'M'
+    spec = AGV_CALIBRATION_SPEC[actual_grade].copy()
+    spec['grade'] = actual_grade
+    return spec
+
+
+# Aliases for backward compatibility with new control/ API
+IMUCalibrationManager = IMUCalibrator
+ForceCalibrationManager = ForceCalibrator
+TactileCalibrationManager = TactileCalibrator
+IMUCalibrationResult = IMUCalibrationResult
+ForceCalibrationResult = ForceCalibrationResult
+
+
+class CalibratedSensor:
+    """标定后的传感器包装器 (包装已标定的传感器并提供标定后的读数)"""
+
+    def __init__(self, sensor, calibration_result):
+        self.sensor = sensor
+        self.calibration = calibration_result
+        self._is_calibrated = calibration_result.status == CalibrationStatus.COMPLETED
+
+    def read_raw(self):
+        """读取原始数据"""
+        return self.sensor.capture()
+
+    def read_calibrated(self):
+        """读取标定后的数据"""
+        raw = self.read_raw()
+        if not self._is_calibrated:
+            return raw
+        return self.calibration.apply(raw)
+
+    def is_calibrated(self) -> bool:
+        return self._is_calibrated
+
+
+def get_all_grade_spec_table():
+    """获取所有等级的标定规格表"""
+    return [{'grade': g, **v} for g, v in AGV_CALIBRATION_SPEC.items()]

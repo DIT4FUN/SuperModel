@@ -183,7 +183,7 @@ class TactileServoController:
     def monitor_grasp_quality(self) -> Dict[str, float]:
         """监控抓取质量"""
         if not self._grasp_quality_history:
-            return {'current': 0.0, 'average': 0.0, 'trend': 0.0}
+            return {'current': 0.0, 'average': 0.0, 'trend': 0.0, 'stable': True}
         
         current = self._grasp_quality_history[-1]
         average = np.mean(self._grasp_quality_history[-10:])
@@ -206,6 +206,15 @@ class TactileServoController:
             current_frame = self.tactile.capture()
         contacts = self.tactile.detect_contacts(current_frame)
         return len(contacts) > 0
+
+    def reset(self):
+        """重置控制器状态"""
+        self._last_contact = None
+        self._target_position = np.zeros(3)
+        self._current_position = np.zeros(3)
+        self._last_error = np.zeros(3)
+        self._grasp_quality_history.clear()
+        self._is_grasping = False
 
 
 class GraspQualityController:
