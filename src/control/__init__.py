@@ -160,6 +160,13 @@ from .simulation import (
     get_agv_sim_params, get_simulation_spec,
 )
 
+from .embodied_sim import (
+    EmbodiedSimulator, EmbodiedSimEnv, SimEnvironmentState,
+    SensorNoiseModel, PhysicsSimulator, TactileSimulator,
+    EmbodiedSimGrade, SimBackend,
+    AGV_SIM_GRADES, get_sim_grade_spec, create_sim_env, get_grade_summary,
+)
+
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
     'TrajectoryGenerator', 'RRTPlanner', 'ScurveGenerator',
@@ -256,4 +263,9 @@ __all__ = [
     'SimulationConfig', 'SimState', 'AGVSimParams',
     'AGV_SIM_PARAMS', 'AGV_SIMULATION_GRADES',
     'get_agv_sim_params', 'get_simulation_spec',
+    # embodied_sim
+    'EmbodiedSimulator', 'EmbodiedSimEnv', 'SimEnvironmentState',
+    'SensorNoiseModel', 'PhysicsSimulator', 'TactileSimulator',
+    'EmbodiedSimGrade', 'SimBackend',
+    'AGV_SIM_GRADES', 'get_sim_grade_spec', 'create_sim_env', 'get_grade_summary',
 ]

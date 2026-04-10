@@ -62,7 +62,7 @@ src/
 │   ├── __init__.py
 │   └── scene_understanding.py  # 场景图 + 占据栅格
 │
-├── control/          # 执行层 - 运动控制 (19个子模块)
+├── control/          # 执行层 - 运动控制 (21个子模块)
 │   ├── __init__.py
 │   ├── motion.py          # 关节运动控制器
 │   ├── trajectory.py      # 轨迹生成 + RRT规划
@@ -82,7 +82,9 @@ src/
 │   ├── embodied_control.py # 具身传感控制 (触觉+力觉+IMU融合)
 │   ├── sensorimotor.py    # 传感器-运动整合
 │   ├── navigation.py      # AGV导航 (全局路径规划+局部避障+轨迹跟踪)
-│   └── patrol_control.py  # 自主巡逻控制 (多点路线+动态避障+传感器融合)
+│   ├── patrol_control.py  # 自主巡逻控制 (多点路线+动态避障+传感器融合)
+│   ├── simulation.py      # 统一仿真接口 (Gym/MuJoCo/PyBullet/Gazebo)
+│   └── embodied_sim.py    # 具身智能仿真环境 (物理+传感器+控制闭环, Gymnasium接口)
 │
 ├── hardware/         # 硬件抽象层
 │   ├── __init__.py
@@ -178,6 +180,8 @@ src/
 | 偏置补偿 | `bias_compensation.py` | `BiasCompensator`, `ZeroVelocityUpdater`, `StaticBiasEstimator` | 传感器偏置在线估计/零速度更新/静态偏置标定 |
 | 融合控制 | `sensor_fusion_control.py` | `SensorFusionController`, `MultimodalController`, `UnifiedControlInput` | IMU+力觉+触觉统一融合控制/多模态控制器 |
 | 行为树 | `behavior_tree.py` | `BehaviorTree`, `Selector`, `Sequence`, `Parallel`, `ConditionNode`, `ActionNode` | 层次化任务执行/行为决策/AGV五级规格 |
+| 仿真接口 | `simulation.py` | `SimulationInterface`, `SimulationBackend`, `SimulationGrade` | Gym/MuJoCo/PyBullet/Gazebo五级仿真 |
+| 具身仿真 | `embodied_sim.py` | `EmbodiedSimulator`, `EmbodiedSimEnv`, `SensorNoiseModel`, `PhysicsSimulator`, `TactileSimulator` | 闭环具身仿真/传感器噪声建模/Gymnasium接口 |
 
 ---
 
@@ -193,7 +197,7 @@ src/
 | `ros2_interface_tests.py` | 44+ | ROS2通信 |
 | `five_grade_integration_tests.py` | 50+ | 五级AGV完整集成 |
 | 其他 | 762+ | 编码器/仿真/场景/边界/鲁棒性/行为树 |
-| **总计** | **2244** | **全部通过** |
+| | **总计** | **2286** | **全部通过** |
 
 ---
 

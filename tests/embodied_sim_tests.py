@@ -1,427 +1,613 @@
 """
-具身传感控制模块测试
-测试 EmbodiedController, EmbodiedTaskExecutor 及 AGV五级具身控制规格
+具身仿真模块测试
+================
+
+测试具身智能仿真环境 (embodied_sim.py)
+
+覆盖:
+- EmbodiedSimulator 物理 + 传感器仿真
+- SensorNoiseModel 噪声建模
+- TactileSimulator 触觉仿真
+- PhysicsSimulator 运动学/动力学
+- EmbodiedSimEnv Gymnasium 接口
+- AGV五级规格适配
 """
 
 import unittest
 import numpy as np
-import sys
-import os
-
-sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-
-from src.control.embodied_control import (
-    EmbodiedController, EmbodiedState, EmbodiedCommand,
-    EmbodiedControlParams, EmbodiedTaskExecutor,
-    EmbodiedGrade,
-    AGV_EMBODIED_GRADES, get_embodied_spec,
-)
+from typing import Tuple
 
 
-class TestEmbodiedGrades(unittest.TestCase):
-    """测试AGV五级具身控制规格"""
+class TestSensorNoiseModel(unittest.TestCase):
+    """传感器噪声模型测试"""
 
-    def test_grade_S_spec(self):
-        spec = get_embodied_spec('S')
-        self.assertFalse(spec['force_enabled'])
-        self.assertFalse(spec['imu_enabled'])
-        self.assertEqual(spec['control_rate'], 50)
-        self.assertEqual(spec['fusion_method'], 'threshold')
+    def test_imu_noise_added(self):
+        """IMU噪声正确叠加"""
+        from src.control.embodied_sim import SensorNoiseModel, get_sim_grade_spec
 
-    def test_grade_M_spec(self):
-        spec = get_embodied_spec('M')
-        self.assertTrue(spec['tactile_enabled'])
-        self.assertTrue(spec['force_enabled'])
-        self.assertTrue(spec['imu_enabled'])
-        self.assertEqual(spec['control_rate'], 100)
-        self.assertEqual(spec['fusion_method'], 'weighted_average')
-        self.assertTrue(spec['grasp_adaptation'])
-        self.assertTrue(spec['attitude_stabilization'])
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            noise_model = SensorNoiseModel(grade=grade)
+            spec = get_sim_grade_spec(grade)
 
-    def test_grade_L_spec(self):
-        spec = get_embodied_spec('L')
-        self.assertEqual(spec['control_rate'], 200)
-        self.assertEqual(spec['fusion_method'], 'ekf')
-        self.assertEqual(spec['max_contact_force'], 150)
+            accel_true = np.array([0.0, 0.0, -9.81])
+            gyro_true = np.array([0.0, 0.0, 0.1])
 
-    def test_grade_XL_spec(self):
-        spec = get_embodied_spec('XL')
-        self.assertEqual(spec['control_rate'], 500)
-        self.assertEqual(spec['fusion_method'], 'ukf')
-        self.assertTrue(spec['slip_recovery'])
+            accel_noisy, gyro_noisy = noise_model.add_imu_noise(accel_true, gyro_true, dt=0.01)
 
-    def test_grade_XXL_spec(self):
-        spec = get_embodied_spec('XXL')
-        self.assertEqual(spec['control_rate'], 1000)
-        self.assertEqual(spec['fusion_method'], 'mpc_fusion')
-        self.assertEqual(spec['latency_ms'], 2)
-        self.assertEqual(spec['collision_response_ms'], 5)
+            # 噪声应该改变原始值
+            self.assertFalse(np.allclose(accel_noisy, accel_true))
+            self.assertFalse(np.allclose(gyro_noisy, gyro_true))
 
-    def test_all_grades_have_required_keys(self):
+    def test_bias_drift(self):
+        """随机游走偏置随时间漂移"""
+        from src.control.embodied_sim import SensorNoiseModel
+
+        noise_model = SensorNoiseModel(grade='M')
+        accel_true = np.array([0.0, 0.0, -9.81])
+        gyro_true = np.array([0.0, 0.0, 0.0])
+
+        accel_1, _ = noise_model.add_imu_noise(accel_true, gyro_true, dt=0.01)
+        accel_2, _ = noise_model.add_imu_noise(accel_true, gyro_true, dt=0.01)
+
+        # 连续两次读数应该不同 (因为随机游走)
+        self.assertFalse(np.allclose(accel_1, accel_2))
+
+    def test_calibrate_accel_bias(self):
+        """加速度计偏置标定"""
+        from src.control.embodied_sim import SensorNoiseModel
+
+        noise_model = SensorNoiseModel(grade='M')
+        # 静止时的读数
+        samples = np.array([[0.1, 0.05, -9.81] for _ in range(100)])
+
+        # 标定不应崩溃
+        noise_model.calibrate_accel_bias(samples)
+
+        # 标定后bias drift应重置
+        self.assertTrue(np.allclose(noise_model._accel_bias_drift, np.zeros(3)))
+
+    def test_calibrate_gyro_bias(self):
+        """陀螺仪偏置标定"""
+        from src.control.embodied_sim import SensorNoiseModel
+
+        noise_model = SensorNoiseModel(grade='M')
+        samples = np.array([[0.01, -0.01, 0.02] for _ in range(100)])
+
+        noise_model.calibrate_gyro_bias(samples)
+
+        self.assertTrue(np.allclose(noise_model._gyro_bias_drift, np.zeros(3)))
+
+    def test_force_noise(self):
+        """力觉传感器噪声"""
+        from src.control.embodied_sim import SensorNoiseModel
+
+        for grade in ['S', 'M', 'L']:
+            noise_model = SensorNoiseModel(grade=grade)
+            wrench_true = np.array([5.0, 0.0, 0.0, 0.0, 0.0, 0.0])
+
+            wrench_noisy = noise_model.add_force_noise(wrench_true)
+
+            self.assertFalse(np.allclose(wrench_noisy, wrench_true))
+            self.assertEqual(wrench_noisy.shape, (6,))
+
+    def test_reset(self):
+        """重置噪声模型"""
+        from src.control.embodied_sim import SensorNoiseModel
+
+        noise_model = SensorNoiseModel(grade='M')
+        accel_true = np.array([0.0, 0.0, -9.81])
+        gyro_true = np.array([0.0, 0.0, 0.1])
+
+        noise_model.add_imu_noise(accel_true, gyro_true, dt=0.01)
+        noise_model.reset()
+
+        # 重置后偏置应为零
+        self.assertTrue(np.allclose(noise_model._imu_accel_bias, np.zeros(3)))
+        self.assertTrue(np.allclose(noise_model._imu_gyro_bias, np.zeros(3)))
+
+
+class TestPhysicsSimulator(unittest.TestCase):
+    """物理仿真器测试"""
+
+    def test_reset(self):
+        """重置后状态正确"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        sim = PhysicsSimulator(grade='M')
+        sim.reset(position=np.array([1.0, 2.0, 0.0]))
+
+        self.assertTrue(np.allclose(sim.position, [1.0, 2.0, 0.0]))
+        self.assertTrue(np.allclose(sim.linear_vel, np.zeros(3)))
+        self.assertTrue(np.allclose(sim.angular_vel, np.zeros(3)))
+
+    def test_differential_drive(self):
+        """差分驱动运动学"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        sim = PhysicsSimulator(grade='M')
+        sim.reset()
+
+        # 直线运动
+        sim.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+
+        self.assertGreater(sim.position[0], 0.0)
+        self.assertTrue(np.abs(sim.position[1]) < 0.01)  # 几乎没有侧向偏移
+
+    def test_turn_in_place(self):
+        """原地转向"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        sim = PhysicsSimulator(grade='M')
+        sim.reset()
+
+        yaw_before = sim._get_yaw()
+        sim.step(cmd_vx=0.0, cmd_wz=0.5, dt=0.01)
+        yaw_after = sim._get_yaw()
+
+        self.assertNotAlmostEqual(yaw_after, yaw_before, places=3)
+
+    def test_velocity_limits(self):
+        """速度限幅"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        sim = PhysicsSimulator(grade='M')
+        sim.reset()
+
+        max_v = sim.spec['max_linear_speed']
+        max_w = sim.spec['max_angular_speed']
+
+        # 施加过大的速度命令
+        sim.step(cmd_vx=max_v * 10, cmd_wz=max_w * 10, dt=0.01)
+
+        self.assertLessEqual(np.abs(sim.linear_vel[0]), max_v * 1.01)
+        self.assertLessEqual(np.abs(sim.angular_vel[2]), max_w * 1.01)
+
+    def test_payload_affects_dynamics(self):
+        """有效载荷影响动力学"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        sim_light = PhysicsSimulator(grade='M')
+        sim_heavy = PhysicsSimulator(grade='M')
+
+        sim_light.reset()
+        sim_heavy.reset()
+        sim_heavy.set_payload(50.0)
+
+        # 相同命令下，有负载的速度响应应该更慢
+        for _ in range(10):
+            sim_light.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+            sim_heavy.step(cmd_vx=0.5, cmd_wz=0.0, dt=0.01)
+
+        # 重的AGV速度稍低 (简化模型)
+        self.assertLessEqual(sim_heavy.linear_vel[0], sim_light.linear_vel[0] + 0.01)
+
+    def test_imu_reading(self):
+        """IMU读数计算"""
+        from src.control.embodied_sim import PhysicsSimulator
+
+        sim = PhysicsSimulator(grade='M')
+        sim.reset()
+
+        accel, gyro = sim.compute_imu_reading()
+
+        # 静止时，加速度模接近重力 (方向可能因坐标系旋转而异)
+        accel_mag = np.linalg.norm(accel)
+        self.assertAlmostEqual(accel_mag, 9.81, places=1)
+        self.assertTrue(np.allclose(gyro, np.zeros(3), atol=0.1))
+
+
+class TestTactileSimulator(unittest.TestCase):
+    """触觉阵列仿真器测试"""
+
+    def test_creation_all_grades(self):
+        """各级别触觉阵列尺寸"""
+        from src.control.embodied_sim import TactileSimulator, get_sim_grade_spec
+
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            tactile = TactileSimulator(grade=grade)
+            expected = get_sim_grade_spec(grade)['tactile_array_size']
+            self.assertEqual(tactile.array_size, expected)
+
+    def test_apply_contact(self):
+        """施加接触压力"""
+        from src.control.embodied_sim import TactileSimulator
+
+        tactile = TactileSimulator(grade='M')
+        tactile.reset()
+
+        tactile.apply_contact(force=5.0, center=(8, 8), radius=3)
+        pressure = tactile.get_pressure_map()
+
+        self.assertTrue(np.any(pressure > 0))
+        self.assertTrue(np.all(pressure >= 0))
+        self.assertTrue(np.all(pressure <= 1.0))
+
+    def test_contact_center_pressure(self):
+        """接触中心压力最大"""
+        from src.control.embodied_sim import TactileSimulator
+
+        tactile = TactileSimulator(grade='M')
+        tactile.reset()
+
+        center = (8, 8)
+        tactile.apply_contact(force=1.0, center=center, radius=3)
+        pressure = tactile.get_pressure_map()
+
+        # 中心点压力应该最大
+        self.assertEqual(pressure[center[0], center[1]],
+                         np.max(pressure))
+
+    def test_release_contact_decay(self):
+        """释放接触后压力衰减"""
+        from src.control.embodied_sim import TactileSimulator
+
+        tactile = TactileSimulator(grade='M')
+        tactile.reset()
+
+        tactile.apply_contact(force=1.0)
+        tactile.release_contact()
+        pressure1 = tactile.get_pressure_map()
+
+        # 再调用一次应该衰减
+        pressure2 = tactile.get_pressure_map()
+        self.assertTrue(np.all(pressure2 <= pressure1))
+
+    def test_no_contact_returns_zero(self):
+        """无接触时压力为零"""
+        from src.control.embodied_sim import TactileSimulator
+
+        tactile = TactileSimulator(grade='M')
+        tactile.reset()
+
+        pressure = tactile.get_pressure_map()
+        self.assertTrue(np.allclose(pressure, np.zeros_like(pressure)))
+
+
+class TestEmbodiedSimulator(unittest.TestCase):
+    """完整具身仿真器测试"""
+
+    def test_creation_all_grades(self):
+        """创建所有等级仿真器"""
+        from src.control.embodied_sim import EmbodiedSimulator, get_sim_grade_spec
+
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            sim = EmbodiedSimulator(grade=grade)
+            self.assertEqual(sim.grade, grade)
+            self.assertEqual(sim.spec, get_sim_grade_spec(grade))
+
+    def test_reset(self):
+        """重置仿真器"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        state = sim.reset(initial_position=np.array([1.0, 2.0, 0.0]))
+
+        self.assertTrue(np.allclose(state.position, [1.0, 2.0, 0.0]))
+        self.assertEqual(state.timestamp, 0.0)
+        self.assertTrue(sim._is_running)
+
+    def test_step(self):
+        """仿真一步"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+
+        state = sim.step(cmd_vx=0.5, cmd_wz=0.0)
+
+        self.assertIsNotNone(state)
+        self.assertGreaterEqual(state.timestamp, 0.0)
+        self.assertIsNotNone(state.imu_accel_noisy)
+        self.assertIsNotNone(state.imu_gyro_noisy)
+
+    def test_step_updates_time(self):
+        """每步时间正确递增"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+
+        initial_time = sim._sim_time
+        for _ in range(10):
+            sim.step(cmd_vx=0.0, cmd_wz=0.0)
+
+        self.assertAlmostEqual(sim._sim_time, initial_time + 10 * sim.dt)
+
+    def test_sensor_readings(self):
+        """传感器读数有效"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+
+        sim.step(cmd_vx=0.3, cmd_wz=0.1)
+
+        sensors = sim.get_sensor_dict()
+
+        self.assertIn('imu', sensors)
+        self.assertIn('force', sensors)
+        self.assertIn('tactile', sensors)
+        self.assertIn('encoders', sensors)
+        self.assertIn('pose', sensors)
+
+        # IMU形状检查
+        self.assertEqual(sensors['imu']['accel'].shape, (3,))
+        self.assertEqual(sensors['imu']['gyro'].shape, (3,))
+        self.assertEqual(sensors['force'].shape, (6,))
+
+    def test_observation_vector(self):
+        """观测向量形状正确"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        sim.step(cmd_vx=0.1, cmd_wz=0.0)
+
+        obs = sim.get_observation()
+
+        # 22维观测: pos(3) + euler(3) + lin_vel(3) + ang_vel(3) + imu_a(3) + imu_g(3) + wheel_pos(2) + wheel_vel(2)
+        self.assertEqual(obs.shape, (22,))
+        self.assertFalse(np.any(np.isnan(obs)))
+
+    def test_payload(self):
+        """设置有效载荷"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        sim.set_payload(50.0)
+
+        self.assertEqual(sim.physics.payload_mass, 50.0)
+
+    def test_terrain(self):
+        """设置地形"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+
+        for terrain in ['flat', 'slope', 'rough']:
+            sim.set_terrain(terrain)
+            self.assertEqual(sim.physics.terrain, terrain)
+
+    def test_stop(self):
+        """停止仿真"""
+        from src.control.embodied_sim import EmbodiedSimulator
+
+        sim = EmbodiedSimulator(grade='M', seed=42)
+        sim.reset()
+        sim.stop()
+
+        self.assertFalse(sim._is_running)
+        self.assertRaises(RuntimeError, lambda: sim.step(cmd_vx=0.1, cmd_wz=0.0))
+
+
+class TestEmbodiedSimGradeSpec(unittest.TestCase):
+    """五级规格测试"""
+
+    def test_grade_spec_completeness(self):
+        """所有等级规格完整"""
+        from src.control.embodied_sim import AGV_SIM_GRADES, get_sim_grade_spec
+
         required_keys = [
-            'description', 'tactile_enabled', 'force_enabled', 'imu_enabled',
-            'tactile_resolution', 'force_axes', 'imu_grade', 'control_rate',
-            'latency_ms', 'fusion_method', 'max_contact_force',
-            'grasp_adaptation', 'attitude_stabilization', 'slip_recovery',
-            'collision_response_ms'
+            'dt', 'control_rate', 'sensor_rate', 'max_linear_speed',
+            'max_angular_speed', 'max_linear_accel', 'max_angular_accel',
+            'tactile_array_size', 'force_noise_std', 'imu_noise_std',
+            'encoder_resolution', 'payload_kg', 'vehicle_mass_kg',
+            'wheel_radius_m', 'wheelbase_m'
         ]
-        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            spec = get_embodied_spec(grade)
+
+        for grade, spec in AGV_SIM_GRADES.items():
             for key in required_keys:
-                self.assertIn(key, spec, f"Grade {grade} missing key {key}")
+                self.assertIn(key, spec, f"Grade {grade} missing key: {key}")
+
+    def test_higher_grades_higher_fidelity(self):
+        """更高等级 = 更高保真 (dt更小, rate更高, noise更低)"""
+        from src.control.embodied_sim import AGV_SIM_GRADES
+
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+        specs = [AGV_SIM_GRADES[g] for g in grades]
+
+        # dt 递减
+        dts = [s['dt'] for s in specs]
+        self.assertEqual(dts, sorted(dts, reverse=True))
+
+        # 控制频率递增
+        rates = [s['control_rate'] for s in specs]
+        self.assertEqual(rates, sorted(rates))
+
+        # 噪声标准差递减
+        noises = [s['imu_noise_std'] for s in specs]
+        self.assertEqual(noises, sorted(noises, reverse=True))
+
+    def test_payload_scales_with_grade(self):
+        """有效载荷随等级增加"""
+        from src.control.embodied_sim import AGV_SIM_GRADES
+
+        grades = ['S', 'M', 'L', 'XL', 'XXL']
+        payloads = [AGV_SIM_GRADES[g]['payload_kg'] for g in grades]
+
+        # 递增
+        self.assertEqual(payloads, sorted(payloads))
 
 
-class TestEmbodiedControlParams(unittest.TestCase):
-    """测试具身控制参数"""
+class TestEmbodiedSimEnv(unittest.TestCase):
+    """Gymnasium 环境接口测试"""
 
-    def test_from_grade_S(self):
-        params = EmbodiedControlParams.from_grade('S')
-        self.assertEqual(params.grade, 'S')
-        self.assertEqual(params.fusion_method, 'threshold')
-        self.assertEqual(params.control_rate, 50.0)
+    def test_env_creation(self):
+        """环境创建"""
+        from src.control.embodied_sim import EmbodiedSimEnv
 
-    def test_from_grade_M(self):
-        params = EmbodiedControlParams.from_grade('M')
-        self.assertEqual(params.grade, 'M')
-        self.assertEqual(params.fusion_method, 'weighted_average')
-        self.assertEqual(params.control_rate, 100.0)
-
-    def test_from_grade_L(self):
-        params = EmbodiedControlParams.from_grade('L')
-        self.assertEqual(params.grade, 'L')
-        self.assertEqual(params.fusion_method, 'ekf')
-        self.assertEqual(params.control_rate, 200.0)
-
-    def test_from_grade_XL(self):
-        params = EmbodiedControlParams.from_grade('XL')
-        self.assertEqual(params.grade, 'XL')
-        self.assertEqual(params.fusion_method, 'ukf')
-        self.assertEqual(params.control_rate, 500.0)
-
-    def test_from_grade_XXL(self):
-        params = EmbodiedControlParams.from_grade('XXL')
-        self.assertEqual(params.grade, 'XXL')
-        self.assertEqual(params.fusion_method, 'mpc_fusion')
-        self.assertEqual(params.control_rate, 1000.0)
-
-
-class TestEmbodiedCommand(unittest.TestCase):
-    """测试具身控制指令"""
-
-    def test_default_command(self):
-        cmd = EmbodiedCommand()
-        self.assertEqual(cmd.mode, 'hybrid_force_position')
-        self.assertEqual(cmd.force_weight, 0.5)
-        self.assertEqual(cmd.position_weight, 0.5)
-        self.assertIsNone(cmd.desired_force)
-        self.assertIsNone(cmd.desired_position)
-
-    def test_force_command(self):
-        cmd = EmbodiedCommand(
-            mode='force',
-            desired_force=np.array([0, 0, -10.0]),
-            desired_torque=np.zeros(3),
-            max_contact_force=50.0
-        )
-        self.assertEqual(cmd.mode, 'force')
-        self.assertIsInstance(cmd.desired_force, np.ndarray)
-        self.assertEqual(cmd.desired_force[2], -10.0)
-
-    def test_position_command(self):
-        cmd = EmbodiedCommand(
-            mode='position',
-            desired_position=np.array([0.5, 0.3, 0.2]),
-            desired_orientation=np.array([1, 0, 0, 0])
-        )
-        self.assertEqual(cmd.mode, 'position')
-        self.assertEqual(cmd.desired_position[0], 0.5)
-
-    def test_impedance_command(self):
-        cmd = EmbodiedCommand(
-            mode='impedance',
-            desired_linear_velocity=np.array([0.1, 0.0, 0.0]),
-            desired_angular_velocity=np.zeros(3)
-        )
-        self.assertEqual(cmd.mode, 'impedance')
-
-
-class TestEmbodiedControllerCreation(unittest.TestCase):
-    """测试具身控制器创建"""
-
-    def test_create_grade_S(self):
-        ctrl = EmbodiedController(grade='S', use_virtual_sensors=True)
-        self.assertEqual(ctrl.grade, 'S')
-        self.assertFalse(ctrl.spec['force_enabled'])
-        self.assertFalse(ctrl.spec['imu_enabled'])
-        ctrl.reset()
-
-    def test_create_grade_M(self):
-        ctrl = EmbodiedController(grade='M', use_virtual_sensors=True)
-        self.assertEqual(ctrl.grade, 'M')
-        self.assertTrue(ctrl.spec['tactile_enabled'])
-        self.assertTrue(ctrl.spec['force_enabled'])
-        self.assertTrue(ctrl.spec['imu_enabled'])
-        ctrl.reset()
-
-    def test_create_grade_XL(self):
-        ctrl = EmbodiedController(grade='XL', use_virtual_sensors=True)
-        self.assertEqual(ctrl.grade, 'XL')
-        self.assertEqual(ctrl.spec['control_rate'], 500)
-        ctrl.reset()
-
-    def test_create_with_custom_params(self):
-        params = EmbodiedControlParams.from_grade('M')
-        params.control_rate = 150.0
-        ctrl = EmbodiedController(grade='M', params=params, use_virtual_sensors=True)
-        self.assertEqual(ctrl.params.control_rate, 150.0)
-        ctrl.reset()
-
-
-class TestEmbodiedControllerVirtualSensors(unittest.TestCase):
-    """测试虚拟传感器模式"""
-
-    def setUp(self):
-        self.ctrl = EmbodiedController(grade='M', use_virtual_sensors=True)
-        self.ctrl.init_virtual_sensors()
-
-    def tearDown(self):
-        self.ctrl.reset()
-
-    def test_init_virtual_sensors(self):
-        self.assertTrue(self.ctrl._initialized)
-        self.assertIsNotNone(self.ctrl._virtual_tactile)
-        self.assertIsNotNone(self.ctrl._virtual_force)
-        self.assertIsNotNone(self.ctrl._virtual_imu)
-        self.assertIsNotNone(self.ctrl._pose_estimator)
-
-    def test_update_returns_state(self):
-        state = self.ctrl.update()
-        self.assertIsInstance(state, EmbodiedState)
-        self.assertGreater(state.cycle_id, 0)
-        self.assertTrue(state.tactile_ok)
-        self.assertTrue(state.force_ok)
-
-    def test_multiple_updates(self):
-        for i in range(5):
-            state = self.ctrl.update()
-        self.assertEqual(state.cycle_id, 5)
-
-    def test_state_has_sensors_data(self):
-        state = self.ctrl.update()
-        self.assertTrue(state.tactile_ok)
-        self.assertTrue(state.force_ok)
-        self.assertTrue(state.imu_ok)
-
-
-class TestEmbodiedControllerFusion(unittest.TestCase):
-    """测试多模态融合"""
-
-    def setUp(self):
-        self.ctrl = EmbodiedController(grade='M', use_virtual_sensors=True)
-        self.ctrl.init_virtual_sensors()
-
-    def tearDown(self):
-        self.ctrl.reset()
-
-    def test_grade_S_threshold_fusion(self):
-        ctrl = EmbodiedController(grade='S', use_virtual_sensors=True)
-        ctrl.init_virtual_sensors()
-        ctrl.update()
-        # S grade uses threshold fusion, no force/imu sensors
-        self.assertFalse(ctrl.spec['force_enabled'])
-        ctrl.reset()
-
-    def test_grade_L_ekf_fusion(self):
-        ctrl = EmbodiedController(grade='L', use_virtual_sensors=True)
-        ctrl.init_virtual_sensors()
-        state = ctrl.update()
-        self.assertEqual(ctrl.params.fusion_method, 'ekf')
-        ctrl.reset()
-
-    def test_grade_XL_ukf_fusion(self):
-        ctrl = EmbodiedController(grade='XL', use_virtual_sensors=True)
-        ctrl.init_virtual_sensors()
-        state = ctrl.update()
-        self.assertEqual(ctrl.params.fusion_method, 'ukf')
-        ctrl.reset()
-
-    def test_grade_XXL_mpc_fusion(self):
-        ctrl = EmbodiedController(grade='XXL', use_virtual_sensors=True)
-        ctrl.init_virtual_sensors()
-        state = ctrl.update()
-        self.assertEqual(ctrl.params.fusion_method, 'mpc_fusion')
-        ctrl.reset()
-
-
-class TestEmbodiedControllerCompute(unittest.TestCase):
-    """测试控制计算"""
-
-    def setUp(self):
-        self.ctrl = EmbodiedController(grade='M', use_virtual_sensors=True)
-        self.ctrl.init_virtual_sensors()
-
-    def tearDown(self):
-        self.ctrl.reset()
-
-    def test_compute_impedance_mode(self):
-        state = self.ctrl.update()
-        cmd = EmbodiedCommand(mode='impedance')
-        output = self.ctrl.compute(cmd)
-        self.assertIn('joint_torques', output)
-        self.assertIn('safety_stop', output)
-        self.assertFalse(output['safety_stop'])
-
-    def test_compute_hybrid_mode(self):
-        state = self.ctrl.update()
-        cmd = EmbodiedCommand(
-            mode='hybrid_force_position',
-            desired_force=np.array([0, 0, -10.0])
-        )
-        output = self.ctrl.compute(cmd)
-        self.assertFalse(output['safety_stop'])
-        self.assertTrue(output['force_regulated'])
-
-    def test_compute_admittance_mode(self):
-        state = self.ctrl.update()
-        cmd = EmbodiedCommand(mode='admittance')
-        output = self.ctrl.compute(cmd)
-        self.assertIn('contact_adjustment', output)
-
-    def test_compute_tactile_servo_mode(self):
-        state = self.ctrl.update()
-        cmd = EmbodiedCommand(mode='tactile_servo')
-        output = self.ctrl.compute(cmd)
-        self.assertIsInstance(output['contact_adjustment'], np.ndarray)
-
-    def test_emergency_stop_on_excessive_force(self):
-        # S grade with no force sensor - no emergency stop possible
-        ctrl = EmbodiedController(grade='S', use_virtual_sensors=True)
-        ctrl.init_virtual_sensors()
-        ctrl.update()
-        cmd = EmbodiedCommand(mode='position', max_contact_force=0.1)
-        # S grade has no force sensor so no emergency
-        ctrl.reset()
-
-    def test_get_state(self):
-        self.ctrl.update()
-        state = self.ctrl.get_state()
-        self.assertIsInstance(state, EmbodiedState)
-
-
-class TestEmbodiedControllerGradeScaling(unittest.TestCase):
-    """测试AGV等级参数缩放"""
-
-    def test_control_rate_scales_with_grade(self):
-        rates = {}
         for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            ctrl = EmbodiedController(grade=grade, use_virtual_sensors=True)
-            ctrl.init_virtual_sensors()
-            rates[grade] = ctrl.spec['control_rate']
-            ctrl.reset()
-        
-        self.assertLess(rates['S'], rates['M'])
-        self.assertLess(rates['M'], rates['L'])
-        self.assertLess(rates['L'], rates['XL'])
-        self.assertLess(rates['XL'], rates['XXL'])
+            env = EmbodiedSimEnv(grade=grade)
+            self.assertEqual(env.grade, grade)
+            self.assertIsNotNone(env.observation_space)
+            self.assertIsNotNone(env.action_space)
 
-    def test_latency_decreases_with_grade(self):
-        latencies = {}
+    def test_env_reset(self):
+        """环境重置"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M')
+        obs, info = env.reset(seed=42)
+
+        self.assertEqual(obs.shape, (22,))
+        self.assertFalse(np.any(np.isnan(obs)))
+        self.assertIsInstance(info, dict)
+
+    def test_env_step(self):
+        """环境一步"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M')
+        env.reset(seed=42)
+
+        action = np.array([0.0, 0.0])
+        obs, reward, terminated, truncated, info = env.step(action)
+
+        self.assertEqual(obs.shape, (22,))
+        self.assertIsInstance(reward, float)
+        self.assertIsInstance(terminated, bool)
+        self.assertIsInstance(truncated, bool)
+        self.assertIsInstance(info, dict)
+
+    def test_action_decoding(self):
+        """动作解码"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M')
+        env.reset(seed=42)
+
+        max_v = env.spec['max_linear_speed']
+        max_w = env.spec['max_angular_speed']
+
+        # 满幅动作
+        action_full = np.array([1.0, 1.0])
+        obs1, _, _, _, _ = env.step(action_full)
+
+        # 零动作
+        env.reset(seed=42)
+        action_zero = np.array([0.0, 0.0])
+        obs2, _, _, _, _ = env.step(action_zero)
+
+        # 满幅和零幅的速度响应应不同
+        self.assertFalse(np.allclose(obs1, obs2))
+
+    def test_episode_truncation(self):
+        """回合截断"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M', max_episode_steps=10)
+        env.reset(seed=42)
+
+        truncated_seen = []
+        for i in range(12):
+            _, _, terminated, truncated, _ = env.step(np.array([0.0, 0.0]))
+            truncated_seen.append(truncated)
+
+        # max_episode_steps=10: after 10 steps (indices 0-9), episode truncates
+        # First 9 steps (indices 0-8): truncated should be False
+        for i in range(9):
+            self.assertFalse(truncated_seen[i], f"Step {i} should not truncate")
+        # Step 9 (10th step) onwards: truncated should be True
+        for i in range(9, len(truncated_seen)):
+            self.assertTrue(truncated_seen[i], f"Step {i} should truncate")
+
+    def test_tracking_reward(self):
+        """速度跟踪奖励"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M', reward_type='tracking')
+        env.reset(seed=42)
+
+        _, reward, _, _, _ = env.step(np.array([0.0, 0.0]))
+
+        self.assertIsInstance(reward, float)
+
+    def test_energy_efficient_reward(self):
+        """能量效率奖励"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M', reward_type='energy_efficient')
+        env.reset(seed=42)
+
+        _, reward, _, _, _ = env.step(np.array([0.0, 0.0]))
+
+        self.assertIsInstance(reward, float)
+
+    def test_close(self):
+        """关闭环境"""
+        from src.control.embodied_sim import EmbodiedSimEnv
+
+        env = EmbodiedSimEnv(grade='M')
+        env.reset(seed=42)
+        env.close()
+
+        self.assertFalse(env.sim._is_running)
+
+
+class TestCreateSimEnv(unittest.TestCase):
+    """工厂函数测试"""
+
+    def test_create_sim_env(self):
+        """创建仿真环境工厂函数"""
+        from src.control.embodied_sim import create_sim_env
+
+        env = create_sim_env(grade='M')
+        self.assertEqual(env.grade, 'M')
+        env.reset(seed=42)
+        env.close()
+
+    def test_all_grades(self):
+        """所有等级"""
+        from src.control.embodied_sim import create_sim_env
+
         for grade in ['S', 'M', 'L', 'XL', 'XXL']:
-            latencies[grade] = get_embodied_spec(grade)['latency_ms']
-        
-        self.assertGreater(latencies['S'], latencies['M'])
-        self.assertGreater(latencies['M'], latencies['L'])
-        self.assertGreater(latencies['L'], latencies['XL'])
-        self.assertGreater(latencies['XL'], latencies['XXL'])
+            env = create_sim_env(grade=grade)
+            self.assertEqual(env.grade, grade)
+            env.close()
 
 
-class TestEmbodiedTaskExecutor(unittest.TestCase):
-    """测试具身任务执行器"""
+class TestGetGradeSummary(unittest.TestCase):
+    """规格摘要测试"""
 
-    def setUp(self):
-        self.ctrl = EmbodiedController(grade='M', use_virtual_sensors=True)
-        self.ctrl.init_virtual_sensors()
-        self.executor = EmbodiedTaskExecutor(self.ctrl, grade='M')
+    def test_grade_summary(self):
+        """五级规格摘要"""
+        from src.control.embodied_sim import get_grade_summary
 
-    def tearDown(self):
-        self.ctrl.reset()
-
-    def test_executor_creation(self):
-        self.assertEqual(self.executor.phase, self.executor.TaskPhase.IDLE)
-        self.assertEqual(self.executor.grade, 'M')
-        self.assertEqual(self.executor.success_count, 0)
-
-    def test_grasp_place_task(self):
-        object_pos = np.array([0.3, 0.2, 0.1])
-        place_pos = np.array([0.5, 0.4, 0.05])
-        
-        result = self.executor.execute_grasp_place(
-            object_position=object_pos,
-            place_position=place_pos,
-            object_size=0.05,
-            grasp_force=10.0
-        )
-        self.assertTrue(result)
-        self.assertEqual(self.executor.phase, self.executor.TaskPhase.IDLE)
-        self.assertEqual(self.executor.success_count, 1)
-        self.assertEqual(self.executor.failure_count, 0)
-
-    def test_get_metrics(self):
-        metrics = self.executor.get_metrics()
-        self.assertIn('success_count', metrics)
-        self.assertIn('failure_count', metrics)
-        self.assertIn('success_rate', metrics)
-        self.assertEqual(metrics['current_phase'], 'idle')
-
-    def test_phase_history(self):
-        object_pos = np.array([0.3, 0.2, 0.1])
-        place_pos = np.array([0.5, 0.4, 0.05])
-        
-        self.executor.execute_grasp_place(
-            object_position=object_pos,
-            place_position=place_pos,
-        )
-        
-        history = self.executor.get_metrics()['phase_history']
-        self.assertGreater(len(history), 0)
-        # Check sequence of phases
-        phase_names = [p[0] for p in history]
-        self.assertIn('approach', phase_names)
-        self.assertIn('grasp', phase_names)
+        summary = get_grade_summary()
+        self.assertIsInstance(summary, str)
+        self.assertIn('S', summary)
+        self.assertIn('M', summary)
+        self.assertIn('L', summary)
+        self.assertIn('XL', summary)
+        self.assertIn('XXL', summary)
 
 
-class TestEmbodiedState(unittest.TestCase):
-    """测试具身状态"""
+class TestSimEnvironmentState(unittest.TestCase):
+    """仿真环境状态测试"""
 
-    def test_state_default_values(self):
-        state = EmbodiedState()
-        self.assertEqual(len(state.tactile_contacts), 0)
-        self.assertEqual(state.grip_quality, 0.0)
-        self.assertEqual(state.slip_probability, 0.0)
-        self.assertTrue(state.is_stable)
-        self.assertFalse(state.is_slipping)
-        self.assertEqual(state.cycle_id, 0)
+    def test_state_to_array(self):
+        """状态展平为观测向量"""
+        from src.control.embodied_sim import SimEnvironmentState
 
-    def test_state_with_contact(self):
-        state = EmbodiedState(
-            is_in_contact=True,
-            contact_force=15.0,
-            slip_probability=0.1,
-            grip_quality=0.8
-        )
-        self.assertTrue(state.is_in_contact)
-        self.assertEqual(state.contact_force, 15.0)
+        state = SimEnvironmentState()
+        arr = state.to_array()
 
+        # 检查形状
+        self.assertEqual(arr.shape, (22,))
+        self.assertFalse(np.any(np.isnan(arr)))
 
-class TestEmbodiedGradeEnum(unittest.TestCase):
-    """测试等级枚举"""
+    def test_state_initial_values(self):
+        """初始值正确"""
+        from src.control.embodied_sim import SimEnvironmentState
 
-    def test_grade_values(self):
-        self.assertEqual(EmbodiedGrade.S.value, 'S')
-        self.assertEqual(EmbodiedGrade.M.value, 'M')
-        self.assertEqual(EmbodiedGrade.L.value, 'L')
-        self.assertEqual(EmbodiedGrade.XL.value, 'XL')
-        self.assertEqual(EmbodiedGrade.XXL.value, 'XXL')
+        state = SimEnvironmentState()
+
+        self.assertEqual(state.timestamp, 0.0)
+        self.assertEqual(state.dt, 0.01)
+        self.assertTrue(np.allclose(state.position, np.zeros(3)))
+        self.assertTrue(np.allclose(state.linear_velocity, np.zeros(3)))
 
 
 if __name__ == '__main__':

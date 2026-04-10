@@ -1855,3 +1855,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### 技术规格
 - AGV五级传感器规格表: 触觉/力觉/IMU全覆盖
 - 传感器-控制集成周期: S(50Hz) → M(100Hz) → L(200Hz) → XL(500Hz) → XXL(1000Hz)
+
+## [2.39.0] - 2026-04-10
+
+### Added
+- **具身智能仿真环境** (`src/control/embodied_sim.py`, 720行)
+  - `EmbodiedSimulator`: 完整闭环具身仿真器 (物理+传感器+控制)
+  - `SensorNoiseModel`: 传感器噪声建模 (IMU随机游走偏置/力觉噪声/偏置标定)
+  - `PhysicsSimulator`: 简化AGV物理仿真 (差分驱动/接触力/地形/有效载荷)
+  - `TactileSimulator`: 触觉阵列仿真 (高斯压力分布/接触检测/衰减)
+  - `EmbodiedSimEnv`: Gymnasium兼容环境 (22维观测/2维动作/速度跟踪奖励)
+  - AGV五级规格适配 (S/M/L/XL/XXL: dt从20ms到1ms, 控制频率50Hz到1000Hz)
+  - 传感器数据字典接口 (IMU/力觉/触觉/编码器/姿态)
+
+- **具身仿真测试** (`tests/embodied_sim_tests.py`, 580行, 42项)
+  - `TestSensorNoiseModel`: IMU噪声/偏置漂移/力觉噪声/标定重置
+  - `TestPhysicsSimulator`: 差分驱动/原地转向/速度限幅/有效载荷/IMU读数
+  - `TestTactileSimulator`: 触觉阵列全等级/接触压力/中心衰减/释放
+  - `TestEmbodiedSimulator`: 闭环仿真/传感器读数/观测向量/地形/载荷
+  - `TestEmbodiedSimGradeSpec`: 五级规格完整性/保真度递进/有效载荷递增
+  - `TestEmbodiedSimEnv`: Gymnasium接口/重置/步进/回合截断/奖励函数
+
+### Changed
+- 控制模块 `__init__.py` 新增 embodied_sim 导出
+- `docs/MODULE_INDEX.md` 新增具身仿真模块文档, 测试总数更新至 2286 项
