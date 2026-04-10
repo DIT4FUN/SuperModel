@@ -34,6 +34,12 @@ from .encoders import (
     ENCODER_GRADES, create_sensor_encoder, get_encoder_config
 )
 from .manager import SensorManager, SensorManagerConfig, SensorDataFrame, SensorGrade
+from .signal_processor import (
+    SignalProcessor, KalmanFilter1D, KalmanFilter3D, ButterworthFilter,
+    MedianFilter, ExponentialSmoother, OutlierDetector,
+    FilterConfig, FilterType, SignalStats,
+    AGV_SIGNAL_PROCESSING_GRADES, get_signal_processing_grade_spec
+)
 
 __all__ = [
     'BinocularCamera', 'DepthProcessor',
@@ -50,4 +56,8 @@ __all__ = [
     'IMUEncoder', 'LanguageEncoder', 'SensorEncoderWrapper', 'EncoderConfig',
     'ENCODER_GRADES', 'create_sensor_encoder', 'get_encoder_config',
     'SensorManager', 'SensorManagerConfig', 'SensorDataFrame', 'SensorGrade',
+    'SignalProcessor', 'KalmanFilter1D', 'KalmanFilter3D', 'ButterworthFilter',
+    'MedianFilter', 'ExponentialSmoother', 'OutlierDetector',
+    'FilterConfig', 'FilterType', 'SignalStats',
+    'AGV_SIGNAL_PROCESSING_GRADES', 'get_signal_processing_grade_spec',
 ]

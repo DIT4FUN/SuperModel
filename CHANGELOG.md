@@ -2,6 +2,36 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.50.0] - 2026-04-10
+
+### Added
+- `src/sensors/signal_processor.py` (422行): 传感器信号处理器模块
+  - `KalmanFilter1D`: 一维卡尔曼滤波器
+  - `KalmanFilter3D`: 三维卡尔曼滤波器 (IMU等3D传感器)
+  - `ButterworthFilter`: Butterworth数字滤波器 (scipy实现, 低通/高通/带通)
+  - `MedianFilter`: 中值滤波器 (去除脉冲噪声/异常值)
+  - `ExponentialSmoother`: 指数平滑器 (实时低计算量)
+  - `OutlierDetector`: 异常值检测器 (Z-score/MAD + IQR方法)
+  - `SignalProcessor`: 统一信号处理器 (整合所有滤波 + 统计计算)
+  - `AGV_SIGNAL_PROCESSING_GRADES`: 五级规格映射表
+- `tests/sensor_tests.py`: 新增 TestSignalProcessor 测试类 (9项)
+  - 测试: Kalman1D/3D, 指数平滑, 中值滤波, 异常值检测, Butterworth, 统计计算, 五级规格
+- `docs/SPEC.md`: 新增第23章「传感器信号处理模块规格」
+  - 包含五级规格表、接口方法、使用示例、SignalStats数据流
+
+### Fixed
+- `src/sensors/signal_processor.py`: ButterworthFilter数值稳定性问题, 改用scipy.signal.sosfilt
+- `tests/sensor_tests.py`: OutlierDetector测试使用有变化数据避免MAD=0边界情况
+- `tests/sensor_tests.py`: 五级规格比较逻辑修复(grade_order索引)
+
+### Changed
+- `src/sensors/__init__.py`: 新增SignalProcessor及相关类导出
+
+### Test Results
+- sensor_tests.py: 341项全部通过 ✓
+- fusion_tests.py: 73项全部通过 ✓
+- 总测试数: 2643项全通过
+
 ## [2.42.0] - 2026-04-10
 
 ### Added

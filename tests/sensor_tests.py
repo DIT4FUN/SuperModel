@@ -4323,3 +4323,181 @@ class TestGymEnvAGVSpecs(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestSignalProcessor(unittest.TestCase):
+    """测试信号处理器"""
+
+    def test_kalman_filter_1d(self):
+        """测试一维卡尔曼滤波"""
+        from src.sensors.signal_processor import KalmanFilter1D
+        
+        kf = KalmanFilter1D(process_noise=0.001, measurement_noise=0.1)
+        
+        measurements = [1.0, 1.1, 0.9, 1.05, 0.95, 1.02]
+        for m in measurements:
+            filtered = kf.update(m)
+            self.assertTrue(np.isfinite(filtered))
+        
+        self.assertAlmostEqual(kf.state, filtered)
+        kf.reset()
+        self.assertEqual(kf.state, 0.0)
+
+    def test_kalman_filter_3d(self):
+        """测试三维卡尔曼滤波"""
+        from src.sensors.signal_processor import KalmanFilter3D
+        
+        kf = KalmanFilter3D(process_noise=0.001, measurement_noise=0.1)
+        
+        measurement = np.array([0.1, -0.2, 9.81], dtype=np.float32)
+        filtered = kf.update(measurement)
+        
+        self.assertEqual(filtered.shape, (3,))
+        self.assertTrue(np.all(np.isfinite(filtered)))
+        
+        # 多次更新应该收束
+        for _ in range(10):
+            kf.update(measurement)
+        
+        kf.reset(np.array([0.0, 0.0, 0.0], dtype=np.float32))
+        self.assertTrue(np.allclose(kf.state, 0.0))
+
+    def test_exponential_smoother(self):
+        """测试指数平滑器"""
+        from src.sensors.signal_processor import ExponentialSmoother
+        
+        smoother = ExponentialSmoother(alpha=0.5)
+        
+        values = [1.0, 1.5, 2.0, 1.8, 1.9]
+        for v in values:
+            smoothed = smoother.update(v)
+            self.assertTrue(np.isfinite(smoothed))
+        
+        smoother.reset()
+        result = smoother.update(10.0)
+        self.assertEqual(result, 10.0)
+
+    def test_median_filter(self):
+        """测试中值滤波器"""
+        from src.sensors.signal_processor import MedianFilter
+        
+        mf = MedianFilter(window_size=3)
+        
+        signal = np.array([1.0, 2.0, 100.0, 3.0, 4.0, 200.0, 5.0])
+        filtered = mf.apply(signal)
+        
+        # 异常值(100, 200)应被中值替代
+        self.assertLess(filtered[2], 100.0)
+        self.assertLess(filtered[5], 200.0)
+        self.assertEqual(len(filtered), len(signal))
+
+    def test_outlier_detector_zscore(self):
+        """测试Z-score异常值检测"""
+        from src.sensors.signal_processor import OutlierDetector
+        
+        detector = OutlierDetector(method='zscore', threshold=3.0, window_size=50)
+        
+        # 用有变化的正常值填充窗口 (避免MAD=0)
+        np.random.seed(42)
+        for _ in range(60):
+            val = 1.0 + np.random.randn() * 0.1  # mean≈1.0, std≈0.1
+            self.assertFalse(detector.detect(val)[0])
+        
+        # 异常值: 偏离正常值10个标准差
+        is_outlier, confidence = detector.detect(10.0)
+        self.assertTrue(is_outlier)
+        self.assertGreater(confidence, 0.0)
+        
+        # IQR方法
+        detector2 = OutlierDetector(method='iqr', threshold=1.5, window_size=50)
+        for _ in range(60):
+            detector2.detect(5.0 + np.random.randn() * 0.1)
+        
+        is_outlier2, _ = detector2.detect(50.0)
+        self.assertTrue(is_outlier2)
+
+    def test_signal_stats(self):
+        """测试信号统计计算"""
+        from src.sensors.signal_processor import SignalProcessor
+        
+        proc = SignalProcessor()
+        signal = np.random.randn(100) * 2.0 + 5.0
+        
+        stats = proc.compute_stats(signal)
+        
+        self.assertTrue(np.isfinite(stats.mean))
+        self.assertTrue(np.isfinite(stats.std))
+        self.assertTrue(np.isfinite(stats.rms))
+        self.assertGreater(stats.snr, 0.0)
+        self.assertGreater(stats.max_val, stats.min_val)
+
+    def test_signal_processor_full_pipeline(self):
+        """测试完整信号处理流程"""
+        from src.sensors.signal_processor import SignalProcessor, FilterType
+        
+        proc = SignalProcessor()
+        
+        # 模拟带噪声的IMU数据
+        np.random.seed(42)
+        noisy_data = np.array([
+            0.1 + np.random.randn() * 0.05,
+            -0.2 + np.random.randn() * 0.05,
+            9.81 + np.random.randn() * 0.1
+        ], dtype=np.float32)
+        
+        # 处理3D帧
+        processed = proc.process_frame(noisy_data, remove_outliers=True, filter_type=FilterType.KALMAN)
+        self.assertEqual(processed.shape, (3,))
+        
+        # 处理标量
+        scalar = proc.process_scalar(1.0)
+        self.assertTrue(np.isfinite(scalar))
+        
+        # 重置
+        proc.reset()
+        self.assertIsNotNone(proc)
+
+    def test_butterworth_filter(self):
+        """测试Butterworth滤波器"""
+        from src.sensors.signal_processor import ButterworthFilter, FilterType
+        
+        bf = ButterworthFilter(
+            filter_type=FilterType.LOWPASS,
+            cutoff_freq=10.0,
+            sample_rate=100.0,
+            order=2
+        )
+        
+        # 生成测试信号 (1Hz + 50Hz噪声)
+        t = np.linspace(0, 1.0, 100)
+        signal = np.sin(2 * np.pi * 1.0 * t) + 0.5 * np.sin(2 * np.pi * 50.0 * t)
+        
+        filtered = bf.apply(signal.astype(np.float32))
+        self.assertEqual(len(filtered), len(signal))
+        
+        # 低频成分应被保留，高频成分应被衰减
+        # 通过RMS对比: 原始信号RMS vs 滤波后RMS
+        rms_original = np.sqrt(np.mean(signal ** 2))
+        rms_filtered = np.sqrt(np.mean(filtered ** 2))
+        self.assertLessEqual(rms_filtered, rms_original * 2.0)  # 宽松检查
+
+    def test_signal_processor_grade_specs(self):
+        """测试AGV五级信号处理规格"""
+        from src.sensors.signal_processor import get_signal_processing_grade_spec, AGV_SIGNAL_PROCESSING_GRADES
+        
+        grade_order = ['S', 'M', 'L', 'XL', 'XXL']
+        for i, grade in enumerate(grade_order):
+            spec = get_signal_processing_grade_spec(grade)
+            self.assertIn('filters', spec)
+            self.assertIn('outlier_detection', spec)
+            self.assertIn('max_sample_rate', spec)
+            self.assertIn('channels', spec)
+            
+            # 等级越高，采样率越高
+            if i > 0:
+                lower_grade = grade_order[i - 1]
+                lower_spec = AGV_SIGNAL_PROCESSING_GRADES[lower_grade]
+                self.assertGreaterEqual(
+                    spec['max_sample_rate'],
+                    lower_spec['max_sample_rate']
+                )

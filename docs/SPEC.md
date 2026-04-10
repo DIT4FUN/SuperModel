@@ -1927,7 +1927,111 @@ print(f"轨迹点数: {len(traj)}")
 
 ---
 
-## 23. 版本历史
+## 23. 传感器信号处理模块规格 (Signal Processing)
+
+### 23.1 概述
+
+`src/sensors/signal_processor.py` 为触觉、力觉、IMU等传感器提供高级滤波和信号处理能力，包括卡尔曼滤波、异常值检测、噪声估计等功能。
+
+### 23.2 核心组件
+
+| 类 | 功能 |
+|----|------|
+| `KalmanFilter1D` | 一维卡尔曼滤波器 |
+| `KalmanFilter3D` | 三维卡尔曼滤波器 (IMU等3D传感器) |
+| `ButterworthFilter` | Butterworth数字滤波器 (低通/高通/带通) |
+| `MedianFilter` | 中值滤波器 (去除脉冲噪声) |
+| `ExponentialSmoother` | 指数平滑器 (实时低计算量) |
+| `OutlierDetector` | 异常值检测器 (Z-score/IQR方法) |
+| `SignalProcessor` | 统一信号处理器 (整合所有功能) |
+
+### 23.3 AGV五级信号处理规格
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **可用滤波器** | 指数 | 指数+卡尔曼 | 指数+卡尔曼+中值+巴特沃斯 | 同L | 同L+带通 |
+| **异常值检测** | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **最大采样率** | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| **通道数** | 1ch | 3ch | 6ch | 9ch | 12ch |
+
+### 23.4 接口方法
+
+#### KalmanFilter3D
+
+| 方法 | 说明 |
+|------|------|
+| `update(measurement)` | 更新滤波器状态，返回滤波后3D向量 |
+| `reset(initial_state)` | 重置滤波器状态 |
+| `state` | 当前滤波状态 |
+| `error_covariance` | 估计协方差矩阵对角元素 |
+
+#### SignalProcessor
+
+| 方法 | 说明 |
+|------|------|
+| `process_frame(data, remove_outliers, filter_type)` | 处理3D传感器帧 |
+| `process_scalar(value)` | 处理标量数据 |
+| `compute_stats(signal)` | 计算信号统计信息 |
+| `reset()` | 重置所有滤波器 |
+| `enable()` / `disable()` | 启用/禁用处理 |
+
+#### OutlierDetector
+
+| 方法 | 说明 |
+|------|------|
+| `detect(value)` | 检测异常值，返回(是否异常, 置信度) |
+| `is_valid(value)` | 判断值是否有效 |
+| `reset()` | 重置缓冲区 |
+
+### 23.5 使用示例
+
+```python
+from src.sensors.signal_processor import (
+    SignalProcessor, KalmanFilter3D, FilterConfig, FilterType
+)
+
+# 创建处理器 (M级)
+proc = SignalProcessor(FilterConfig(
+    filter_type=FilterType.KALMAN,
+    process_noise=0.001,
+    measurement_noise=0.1,
+    window_size=5
+))
+
+# 处理IMU数据
+raw_imu = np.array([0.1, -0.2, 9.81], dtype=np.float32)
+filtered = proc.process_frame(raw_imu, remove_outliers=True)
+
+# 计算统计
+stats = proc.compute_stats(raw_imu)
+print(f"RMS: {stats.rms:.4f}, SNR: {stats.snr:.2f}dB")
+
+# 异常值检测
+is_outlier, conf = proc._outlier.detect(100.0)  # via internal detector
+
+# 单步卡尔曼滤波
+kf = KalmanFilter3D(process_noise=0.001, measurement_noise=0.1)
+measurement = np.array([0.1, -0.2, 9.81], dtype=np.float32)
+filtered_3d = kf.update(measurement)
+```
+
+### 23.6 信号统计 SignalStats
+
+```python
+@dataclass
+class SignalStats:
+    mean: float       # 均值
+    std: float        # 标准差
+    min_val: float   # 最小值
+    max_val: float   # 最大值
+    rms: float       # 均方根值
+    snr: float       # 信噪比 (dB)
+    noise_estimate: float  # 噪声估计 (通过差分法)
+```
+
+---
+
+## 24. 版本历史
 
 | 版本 | 日期 | 更新内容 |
 |------|------|---------|
