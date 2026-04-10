@@ -2,6 +2,27 @@
 
 All notable changes to SuperModel will be documented in this file.
 
+## [2.37.0] - 2026-04-10
+
+### Added
+- **仿真控制接口** (`src/control/simulation.py`, 570行)
+  - `SimulationInterface`: 统一仿真控制接口 (Gym/MuJoCo/PyBullet/Gazebo)
+  - `SimulationConfig` / `SimState` / `AGVSimParams` 数据类
+  - AGV五级仿真规格: S(50Hz/dt=20ms) → XXL(1000Hz/dt=1ms)
+  - 仿真参数: 运动学/动力学/电机/摩擦系数/驱动方式
+  - `MockGymEnv`: 当真实仿真后端不可用时的Mock实现
+- **MODULE_INTERFACE_SPEC.md** (新增233行, 总计575行)
+  - 第七章: AGV五级规格总表 (整车/视觉/听觉/触觉/力觉/IMU/编码器/融合/学习/导航)
+  - 第八章: 触觉控制/力觉控制/IMU控制/传感-运动融合详细接口
+  - 第九章: 偏置补偿模块完整接口规格
+- **simulation_tests.py** (13项测试)
+
+### Test Results
+- 全量测试: **418项全部通过** ✅ (sensor: 405 + simulation: 13)
+- 报告: `tests/sensor_tests.py` 405项 / `tests/fusion_tests.py` 原有 / `tests/simulation_tests.py` 13项
+
+---
+
 ## [2.36.0] - 2026-04-10
 
 ### Fixed

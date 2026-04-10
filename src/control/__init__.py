@@ -153,6 +153,12 @@ from .bias_compensation import (
     BiasCompensationConfig, AGV_BIAS_COMPENSATION_GRADES,
     get_bias_compensation_spec, get_agv_bias_spec_table,
 )
+from .simulation import (
+    SimulationInterface, SimulationBackend, SimulationGrade,
+    SimulationConfig, SimState, AGVSimParams,
+    AGV_SIM_PARAMS, AGV_SIMULATION_GRADES,
+    get_agv_sim_params, get_simulation_spec,
+)
 
 __all__ = [
     'MotionController', 'JointTrajectory', 'TwistCommand', 'AdaptivePIDController',
@@ -245,4 +251,9 @@ __all__ = [
     'MultiSensorBiasCompensator', 'IMUBiasState', 'ForceBiasState', 'TactileBiasState',
     'BiasCompensationConfig', 'AGV_BIAS_COMPENSATION_GRADES',
     'get_bias_compensation_spec', 'get_agv_bias_spec_table',
+    # simulation
+    'SimulationInterface', 'SimulationBackend', 'SimulationGrade',
+    'SimulationConfig', 'SimState', 'AGVSimParams',
+    'AGV_SIM_PARAMS', 'AGV_SIMULATION_GRADES',
+    'get_agv_sim_params', 'get_simulation_spec',
 ]

@@ -340,3 +340,236 @@ class SensorManagerConfig:
 电机执行:
   MotorController            → 电压/电流输出
 ```
+
+---
+
+## 七、完整AGV五级规格总表
+
+### 7.1 整车基础规格对照
+
+| 参数 | S | M | L | XL | XXL |
+|------|:--:|:--:|:--:|:--:|:--:|
+| **负载能力** | 30kg | 100kg | 300kg | 600kg | 1200kg |
+| **自重** | 15kg | 35kg | 80kg | 150kg | 300kg |
+| **最大总重** | 45kg | 135kg | 380kg | 750kg | 1500kg |
+| **车体尺寸** | 0.4×0.3×0.12m | 0.6×0.4×0.15m | 0.8×0.6×0.2m | 1.0×0.7×0.25m | 1.2×0.9×0.3m |
+| **轮子配置** | 2轮驱动 | 2轮驱动 | 4轮驱动 | 4轮驱动 | 4轮驱动 |
+| **电机类型** | 57步进 | 5.5寸150W | 5.5寸150W×2 | 6.5寸200W×2 | 7.5寸300W×4 |
+| **最高速度** | 0.5m/s | 1.5m/s | 2.0m/s | 2.5m/s | 3.0m/s |
+| **最大扭矩** | 5Nm | 15Nm | 30Nm | 60Nm | 120Nm |
+| **定位精度** | ±10mm | ±5mm | ±3mm | ±1mm | ±0.5mm |
+| **防护等级** | IP20 | IP30 | IP54 | IP65 | IP67 |
+| **典型价格** | ¥5-15K | ¥15-50K | ¥50-150K | ¥150-500K | >¥500K |
+
+### 7.2 传感器子系统规格对照
+
+| 传感器 | 参数 | S | M | L | XL | XXL |
+|--------|------|:--:|:--:|:--:|:--:|:--:|
+| **视觉** | 配置 | 单目640×480 | 双目D435i 720p | 双目D455 60fps | 双目+事件相机 | 多目+3D LiDAR |
+| | 分辨率 | 640×480 | 1280×720 | 1280×720 | 1920×1080 | 1920×1080×4 |
+| | 帧率 | 30fps | 30fps | 60fps | 90fps | 120fps |
+| | 编码维度 | — | 256 | 512 | 768 | 1024 |
+| **听觉** | 麦克风 | 1ch | 2ch阵列 | 4ch阵列 | 6ch阵列 | 8ch阵列 |
+| | 采样率 | 16000Hz | 16000Hz | 22050Hz | 32000Hz | 44100Hz |
+| | 拾音范围 | 1.0m | 3.0m | 5.0m | 8.0m | 10.0m |
+| | 声源定位精度 | — | ±15° | ±5° | ±2° | ±1° |
+| | 编码维度 | 64 | 128 | 128 | 256 | 256 |
+| **触觉** | 阵列尺寸 | 8×8 | 16×16 | 24×24 | 32×32 | 48×48 |
+| | 分辨率 | 12bit | 12bit | 14bit | 14bit | 16bit |
+| | 压力范围 | 0-500kPa | 0-1000kPa | 0-2000kPa | 0-5000kPa | 0-10000kPa |
+| | 采样频率 | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| | 温度感知 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| | 接近觉 | ✗ | ✗ | ✓ | ✓ | ✓ |
+| | 滑移检测 | ✗ | ✓ | ✓ | ✓ | ✓ |
+| **力觉** | 轴数 | 3 | 6 | 6 | 6 | 6 |
+| | 力范围 | ±100N | ±200N | ±500N | ±1000N | ±5000N |
+| | 力矩范围 | ±10Nm | ±20Nm | ±50Nm | ±100Nm | ±500Nm |
+| | 采样频率 | 100Hz | 500Hz | 1000Hz | 2000Hz | 5000Hz |
+| | 分辨力 | 0.1N | 0.05N | 0.02N | 0.01N | 0.005N |
+| **IMU** | 型号 | MPU6050 | BMI088 | BMI088 | ADIS16470 | ADIS16470 |
+| | 加速度量程 | ±8g | ±16g | ±24g | ±40g | ±80g |
+| | 陀螺音量程 | ±1000°/s | ±2000°/s | ±4000°/s | ±4000°/s | ±8000°/s |
+| | 采样频率 | 100Hz | 200Hz | 500Hz | 1000Hz | 2000Hz |
+| | 噪声密度 | 400μg/√Hz | 120μg/√Hz | 60μg/√Hz | 20μg/√Hz | 10μg/√Hz |
+| **编码器** | 类型 | 增量式 | 绝对值 | 绝对值 | 多圈绝对 | 多圈绝对 |
+| | 分辨率 | 12bit | 17bit | 17bit | 20bit | 20bit |
+| | 接口 | 并行 | RS485 | EtherCAT | EtherCAT | EtherCAT |
+
+### 7.3 融合与学习规格对照
+
+| 模块 | 参数 | S | M | L | XL | XXL |
+|------|------|:--:|:--:|:--:|:--:|:--:|
+| **跨模态融合** | 融合维度 | 256 | 512 | 768 | 1024 | 1536 |
+| | 注意力头数 | 4 | 8 | 12 | 16 | 16 |
+| | 模态数量 | 3 | 5 | 6 | 7 | 8 |
+| | 融合频率 | 10Hz | 30Hz | 100Hz | 200Hz | 500Hz |
+| **世界模型** | 模型类型 | MLP | Transformer | Transformer+物理 | 物理先验 | 物理先验+因果 |
+| | 预测窗口 | 0.5s | 1.0s | 2.0s | 5.0s | 10.0s |
+| | 更新频率 | 1Hz | 5Hz | 10Hz | 20Hz | 50Hz |
+| **规划控制** | 控制频率 | 50Hz | 100Hz | 200Hz | 500Hz | 1000Hz |
+| | 规划算法 | PID | MPC | MPC+RL | MPC+RL+预测 | MPC+RL+预测+博弈 |
+| | 安全等级 | 基础 | 增强 | 高级 | 冗余 | 容错+自愈 |
+| **导航避障** | 定位方式 | 码盘 | 视觉+码盘 | 激光+视觉 | 激光+视觉+IMU | 多传感器融合 |
+| | 避障范围 | 0.5m | 1.0m | 2.0m | 3.0m | 5.0m |
+| | 响应时间 | 200ms | 100ms | 50ms | 20ms | 10ms |
+
+---
+
+## 八、控制模块详细接口
+
+### 8.1 触觉控制 TactileControl
+
+```python
+class TactileServoController:
+    """触觉伺服控制器"""
+    def __init__(self, grade: str = 'M', params: Optional[TactileServoParams] = None)
+    def compute_grip_force(self, frame: TactileFrame, desired_pressure: float) -> float
+    def detect_slip(self, frame: TactileFrame) -> Tuple[bool, float]
+    def estimate_contact_geometry(self, frame: TactileFrame) -> ContactGeometry
+    def step(self, frame: TactileFrame, desired: float, dt: float) -> float
+
+class GraspQualityController:
+    """抓取质量评估与控制器"""
+    def evaluate(self, frame: TactileFrame) -> GraspQuality
+    def optimize_grip(self, frame: TactileFrame, initial_force: float) -> float
+```
+
+| AGV等级 | 控制频率 | 力控精度 | 滑移检测 | 抓取质量评估 |
+|:--:|:--:|:--:|:--:|:--:|
+| S | 50Hz | ±0.5N | ✗ | 基础 |
+| M | 100Hz | ±0.2N | ✓ | 完整 |
+| L | 200Hz | ±0.1N | ✓ | 完整+优化 |
+| XL | 500Hz | ±0.05N | ✓ | 完整+预测 |
+| XXL | 1000Hz | ±0.02N | ✓ | 完整+预测+自学习 |
+
+### 8.2 力觉控制 ForceControl
+
+```python
+class ForceController:
+    """力觉控制器"""
+    def __init__(self, grade: str = 'M', params: Optional[ForceControlParams] = None)
+    def set_force_target(self, wrench: Wrench)
+    def set_impedance(self, stiffness: np.ndarray, damping: np.ndarray)
+    def step(self, current_wrench: Wrench, dt: float) -> MotorCommand
+
+class HybridForcePositionController:
+    """混合力位控制器"""
+    def __init__(self, force_axis: List[int], position_axis: List[int])
+    def compute(self, state: JointState, desired_force: Wrench, desired_pos: Pose) -> MotorCommand
+```
+
+| AGV等级 | 控制频率 | 力控精度 | 响应带宽 | 控制模式 |
+|:--:|:--:|:--:|:--:|:--:|
+| S | 100Hz | ±2N | 5Hz | 恒力 |
+| M | 500Hz | ±0.5N | 20Hz | 力位混合 |
+| L | 1000Hz | ±0.2N | 50Hz | 阻抗+力位 |
+| XL | 2000Hz | ±0.1N | 100Hz | 自适应阻抗 |
+| XXL | 5000Hz | ±0.05N | 200Hz | 学习型阻抗 |
+
+### 8.3 IMU控制 IMUControl
+
+```python
+class AttitudeStabilizer:
+    """姿态稳定器"""
+    def __init__(self, grade: str = 'M', params: Optional[IMUControlParams] = None)
+    def set_target_orientation(self, quat: np.ndarray)
+    def step(self, imu_frame: IMUFrame, dt: float) -> MotorCommand
+    def get_current_orientation(self) -> np.ndarray
+
+class MotionEstimator:
+    """运动状态估计器"""
+    def update(self, imu_frame: IMUFrame, dt: float) -> Tuple[np.ndarray, np.ndarray]
+    def get_velocity(self) -> np.ndarray
+    def get_position(self) -> np.ndarray
+    def reset(self)
+```
+
+| AGV等级 | 姿态精度 | 位置精度(积分1s) | 零偏估计 | 异常检测 |
+|:--:|:--:|:--:|:--:|:--:|
+| S | ±2° | ±5cm | ✗ | ✗ |
+| M | ±0.5° | ±1cm | ✓ | ✗ |
+| L | ±0.1° | ±2mm | ✓ | ✓ |
+| XL | ±0.05° | ±0.5mm | ✓ | ✓+预测 |
+| XXL | ±0.01° | ±0.1mm | ✓+在线补偿 | ✓+预测+容错 |
+
+### 8.4 传感-运动融合 Sensorimotor
+
+```python
+class SensorimotorIntegration:
+    """传感-运动整合模块"""
+    def __init__(self, grade: str = 'M', config: Optional[SensorimotorConfig] = None)
+    def update(self, tactile_frame, wrench, imu_frame, desired_force) -> SensorimotorState
+    def get_control_output(self) -> Dict[str, Any]
+    def reset(self)
+    def get_health_status() -> HealthStatus
+
+@dataclass
+class SensorimotorState:
+    control_effort: np.ndarray       # 控制量
+    grip_force: float               # 抓取力
+    slip_probability: float         # 滑移概率
+    contact_quality: float          # 接触质量
+    body_pose: Pose                 # 身体姿态
+    body_velocity: np.ndarray       # 身体速度
+    force_saturation: bool          # 力饱和标志
+    sensor_health: Dict[str, bool]  # 各传感器健康状态
+```
+
+| AGV等级 | 控制闭环频率 | 触觉-运动延迟 | 力控-运动延迟 | 融合维度 |
+|:--:|:--:|:--:|:--:|:--:|
+| S | 50Hz | 20ms | 10ms | 64 |
+| M | 100Hz | 10ms | 5ms | 128 |
+| L | 200Hz | 5ms | 2ms | 256 |
+| XL | 500Hz | 2ms | 1ms | 512 |
+| XXL | 1000Hz | 1ms | 0.5ms | 1024 |
+
+---
+
+## 九、偏置补偿模块接口
+
+```python
+class IMUBiasEstimator:
+    """IMU偏置估计器"""
+    def __init__(self, estimator_type: str = 'kalman', grade: str = 'M')
+    def update(self, frame: IMUFrame, dt: float) -> IMUFrame
+    def get_bias(self) -> Tuple[np.ndarray, np.ndarray]  # (accel_bias, gyro_bias)
+    def reset(self)
+
+class ForceBiasEstimator:
+    """力觉偏置估计器"""
+    def __init__(self, method: str = 'moving_average', grade: str = 'M')
+    def update(self, wrench: Wrench) -> Wrench
+    def get_bias(self) -> np.ndarray
+    def calibrate(self, samples: List[Wrench])
+    def reset()
+
+class TactileBiasEstimator:
+    """触觉偏置估计器"""
+    def __init__(self, grade: str = 'M')
+    def update(self, frame: TactileFrame) -> TactileFrame
+    def set_baseline(self, frame: TactileFrame)
+    def get_baseline(self) -> TactileFrame
+
+class MultiSensorBiasCompensator:
+    """多传感器偏置补偿器"""
+    def __init__(self, config: BiasCompensationConfig)
+    def compensate(self, imu: IMUFrame, force: Wrench, tactile: TactileFrame) -> Tuple[IMUFrame, Wrench, TactileFrame]
+    def calibrate_all(self, duration: float)
+    def get_status(self) -> Dict[str, Any]
+```
+
+| AGV等级 | IMU偏置估计 | 力觉偏置估计 | 触觉偏置估计 | 在线补偿 |
+|:--:|:--:|:--:|:--:|:--:|
+| S | ✗ | ✗ | ✗ | ✗ |
+| M | ✓静止 | ✓静止 | ✓ | ✗ |
+| L | ✓静止+运动 | ✓在线 | ✓ | ✗ |
+| XL | ✓在线+自适应 | ✓在线+温漂 | ✓+温漂 | ✓ |
+| XXL | ✓在线+自适应+物理约束 | ✓在线+温漂+物理约束 | ✓+温漂+鲁棒估计 | ✓+自适应 |
+
+---
+
+## 十、版本历史
+
+| 版本 | 日期 | 变更内容 |
+|------|------|---------|
+| v1.0.0 | 2026-04-10 | 初始版本，定义传感器→融合→控制全链路接口 |
