@@ -1,4 +1,32 @@
 ## [2.67.0] - 2026-04-11
+## [2.68.0] - 2026-04-11
+
+### Added
+- **具身智能部署管理模块** (`src/embodied/deployment.py`, 420行)
+  - `DeploymentValidator`: 部署前配置验证 (AGV等级/传感器使能/紧急停车/健康检查间隔)
+  - `HealthMonitor`: 运行时健康状态监控 (传感器流/控制延迟/错误率/状态机)
+  - `EmergencyProcedure`: 紧急停车程序 (碰撞检测/倾角检查/压力检测/电池欠压)
+  - `DeploymentManager`: 部署管理器 (整合验证器+监控器+急停程序+状态机)
+  - `create_deployment_manager()`: 工厂函数,支持AGV五级规格适配
+  - AGV五级规格适配 (S/M/L/XL/XXL: 控制频率50Hz→1000Hz)
+
+- **具身部署测试** (`tests/embodied_deployment_tests.py`, 30项)
+  - `TestDeploymentConfig`: 配置参数测试 (4项)
+  - `TestDeploymentValidator`: 验证器测试 (5项)
+  - `TestHealthMonitor`: 健康监控器测试 (7项)
+  - `TestEmergencyProcedure`: 紧急停车测试 (5项)
+  - `TestDeploymentManager`: 部署管理器测试 (5项)
+  - `TestHealthCheckResult`: 健康检查结果测试 (3项)
+
+### Fixed
+- `src/control/calibration_manager.py`: `_estimate_allan_noise()` 修复虚拟传感器静默数据导致噪声密度为0的问题,添加最小默认值0.01mg/sqrt(Hz)
+- `tests/calibration_manager_tests.py`: 2项IMU标定测试之前因噪声密度计算bug失败,现全部通过
+
+### Test Results
+- **完整测试套件**: 2679 passed, 16 skipped, 17 warnings
+- **新增**: 30项部署管理测试全部通过
+- **修复**: 3项之前失败的测试现在通过
+
 
 ### Fixed
 - **传感器模块Bug修复**

@@ -76,6 +76,18 @@ from .scene_coordination import (
     MultiSceneSwarmController,
 )
 
+from .deployment import (
+    DeploymentState,
+    HealthStatus,
+    DeploymentConfig,
+    HealthCheckResult,
+    DeploymentValidator,
+    HealthMonitor,
+    EmergencyProcedure,
+    DeploymentManager,
+    create_deployment_manager,
+)
+
 __all__ = [
     # 枚举
     'NodeStatus',
@@ -140,6 +152,16 @@ __all__ = [
     'AGVSceneState',
     'SceneCoordinator',
     'MultiSceneSwarmController',
+    # 部署管理
+    'DeploymentState',
+    'HealthStatus',
+    'DeploymentConfig',
+    'HealthCheckResult',
+    'DeploymentValidator',
+    'HealthMonitor',
+    'EmergencyProcedure',
+    'DeploymentManager',
+    'create_deployment_manager',
 ]
 
-__version__ = "2.0.0"
+__version__ = "2.1.0"

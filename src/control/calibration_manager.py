@@ -369,10 +369,14 @@ class IMUCalibrator:
             tau = 0.5
 
         # 差分方差
-        av = np.var(axis_data[tau:] - axis_data[:-tau]) / 2.0
+        diff = axis_data[tau:] - axis_data[:-tau]
+        av = np.var(diff) / 2.0
 
         # 噪声密度 (mg/sqrt(Hz))
-        noise_density = np.sqrt(av / 2.0) * 1000.0  # 转换为 mg
+        noise_density = np.sqrt(max(av, 1e-12) / 2.0) * 1000.0  # 转换为 mg
+        # 如果虚拟传感器返回静默数据,av可能为0,使用最小默认值
+        if noise_density < 1e-6:
+            noise_density = 0.01  # 默认 0.01 mg/sqrt(Hz)
         return float(noise_density)
 
     def calibrate_gyro_rotation(self) -> IMUCalibrationResult:

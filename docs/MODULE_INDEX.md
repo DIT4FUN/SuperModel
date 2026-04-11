@@ -1,4 +1,6 @@
 # SuperModel 模块索引 / Module Index
+- **v2.68.0** (2026-04-11): 新增具身智能部署管理模块(deployment.py, 420行); DeploymentValidator+HealthMonitor+EmergencyProcedure+DeploymentManager; 30项测试; 2679项测试全通过; 标定噪声密度Bug修复
+- **v2.67.0** (2026-04-11): 传感器模块Bug修复(estimate_payload/abs/WrenchProcessor/VirtualSensor上下文管理器); 2625项测试全通过
 - **v2.55.0** (2026-04-10): SPEC.md第27章传感器-控制闭环集成规格; 完整闭环数据流/延迟预算/采样率映射/接口契约/异常降级策略; 2671项测试全通过
 - **v2.54.0** (2026-04-10): 传感器AGV五级规格表完善(sensors/__init__.py导出); 触觉/力觉/IMU/信号处理五级规格; 2693项测试全通过
 - **v2.46.1** (2026-04-10): 新增AGV五极控制规格模块(control/grade_control.py + src/control/grade_control.py); GradeAwarePID/GradeAwareSafetyMonitor/GradeAwareTrajectoryPlanner; 58项测试全通过; 785项测试全通过
@@ -13,7 +15,7 @@
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.49.0
+> **版本**: v2.68.0
 > **更新**: 2026-04-10
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
@@ -215,6 +217,7 @@ src/
 | 行为树 | `behavior_tree.py` | `BehaviorTree`, `Selector`, `Sequence`, `Parallel`, `ConditionNode`, `ActionNode` | 层次化任务执行/行为决策/AGV五级规格 |
 | 仿真接口 | `simulation.py` | `SimulationInterface`, `SimulationBackend`, `SimulationGrade` | Gym/MuJoCo/PyBullet/Gazebo五级仿真 |
 | 具身仿真 | `embodied_sim.py` | `EmbodiedSimulator`, `EmbodiedSimEnv`, `SensorNoiseModel`, `PhysicsSimulator`, `TactileSimulator` | 闭环具身仿真/传感器噪声建模/Gymnasium接口 |
+| 具身部署 | `deployment.py` | `DeploymentManager`, `DeploymentValidator`, `HealthMonitor`, `EmergencyProcedure` | 部署验证/健康监控/紧急停车/AGV五级适配 |
 
 ---
 
