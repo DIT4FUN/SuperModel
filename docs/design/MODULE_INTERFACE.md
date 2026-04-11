@@ -8124,3 +8124,180 @@ else:
 
 *本文档最后编辑: 2026-04-10 v2.64.0*
 *新增三个章节 (37-39): 行为树具身任务规划 / 增强具身仿真环境 / 真实AGV硬件接口*
+
+
+---
+
+## 40. 场景智能接口 (Scene Intelligence)
+
+**2026-04-11 v2.71.0 新增**: 场景理解与规则驱动行为控制
+
+### 40.1 概述
+
+场景智能模块负责:
+- 识别场景类型 (仓库/车间/港口/户外)
+- 加载场景特定规则 (安全/导航/交互)
+- 提取场景特征 (货架/障碍物/人员)
+- 根据场景规则动态调整控制参数
+
+### 40.2 核心数据结构
+
+```python
+class SceneType(Enum):
+    UNKNOWN = 0
+    WAREHOUSE = 1      # 仓库物流
+    FACTORY = 2        # 生产车间
+    PORT = 3           # 港口堆场
+    OUTDOOR = 4        # 户外园区
+    CONSTRUCTION = 5   # 建筑工地
+
+class SafetyRule:
+    max_speed: float              # 场景最大速度限制
+    max_acceleration: float       # 最大加速度限制
+    stop_on_human_detected: bool  # 检测到人是否停止
+    human_safety_distance: float  # 人员安全距离
+    allow_reverse: bool           # 是否允许倒车
+    obstacle_margin: float        # 障碍物预留距离
+
+class NavigationRule:
+    preferred_planner: str        # A* | D* | RRT
+    replan_frequency: float       # 重规划频率
+    allow_dynamic_remap: bool     # 允许动态建图
+    goal_tolerance: float         # 目标容差
+
+class InteractionRule:
+    allow_force_guided_grasp: bool  # 允许力控抓取
+    require_tactile_verification: bool  # 需要触觉验证
+    max_grasp_force: float          # 最大抓取力
+
+class SceneContext:
+    scene_type: SceneType
+    safety_rule: SafetyRule
+    navigation_rule: NavigationRule
+    interaction_rule: InteractionRule
+    dynamic_objects: List[DynamicObject]
+    static_features: SceneFeatures
+
+class SceneIntelligence:
+    """场景智能主类"""
+    def __init__(self, enable_learning: bool = True)
+    def analyze_scene(
+        self,
+        lidar_scan: LidarScan,
+        camera_image: Optional[np.ndarray]
+    ) -> SceneContext
+    """分析场景，返回场景上下文"""
+    def get_adjusted_control_params(self) -> Dict[str, float]
+    """根据场景规则返回调整后的控制参数"""
+    def update_rules_from_experience(
+        self,
+        task_success: bool,
+        collision_count: int
+    ) -> None
+    """从经验中学习更新规则"""
+
+def get_scene_intelligence(scene_type: str) -> SceneIntelligence:
+    """获取预配置场景智能实例"""
+```
+
+### 40.3 默认规则配置表
+
+| 场景类型 | 最大速度 | 人员安全距离 | 规划器 | 允许倒车 |
+|----------|----------|--------------|--------|----------|
+| 仓库 | 1.5 m/s | 1.0 m | A* | 允许 |
+| 车间 | 1.0 m/s | 1.5 m | A* | 限制 |
+| 港口 | 2.0 m/s | 2.0 m | D* | 允许 |
+| 户外 | 2.5 m/s | 2.5 m | RRT | 允许 |
+
+---
+
+## 41. 多场景蜂群协同接口
+
+**2026-04-11 v2.71.0 新增**: 多AGV跨场景协同控制
+
+### 41.1 概述
+
+场景蜂群协同模块负责:
+- 多AGV场景角色分配
+- 区域搜索任务分解
+- 碰撞避免与冲突解决
+- 编队保持控制
+
+### 41.2 核心接口
+
+```python
+class AGVSceneRole(Enum):
+    LEADER = 0      # 领队机器人
+    FOLLOWER = 1    # 跟随机器人
+    EXPLORER = 2    # 探索机器人
+    TRANSPORTER = 3 # 运输机器人
+    GUARD = 4       # 警戒机器人
+
+class SceneCoordinationConfig:
+    communication_range: float    # 通信范围 (米)
+    update_frequency: float       # 协同更新频率 (Hz)
+    collision_avoidance_distance: float  # 避障距离
+    formation_tolerance: float    # 编队容差
+
+class SceneCoordinator:
+    """场景协同控制器"""
+    def __init__(self, config: SceneCoordinationConfig)
+    def register_robot(
+        self,
+        robot_id: str,
+        role: AGVSceneRole,
+        initial_position: np.ndarray
+    ) -> None
+    """注册机器人到协同网络"""
+    def add_global_task(
+        self,
+        task_type: str,  # "area_search" | "swarm_transport" | "formation_patrol"
+        task_area: Tuple[float, float, float, float]  # xmin, ymin, xmax, ymax
+    ) -> None
+    """添加全局协同任务"""
+    def coordinate_step(
+        self,
+        robot_id: str,
+        current_position: np.ndarray
+    ) -> np.ndarray
+    """计算本机器人速度调整量"""
+    def get_statistics(self) -> Dict
+    """获取协同统计信息"""
+
+class MultiSceneSwarmController:
+    """多场景蜂群控制器"""
+    def __init__(self)
+    def assign_roles(self, robot_count: int) -> Dict[str, AGVSceneRole]
+    """根据任务分配角色"""
+    def generate_search_grid(
+        self,
+        area: Tuple[float, float, float, float],
+        robot_count: int
+    ) -> List[Tuple[float, float]]
+    """为多个机器人划分搜索区域"""
+    def check_conflict(
+        self,
+        positions: Dict[str, np.ndarray]
+    ) -> List[Tuple[str, str]]
+    """检测路径冲突"""
+    def resolve_conflict(
+        self,
+        robot_a: str,
+        robot_b: str
+    ) -> Dict[str, np.ndarray]
+    """解决冲突，返回调整后的速度"""
+```
+
+### 41.3 协同策略支持
+
+| 策略 | 适用场景 | 说明 |
+|------|----------|------|
+| **Centralized** | 集中式 | 一台主机规划所有机器人路径 |
+| **Decentralized** | 分散式 | 每台AGV自主决策局部避碰 |
+| **Hybrid** | 混合式 | 全局集中分配，局部分散避碰 |
+| **MarketBased** | 基于市场 | 拍卖机制分配任务 |
+
+---
+
+*本文档最后编辑: 2026-04-11 v2.71.0*
+*新增五个章节 (37-41): 行为树具身任务规划 / 增强具身仿真环境 / 真实AGV硬件接口 / 场景智能 / 多场景蜂群协同*
