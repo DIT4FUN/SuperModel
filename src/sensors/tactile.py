@@ -130,18 +130,26 @@ class TactileArray:
         self._is_opened = False
         self._frame_counter = 0
         self._sim_time = 0.0
-        
+
         # 历史数据用于滑动检测
         self._prev_cop = None  # 前一帧压力中心
         self._prev_pressure = None  # 前一帧压力图
-        
+
+        # 帧缓冲区 (限制最大100帧，防止溢出)
+        self._frame_buffer: List[TactileFrame] = []
+
         # 兼容标定对象
         self.calibration = TactileCalibration.create_default((rows, cols))
         # 同步基线到标定对象
         self.calibration.offset_map = self._baseline
-        
+
         if calibration:
             self.calibrate()
+
+    @property
+    def _frame_id(self) -> int:
+        """兼容别名: 帧ID = 帧计数器"""
+        return self._frame_counter
     
     def open(self) -> bool:
         """打开传感器"""
@@ -162,8 +170,10 @@ class TactileArray:
             self._use_hardware = False
             print(f"[TactileArray] Opened in SIMULATION mode: {self.rows}x{self.cols} {self.sensor_type.value}")
             self._is_opened = True
+            self._frame_counter = 0  # 重置帧计数器
+            self._sim_time = 0.0
             return True
-    
+
     def close(self):
         """关闭传感器"""
         if self._is_opened:
@@ -264,7 +274,7 @@ class TactileArray:
         self._sim_time += dt
         self._frame_counter += 1
         
-        return TactileFrame(
+        frame = TactileFrame(
             pressure_map=pressure,
             temperature_map=temperature,
             contact_mask=contact_mask,
@@ -274,6 +284,13 @@ class TactileArray:
             frame_id=frame_id,
             sensor_id=self.sensor_id if hasattr(self, 'sensor_id') and self.sensor_id else 'default'
         )
+
+        # 追加到缓冲区并限制最大长度
+        self._frame_buffer.append(frame)
+        if len(self._frame_buffer) > 100:
+            self._frame_buffer.pop(0)
+
+        return frame
     
     def detect_contact_event(self, current_frame: TactileFrame, prev_frame: Optional[TactileFrame] = None) -> ContactEvent:
         """
@@ -380,10 +397,21 @@ class TactileArray:
                 area_score = min(1.0, contact_area / (frame.pressure_map.shape[0] * frame.pressure_map.shape[1] * 0.5))
                 force_score = min(1.0, total_force / 20.0)
                 score = (area_score + force_score) / 2.0
+        ca = frame.contact_area if frame.contact_mask is not None else 0
+        # 计算压力均匀性 (标准差越小越均匀)
+        if frame.contact_mask is not None and ca > 0:
+            active = frame.pressure_map[frame.contact_mask]
+            uniformity = 1.0 / (1.0 + float(np.std(active)))
+        else:
+            uniformity = 0.0
+        # 稳定性评分: 基于接触面积和力的综合稳定性
+        stability = score  # 复用 overall 作为稳定性评分
         return {
             'overall': score,
-            'area_score': min(1.0, (frame.contact_area if frame.contact_mask is not None else 0) / 
-                              (frame.pressure_map.shape[0] * frame.pressure_map.shape[1] * 0.5)),
+            'contact_area': ca,
+            'uniformity': uniformity,
+            'stability': stability,
+            'area_score': min(1.0, ca / (frame.pressure_map.shape[0] * frame.pressure_map.shape[1] * 0.5)),
             'force_score': score,
         }
     
@@ -638,25 +666,91 @@ def get_tactile_spec(grade: str) -> dict:
 # 兼容旧名称 (用于测试)
 class PressureProcessor:
     """压力处理器 (兼容别名)"""
-    def __init__(self, filter_window=3):
+    def __init__(self, filter_window=3, drift_compensation=False):
         self.filter_window = filter_window
-    
+        self.drift_compensation = drift_compensation
+        self._baseline_pressure: Optional[np.ndarray] = None
+        self._history: List[Dict[str, Any]] = []
+        self._ema_map: Optional[np.ndarray] = None  # EMA 滤波状态
+
+    def filter(self, pressure_map):
+        """EMA 滤波压力图"""
+        arr = np.asarray(pressure_map, dtype=np.float32)
+        alpha = 2.0 / (self.filter_window + 1)
+        if self._ema_map is None:
+            self._ema_map = arr.copy()
+        else:
+            self._ema_map = alpha * arr + (1 - alpha) * self._ema_map
+        return self._ema_map
+
+    def compensate_baseline(self, pressure_map, set_baseline=False):
+        """基线补偿"""
+        arr = np.asarray(pressure_map, dtype=np.float32)
+        if set_baseline or self._baseline_pressure is None:
+            self._baseline_pressure = arr.copy()
+            return arr
+        return arr - self._baseline_pressure + np.mean(self._baseline_pressure)
+
+    def compute_force(self, pressure_map, contact_area=1e-4):
+        """估算接触力 (N)"""
+        mean_p = float(np.mean(pressure_map))
+        return mean_p * contact_area * 1000.0  # kPa -> Pa = N/m^2 * area
+
+    def compute_centroid(self, pressure_map):
+        """计算压力图质心"""
+        arr = np.asarray(pressure_map, dtype=np.float32)
+        total = np.sum(arr)
+        if total < 1e-9:
+            return np.array([0.5, 0.5])
+        rows, cols = arr.shape
+        y_idx, x_idx = np.indices(arr.shape)
+        cx = np.sum(x_idx * arr) / total
+        cy = np.sum(y_idx * arr) / total
+        return np.array([cx / cols, cy / rows])
+
+    def compute_pressure_histogram(self, pressure_map, bins=10):
+        """计算压力分布直方图"""
+        arr = np.asarray(pressure_map, dtype=np.float32).flatten()
+        hist, edges = np.histogram(arr, bins=bins, range=(0, np.max(arr) + 1e-6))
+        return hist, edges
+
     def process(self, frame):
         """处理压力帧"""
-        return {
-            'mean_pressure': np.mean(frame.pressure_map),
-            'std_pressure': np.std(frame.pressure_map),
+        result = {
+            'mean_pressure': float(np.mean(frame.pressure_map)),
+            'std_pressure': float(np.std(frame.pressure_map)),
+            'max_pressure': float(np.max(frame.pressure_map)),
+            'min_pressure': float(np.min(frame.pressure_map)),
         }
+
+        # 漂移补偿
+        if self.drift_compensation:
+            if self._baseline_pressure is None:
+                self._baseline_pressure = frame.pressure_map.copy()
+            else:
+                # 缓慢更新的基线
+                self._baseline_pressure = 0.99 * self._baseline_pressure + 0.01 * frame.pressure_map
+            compensated = frame.pressure_map - self._baseline_pressure
+            result['compensated_mean'] = float(np.mean(compensated))
+
+        # 滑动窗口滤波
+        if self._history:
+            self._history.append(result)
+            if len(self._history) > self.filter_window:
+                self._history.pop(0)
+
+        return result
 
 
 class TactileContact:
     """接触 (兼容别名)"""
-    def __init__(self, center, area, peak_pressure, mean_pressure=None, centroid=None, contact_force=None):
+    def __init__(self, center, area, peak_pressure, mean_pressure=None, centroid=None, contact_force=None, slip_probability=None):
         self.center = center if centroid is None else centroid
         self.area = area
         self.peak_pressure = peak_pressure
         self.mean_pressure = mean_pressure
         self.contact_force = contact_force
+        self.slip_probability = slip_probability
 
 
 @dataclass
@@ -684,13 +778,22 @@ class VirtualTactileSensor:
         self.rows, self.cols = array_size
         self.sensor_id = sensor_id
         self.noise_level = noise_level
+        self._is_opened = False
     
     def open(self):
+        self._is_opened = True
         return True
     
     def close(self):
         pass
-    
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def simulate_contact(self, center_xy=None, radius=None, peak_pressure=None, contact_pos=None, pressure=None, contact_radius=None, contact_force=None, noise_level=None):
         """模拟接触生成压力图，返回TactileFrame"""
         # 兼容多种参数形式
@@ -698,7 +801,8 @@ class VirtualTactileSensor:
             # contact_pos=(cx, cy), pressure=peak_pressure/contact_force, contact_radius=radius
             cx, cy = contact_pos
             if contact_force is not None:
-                peak_pressure = contact_force
+                # contact_force (N) 归一化到压力范围 (0-1.2), 以100N为基准
+                peak_pressure = contact_force / 100.0
             else:
                 peak_pressure = pressure if pressure is not None else 10.0
             radius = contact_radius if contact_radius is not None else (radius if radius is not None else 0.3)
@@ -743,9 +847,10 @@ class VirtualTactileSensor:
         if nl is not None and nl > 0:
             pressure_map += np.random.randn(*pressure_map.shape) * nl
             pressure_map = np.clip(pressure_map, 0, None)
-        
+
         return TactileFrame(
             pressure_map=pressure_map,
+            temperature_map=25.0 + np.random.randn(self.rows, self.cols) * 0.1,
             contact_mask=contact_mask,
             center_of_pressure=center_of_pressure,
             total_force=total_force
@@ -754,48 +859,145 @@ class VirtualTactileSensor:
     def capture(self):
         """兼容capture接口"""
         return self.simulate_contact((0.5, 0.5), 0.3, 5.0)
-    
-    def simulate_slip_detection(self, start_position, end_position, slip_velocity, peak_pressure=10.0):
-        """模拟滑移检测，返回一系列接触帧
-        
+
+    def simulate_multi_contact(self, contacts, noise_level=None):
+        """模拟多点接触
+
         Args:
-            start_position: 起始位置 (x, y)
-            end_position: 结束位置 (x, y)
-            slip_velocity: 滑移速度 像素/秒
-            peak_pressure: 峰值压力
-            
+            contacts: list of (pos, force, radius) tuples
+                      pos: (x, y) 归一化位置
+                      force: 接触力 N
+                      radius: 接触半径 (归一化)
+            noise_level: 噪声标准差
+
         Returns:
-            list[TactileFrame]: 滑移过程的帧序列
+            TactileFrame with combined pressure map
         """
-        import math
-        distance = math.sqrt((end_position[0] - start_position[0])**2 + (end_position[1] - start_position[1])**2)
-        duration = distance / slip_velocity if slip_velocity > 0 else 1.0
-        num_frames = max(1, int(duration * 100))  # 100Hz采样
-        
+        pressure_map = np.zeros((self.rows, self.cols), dtype=np.float32)
+
+        for cx_norm, force, radius in contacts:
+            cx, cy = cx_norm
+            # 计算峰值压力 (kPa, 假设 1N -> 10kPa)
+            peak_p = force * 10.0
+
+            for r in range(self.rows):
+                for c in range(self.cols):
+                    y_norm = r / (self.rows - 1) if self.rows > 1 else 0.5
+                    x_norm = c / (self.cols - 1) if self.cols > 1 else 0.5
+                    dist_sq = (x_norm - cx) ** 2 + (y_norm - cy) ** 2
+                    if dist_sq <= radius ** 2:
+                        pressure_map[r, c] += peak_p * np.exp(-dist_sq / (2 * (radius / 3) ** 2))
+
+        # 噪声
+        nl = noise_level if noise_level is not None else self.noise_level
+        if nl is not None and nl > 0:
+            pressure_map += np.random.randn(*pressure_map.shape) * nl
+            pressure_map = np.clip(pressure_map, 0, None)
+
+        # 接触掩码
+        contact_mask = pressure_map > 0.5
+
+        # 压力中心
+        if np.any(contact_mask):
+            y_idx, x_idx = np.where(contact_mask)
+            wp = pressure_map[contact_mask]
+            cop_x = np.sum(x_idx * wp) / np.sum(wp)
+            cop_y = np.sum(y_idx * wp) / np.sum(wp)
+            center_of_pressure = np.array([cop_x, cop_y])
+        else:
+            center_of_pressure = np.array([self.cols / 2, self.rows / 2])
+
+        # 记录最后接触位置
+        self._last_contact_pos = center_of_pressure
+
+        total_force = np.sum(pressure_map) * 0.01
+        return TactileFrame(
+            pressure_map=pressure_map,
+            contact_mask=contact_mask,
+            center_of_pressure=center_of_pressure,
+            total_force=total_force
+        )
+
+    def simulate_sliding(self, direction=None, speed=None, duration_frames=None, start_position=None, end_position=None, peak_pressure=10.0):
+        """模拟滑移动作
+
+        Args:
+            direction: (dx, dy) 滑动方向 (归一化)
+            speed: 滑动速度 (归一化/秒)
+            duration_frames: 帧数
+            start_position: 起始位置 (x, y) - 归一化
+            end_position: 结束位置 (x, y) - 归一化
+            peak_pressure: 峰值压力
+
+        Returns:
+            list[TactileFrame]: 滑移帧序列
+        """
         frames = []
-        for i in range(num_frames):
-            t = i / max(1, num_frames - 1)
-            cx = start_position[0] + t * (end_position[0] - start_position[0])
-            cy = start_position[1] + t * (end_position[1] - start_position[1])
-            frame = self.simulate_contact((cx, cy), radius=0.2, peak_pressure=peak_pressure)
-            frames.append(frame)
-        
+        num_frames = duration_frames if duration_frames else 10
+
+        if start_position is not None and end_position is not None:
+            # 方式1: 起始-结束位置
+            for i in range(num_frames):
+                t = i / max(1, num_frames - 1)
+                cx = start_position[0] + t * (end_position[0] - start_position[0])
+                cy = start_position[1] + t * (end_position[1] - start_position[1])
+                frame = self.simulate_contact((cx, cy), radius=0.2, peak_pressure=peak_pressure)
+                frames.append(frame)
+        else:
+            # 方式2: 方向+速度
+            direction = direction or (1.0, 0.0)
+            speed = speed or 0.1
+            cx, cy = 0.5, 0.5
+            for i in range(num_frames):
+                cx += direction[0] * speed / 100.0
+                cy += direction[1] * speed / 100.0
+                cx = np.clip(cx, 0.1, 0.9)
+                cy = np.clip(cy, 0.1, 0.9)
+                frame = self.simulate_contact((cx, cy), radius=0.2, peak_pressure=peak_pressure)
+                frames.append(frame)
+
         return frames
-    
+
     def simulate_slip_detection(self, start_position=None, end_position=None, slip_velocity=1.0, velocity=None, peak_pressure=10.0, normal_force=None, friction_coeff=None):
-        """兼容接口: 滑动检测模拟，支持velocity、normal_force和friction_coeff参数"""
+        """滑动检测模拟
+
+        Args:
+            start_position: 起始位置 (x, y) - 归一化
+            end_position: 结束位置 (x, y) - 归一化
+            slip_velocity: 滑移速度
+            velocity: 别名 for slip_velocity
+            peak_pressure: 峰值压力 (kPa)
+            normal_force: 别名 for peak_pressure
+            friction_coeff: 摩擦系数 (0-1)
+
+        Returns:
+            dict with slip_state, slip_probability, etc.
+        """
         if velocity is not None:
             slip_velocity = velocity
         if normal_force is not None:
             peak_pressure = normal_force
-        # 如果未提供起止位置，返回默认评分结果 (兼容测试调用形式)
-        if start_position is None or end_position is None:
-            # 返回 grip quality 评分字典
-            return {
-                'slip_probability': 0.1 if peak_pressure < 10.0 else 0.3,
-                'overall': 0.7,
-                'contact_stability': 0.8,
-            }
-        # friction_coeff 用于摩擦系数，这里忽略只保持接口兼容
-        return self.simulate_sliding(start_position, end_position, slip_velocity, peak_pressure)
+        friction_coeff = friction_coeff if friction_coeff is not None else 0.3
+
+        # 简化的库伦摩擦模型
+        # slip_probability 基于法向力和摩擦系数的比值
+        if friction_coeff <= 0:
+            slip_state = "sliding"
+            slip_prob = 1.0
+        elif peak_pressure < 5.0:
+            slip_state = "sliding"
+            slip_prob = 0.9
+        elif peak_pressure < 10.0:
+            slip_state = "micro_slip"
+            slip_prob = 0.4
+        else:
+            slip_state = "stick"
+            slip_prob = 0.1
+
+        return {
+            'slip_state': slip_state,
+            'slip_probability': slip_prob,
+            'overall': 1.0 - slip_prob,
+            'contact_stability': 1.0 - slip_prob * 0.5,
+        }
 

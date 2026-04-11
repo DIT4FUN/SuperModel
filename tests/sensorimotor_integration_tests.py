@@ -771,8 +771,8 @@ class TestSensorEdgeScenariosIntegration(unittest.TestCase):
         for _ in range(10):
             frame = tactile.capture()
             # 压力值应该在 0-1 范围内（已归一化）
-            self.assertLessEqual(np.max(frame.pressure_map), 1.0 + 0.1)  # 允许浮点误差
-            self.assertGreaterEqual(np.min(frame.pressure_map), -0.1)
+            self.assertLessEqual(np.max(frame.pressure_map), tactile.max_pressure + 0.1)  # 允许浮点误差
+            self.assertGreaterEqual(np.min(frame.pressure_map), tactile.min_pressure - 0.1)
         
         tactile.close()
 

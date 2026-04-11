@@ -119,7 +119,7 @@ class TactileServoController:
         self._is_grasping = True
         
         # 接触力误差
-        force_error = target_force - best_contact.contact_force
+        force_error = target_force - best_contact.total_force
         
         # 接触中心位置 (归一化 → 世界坐标)
         cx, cy = best_contact.centroid  # row, col

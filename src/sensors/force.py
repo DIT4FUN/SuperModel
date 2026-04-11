@@ -61,6 +61,7 @@ class Wrench:
     torque: np.ndarray  # 3D 力矩向量
     timestamp: float = 0.0
     frame_id: int = 0
+    sensor_id: Optional[str] = None  # 传感器ID
 
     def to_array(self) -> np.ndarray:
         """转为6D数组 [fx, fy, fz, mx, my, mz]"""
@@ -119,7 +120,7 @@ class SixAxisForceTorque:
         gravity_compensation: bool = True,
         sensor_type: Optional[str] = None,  # 向后兼容旧接口
         sensor_id: Optional[str] = None,  # 向后兼容旧接口
-    ): 
+    ):
         self._is_streaming = False
         self.calibration = ForceCalibration()
 
@@ -250,6 +251,10 @@ class SixAxisForceTorque:
         self._tool_mass = mass
         self._tool_com = np.array(com, dtype=np.float32)
 
+    def set_tool_center(self, tool_mass: float, tool_com: np.ndarray) -> None:
+        """设置工具中心点偏移 (重力补偿)"""
+        self.set_gravity_compensation(tool_mass, tool_com)
+
     def _apply_gravity_compensation(self, reading: np.ndarray) -> np.ndarray:
         """应用重力补偿"""
         if self._tool_mass <= 0 or not self.gravity_compensation:
@@ -342,6 +347,10 @@ class SixAxisForceTorque:
             frame_id=reading.frame_id
         )
 
+    def get_wrench(self) -> Wrench:
+        """获取当前力旋量 (兼容别名)"""
+        return self.read_wrench()
+
     def detect_external_force(self, reading: ForceReading, threshold: Optional[float] = None) -> Tuple[bool, np.ndarray]:
         """
         检测是否有外力作用
@@ -390,31 +399,29 @@ class SixAxisForceTorque:
 
     def detect_contact(self, wrench_or_threshold: Union[Wrench, float] = 5.0, threshold: float = None) -> 'ForceContactDetection':
         """检测是否有外力接触 - 兼容接口返回对象"""
-        # 兼容关键字参数
-        if threshold is not None:
-            # detect_contact(threshold=5.0)
-            wrench = self.read_wrench()
-            force_magnitude = np.linalg.norm(wrench.force)
-            is_contact = force_magnitude > threshold
-        elif isinstance(wrench_or_threshold, Wrench):
-            # 调用方式: detect_contact(wrench) 带Wrench参数
+        # 优先使用传入的Wrench
+        if isinstance(wrench_or_threshold, Wrench):
             wrench = wrench_or_threshold
-            force_magnitude = np.linalg.norm(wrench.force)
-            threshold = 5.0
-            is_contact = force_magnitude > threshold
         else:
-            # 调用方式: detect_contact(threshold) 读取后检测
             wrench = self.read_wrench()
-            force_magnitude = np.linalg.norm(wrench.force)
-            threshold = wrench_or_threshold
-            is_contact = force_magnitude > threshold
+
+        # 确定阈值: keyword threshold优先,否则用位置参数,最后用默认值5.0
+        effective_threshold = 5.0
+        if threshold is not None:
+            effective_threshold = threshold
+        elif not isinstance(wrench_or_threshold, Wrench):
+            effective_threshold = wrench_or_threshold
+
+        force_magnitude = np.linalg.norm(wrench.force)
+        is_contact = bool(force_magnitude > effective_threshold)
 
         # 返回对象保持向后兼容
         class ForceContactDetection:
-            def __init__(self, is_contact):
+            def __init__(self, is_contact, contact_force=0.0):
                 self.is_contact = is_contact
+                self.contact_force = contact_force
 
-        return ForceContactDetection(is_contact)
+        return ForceContactDetection(is_contact, float(force_magnitude))
 
     def capture(self) -> Wrench:
         """兼容旧接口 - capture 别名"""
@@ -424,8 +431,8 @@ class SixAxisForceTorque:
         """估计负载重量 - 兼容接口"""
         if wrench is None:
             wrench = self.read_wrench()
-        # 垂直力估计质量 mass = fz / g
-        mass = max(0.0, wrench.force[2]) / 9.81
+        # 垂直力估计质量 mass = |fz| / g (取绝对值处理重力方向)
+        mass = abs(wrench.force[2]) / 9.81
         return mass
 
     def __enter__(self):
@@ -584,7 +591,7 @@ class LiftForceSensor:
     def read_weight(self) -> float:
         """读取负载重量 (kg)"""
         force = self.read_force()
-        return force / 9.81  # N -> kg
+        return max(0.0, force / 9.81)  # N -> kg, clamp to non-negative
 
     def __enter__(self):
         self.open()
@@ -681,11 +688,89 @@ class ForceTorqueSensor(SixAxisForceTorque):
 
 class WrenchProcessor:
     """力矩处理器 (兼容别名)"""
-    def __init__(self, window_size=5):
+    def __init__(self, window_size=5, filter_alpha: float = 0.3, outlier_threshold: float = 3.0):
         self.window_size = window_size
+        self.filter_alpha = filter_alpha  # EMA滤波 alpha
+        self.outlier_threshold = outlier_threshold  # 异常值阈值 (标准化残差)
+        self._ema_force = None  # EMA滤波器状态
+        self._ema_torque = None
+        self._history: List[np.ndarray] = []  # 用于协方差估计
 
     def filter(self, wrench):
-        return wrench
+        """滤波处理 (支持Wrench对象或6D向量)"""
+        # 统一转为6D数组
+        if hasattr(wrench, 'to_array'):
+            raw = wrench.to_array()
+        else:
+            raw = np.asarray(wrench, dtype=np.float64)
+
+        # EMA滤波
+        if self._ema_force is None:
+            self._ema_force = raw.copy()
+        else:
+            self._ema_force = self.filter_alpha * raw + (1 - self.filter_alpha) * self._ema_force
+
+        # 异常值检测 (基于标准化残差)
+        if self._ema_force is not None and len(self._history) > 5:
+            residuals = raw - self._ema_force
+            # 用历史协方差标准化
+            cov = self._estimate_covariance_internal()
+            try:
+                inv_cov = np.linalg.inv(cov + 1e-6 * np.eye(6))
+                mahalanobis = np.sqrt(max(0, np.dot(residuals, np.dot(inv_cov, residuals))))
+                if mahalanobis > self.outlier_threshold:
+                    # 异常值,用滤波值替代
+                    filtered = self._ema_force.copy()
+                else:
+                    filtered = self._ema_force.copy()
+            except np.linalg.LinAlgError:
+                filtered = self._ema_force.copy()
+        else:
+            filtered = self._ema_force.copy()
+
+        # 更新历史
+        self._history.append(raw.copy())
+        if len(self._history) > self.window_size * 10:
+            self._history.pop(0)
+
+        return filtered
+
+    def _estimate_covariance_internal(self) -> np.ndarray:
+        """内部协方差估计"""
+        if len(self._history) < 2:
+            return np.eye(6)
+        arr = np.array(self._history)
+        return np.cov(arr, rowvar=False)
+
+    def estimate_covariance(self, history: List[np.ndarray]) -> np.ndarray:
+        """估计协方差矩阵"""
+        if len(history) < 2:
+            return np.eye(6)
+        arr = np.array([np.asarray(h, dtype=np.float64).flatten() for h in history])
+        return np.cov(arr, rowvar=False)
+
+    def compute_equivalent_wrench_at(self, wrench, translation):
+        """计算力旋量在另一点的等效力旋量
+
+        Args:
+            wrench: Wrench对象或6D数组 [fx,fy,fz,mx,my,mz]
+            translation: 平移向量 [dx,dy,dz] - 新参考点到原参考点的向量
+
+        Returns:
+            np.ndarray: 等效力旋量在新参考点 [fx,fy,fz,mx,my,mz]
+        """
+        if hasattr(wrench, 'to_array'):
+            arr = np.asarray(wrench.to_array(), dtype=np.float64).flatten()
+        else:
+            arr = np.asarray(wrench, dtype=np.float64).flatten()
+        force = arr[:3]
+        torque = arr[3:]
+        # 力旋量变换: F' = R·F, M' = R·(M - r×F)
+        rotation = np.eye(3)  # 默认单位旋转
+        translation_arr = np.array(translation, dtype=np.float64)
+        new_force = rotation @ force
+        new_torque = rotation @ (torque - np.cross(translation_arr, force))
+        return np.concatenate([new_force, new_torque])
 
 
 @dataclass
@@ -704,19 +789,51 @@ class ContactState:
 
 class VirtualForceSensor:
     """虚拟力传感器 (兼容别名)"""
-    def __init__(self, sensor_id="virtual", noise_level=None):
+    def __init__(self, sensor_id="virtual", noise_level=None, bias_range=None):
         self.sensor_id = sensor_id
         self.noise_level = noise_level
-
+        self.bias_range = bias_range  # 偏置范围 e.g. 0.1 N
+        self._bias = np.zeros(6)
+        self._is_opened = False
+        if bias_range is not None and bias_range > 0:
+            self._bias = np.random.uniform(-bias_range, bias_range, 6)
+    
     def open(self):
+        self._is_opened = True
         return True
 
     def close(self):
         pass
 
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def capture(self):
         """兼容capture接口"""
         return self.simulate_contact(np.zeros(3))
+
+    def simulate_collision(self, direction, peak_force, duration_ms=100.0, decay='exponential'):
+        """模拟碰撞冲击,返回Wrench帧序列"""
+        import math
+        frames = []
+        direction = np.array(direction, dtype=np.float64)
+        direction = direction / (np.linalg.norm(direction) + 1e-9)
+        dt_ms = 10.0  # 10ms per frame
+        n_steps = max(1, int(duration_ms / dt_ms))
+        for i in range(n_steps):
+            t_rel = i * dt_ms / 1000.0  # seconds
+            if decay == 'exponential':
+                factor = math.exp(-10.0 * t_rel)
+            else:
+                factor = max(0.0, 1.0 - t_rel / (duration_ms / 1000.0 + 1e-9))
+            force = direction * peak_force * factor
+            torque = np.zeros(3)
+            frames.append(Wrench(force=force, torque=torque))
+        return frames
 
     def simulate_contact(self, force_vector=None, torque_vector=None, add_noise=False, force=None, torque=None):
         """模拟接触力,返回Wrench"""
@@ -737,5 +854,74 @@ class VirtualForceSensor:
         if add_noise and self.noise_level is not None:
             force += np.random.randn(3) * self.noise_level
             torque += np.random.randn(3) * (self.noise_level * 0.1)
+
+        # 添加偏置
+        force += self._bias[:3]
+        torque += self._bias[3:]
+
+        return Wrench(force=force, torque=torque)
+
+    def simulate_payload(self, mass, com_offset=(0.0, 0.0, 0.0)):
+        """模拟负载重力 (末端执行器负载)
+
+        Args:
+            mass: 负载质量 (kg)
+            com_offset: 重心偏移 (x, y, z) in m
+
+        Returns:
+            Wrench with gravity force and moment
+        """
+        g = 9.81
+        com = np.array(com_offset, dtype=np.float64)
+        force = np.array([0.0, 0.0, -mass * g], dtype=np.float64)
+        torque = np.cross(com, force)  # r × F
+        return Wrench(force=force, torque=torque)
+
+    def simulate_friction_contact(self, normal_force, velocity, friction_coeff, object_mass=1.0):
+        """模拟摩擦接触
+
+        Args:
+            normal_force: 法向力 (N)
+            velocity: 速度向量 (m/s) [vx, vy, vz]
+            friction_coeff: 摩擦系数 (0-1)
+            object_mass: 物体质量 (kg)
+
+        Returns:
+            Wrench with friction force
+        """
+        vel = np.array(velocity, dtype=np.float64)
+        speed = np.linalg.norm(vel)
+        if speed < 1e-9:
+            return Wrench(force=np.zeros(3), torque=np.zeros(3))
+
+        # 库伦摩擦: F_f = μ * N * direction
+        friction_magnitude = friction_coeff * abs(normal_force)
+        friction_force = -friction_magnitude * (vel / speed)
+
+        # 切向力矩 (简化)
+        friction_torque = np.zeros(3)
+
+        return Wrench(force=friction_force, torque=friction_torque)
+
+    def simulate_surface_contact(self, surface_normal, contact_point, penetration_depth, stiffness, damping):
+        """模拟表面接触力 (弹簧-阻尼模型)"""
+        normal = np.array(surface_normal, dtype=np.float64)
+        point = np.array(contact_point, dtype=np.float64)
+
+        # 法向 penetration_depth > 0 表示压入
+        penetration = max(0.0, penetration_depth)
+
+        # 弹簧阻尼力: F = k*x + b*v (这里简化: 静力学,只用弹簧)
+        normal_force_magnitude = stiffness * penetration
+
+        # 考虑阻尼
+        if damping > 0:
+            normal_force_magnitude += damping * penetration * 0.1
+
+        # 力沿法向 (指向表面内部 = -normal)
+        force = -normal_force_magnitude * normal
+
+        # 力矩: r x F (接触点相对于传感器原点的力矩)
+        torque = np.cross(point, force)
 
         return Wrench(force=force, torque=torque)

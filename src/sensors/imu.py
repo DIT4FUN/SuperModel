@@ -23,6 +23,7 @@ class IMUModel(Enum):
     BNO055 = "bno055"    # 九轴+姿态融合
     ETT10A = "ett10a"    # 工业级六轴
     BMI088 = "bmi088"    # 高性能六轴
+    VIRTUAL = "virtual"  # 虚拟IMU用于仿真
 
 
 @dataclass
@@ -500,8 +501,10 @@ class IMU:
             # 同步到标定对象
             self.calibration.accel_bias = self._accel_bias
     
-    def calibrate_gyro_bias(self, num_samples=1000):
+    def calibrate_gyro_bias(self, num_samples=1000, duration_sec=None):
         """标定陀螺仪偏置 (兼容接口)"""
+        if duration_sec is not None and self.sample_rate > 0:
+            num_samples = int(duration_sec * self.sample_rate)
         # 静态采集多帧得到偏置
         gyros = []
         for _ in range(num_samples):
@@ -510,6 +513,17 @@ class IMU:
         self._gyro_bias = np.mean(np.array(gyros), axis=0)
         # 同步到标定对象
         self.calibration.gyro_bias = self._gyro_bias
+
+    def self_test(self) -> bool:
+        """IMU 自检 (仿真模式总是返回True)"""
+        if not self._is_opened:
+            return False
+        # 仿真模式: 读一帧验证传感器工作
+        try:
+            reading = self.read()
+            return reading is not None and reading.accel is not None and reading.gyro is not None
+        except Exception:
+            return False
     
     def __enter__(self):
         self.open()
@@ -662,10 +676,30 @@ class PoseEstimator:
     def get_euler(self):
         """获取当前欧拉角 (兼容接口)"""
         return self._last_pose.euler()
-    
+
+    def get_pose(self) -> 'Pose':
+        """获取当前姿态 (Pose对象)"""
+        return self._last_pose
+
     def reset(self):
         """重置姿态估计"""
         self._last_pose = Pose(orientation=np.array([1.0, 0.0, 0.0, 0.0]))
+
+    def get_rotation_matrix(self) -> np.ndarray:
+        """从姿态估计获取旋转矩阵
+
+        Returns:
+            3x3 旋转矩阵
+        """
+        q = self._last_pose.orientation
+        w, x, y, z = q[0], q[1], q[2], q[3]
+        # 四元数到旋转矩阵
+        R = np.array([
+            [1 - 2*(y*y + z*z), 2*(x*y - w*z), 2*(x*z + w*y)],
+            [2*(x*y + w*z), 1 - 2*(x*x + z*z), 2*(y*z - w*x)],
+            [2*(x*z - w*y), 2*(y*z + w*x), 1 - 2*(x*x + y*y)]
+        ], dtype=np.float64)
+        return R
 
 
 class IMUFrame(IMUReading):
@@ -715,13 +749,22 @@ class VirtualIMUSensor:
         self.sensor_id = sensor_id
         self.accel_noise = accel_noise
         self.gyro_noise = gyro_noise
+        self._is_opened = False
     
     def open(self):
+        self._is_opened = True
         return True
     
     def close(self):
         pass
-    
+
+    def __enter__(self):
+        self.open()
+        return self
+
+    def __exit__(self, exc_type, exc_val, exc_tb):
+        self.close()
+
     def simulate_static(self, orientation=(0.0, 0.0, 0.0)):
         """兼容方法 - 返回静止姿态"""
         # roll, pitch, yaw -> 四元数
@@ -756,6 +799,60 @@ class VirtualIMUSensor:
             frame_id=0
         )
 
+    def simulate_human_walking(self, step_frequency=1.5, walk_speed=1.0, duration_s=2.0, dt=0.01):
+        """模拟人类步行IMU数据
+
+        Args:
+            step_frequency: 步频 Hz
+            walk_speed: 行走速度 m/s
+            duration_s: 持续时间 秒
+            dt: 时间步长 秒
+
+        Returns:
+            list[IMUFrame]: 步行IMU帧序列
+        """
+        frames = []
+        n_steps = max(1, int(duration_s / dt))
+        step_period = 1.0 / max(step_frequency, 0.1)
+
+        for i in range(n_steps):
+            t = i * dt
+            phase = (t % step_period) / step_period  # 0-1 单步周期
+
+            # 垂直振动 (足底到空中往返)
+            vertical_accel = 9.81 + 2.0 * np.sin(2 * np.pi * phase) * walk_speed
+
+            # 前后摆动
+            forward_accel = 0.5 * np.cos(2 * np.pi * phase) * walk_speed
+
+            # 角速度 (步行时轻微侧倾和俯仰)
+            gyro_roll = 0.1 * np.sin(2 * np.pi * phase)
+            gyro_pitch = 0.05 * np.cos(2 * np.pi * phase)
+            gyro_yaw = 0.02 * step_frequency
+
+            accel = np.array([forward_accel, 0.0, vertical_accel])
+            gyro = np.array([gyro_roll, gyro_pitch, gyro_yaw])
+
+            if self.accel_noise is not None:
+                accel += np.random.randn(3) * self.accel_noise
+            if self.gyro_noise is not None:
+                gyro += np.random.randn(3) * self.gyro_noise
+
+            frames.append(IMUFrame(
+                accel=accel,
+                gyro=gyro,
+                mag=None,
+                quaternion=None,
+                timestamp=t,
+                frame_id=i
+            ))
+
+        return frames
+
+    def capture(self):
+        """兼容capture接口"""
+        return self.simulate_static()
+
 
 def quaternion_to_rotation_matrix(q: np.ndarray) -> np.ndarray:
     """四元数转旋转矩阵"""
@@ -775,6 +872,11 @@ def _add_virtual_imu_methods():
     def simulate_trajectory(self, times=None, accelerations=None, angular_velocities=None, trajectory_type=None, duration_s=None, dt=None):
         """模拟轨迹 - 兼容方法"""
         frames = []
+        
+        # 兼容: 如果times是字符串，视为trajectory_type
+        if isinstance(times, str) and trajectory_type is None:
+            trajectory_type = times
+            times = None
         
         # 处理预设轨迹类型自动生成
         if trajectory_type == "circle" and duration_s is not None and dt is not None:
@@ -801,7 +903,39 @@ def _add_virtual_imu_methods():
                     frame_id=i
                 ))
             return frames
-        
+
+        if trajectory_type == "figure8" and duration_s is not None and dt is not None:
+            n_steps = max(1, int(duration_s / dt))
+            omega = 2 * np.pi / max(duration_s, 0.01)
+            radius = 0.5
+            for i in range(n_steps):
+                t = i * dt
+                ax = -radius * omega**2 * np.cos(omega * t) * np.cos(omega * t)\
+                       + 2 * radius * omega**2 * np.sin(omega * t) * np.cos(omega * t)
+                ay = -radius * omega**2 * np.sin(omega * t) * np.sin(omega * t)\
+                       + radius * omega**2 * np.cos(omega * t) * np.cos(omega * t)
+                frames.append(IMUFrame(
+                    accel=np.array([ax, ay, 9.81]),
+                    gyro=np.array([0, 0, omega]),
+                    mag=None, quaternion=None, timestamp=t, frame_id=i))
+            return frames
+
+        if trajectory_type in ("linear", "sine") and duration_s is not None and dt is not None:
+            n_steps = max(1, int(duration_s / dt))
+            omega = 2 * np.pi / max(duration_s, 0.01)
+            for i in range(n_steps):
+                t = i * dt
+                if trajectory_type == "linear":
+                    ax, ay = 1.0, 0.0
+                else:  # sine
+                    ax = -omega**2 * np.sin(omega * t)
+                    ay = 0.0
+                frames.append(IMUFrame(
+                    accel=np.array([ax, ay, 9.81]),
+                    gyro=np.zeros(3),
+                    mag=None, quaternion=None, timestamp=t, frame_id=i))
+            return frames
+
         if accelerations is None:
             return frames
             
@@ -891,13 +1025,32 @@ def _add_virtual_imu_methods():
                 frame_id=0
             )
     
-    def capture(self):
-        """兼容capture接口"""
-        return self.simulate_static()
-    
     VirtualIMUSensor.simulate_trajectory = MethodType(simulate_trajectory, VirtualIMUSensor)
     VirtualIMUSensor.simulate_agv_motion = MethodType(simulate_agv_motion, VirtualIMUSensor)
-    VirtualIMUSensor.capture = MethodType(capture, VirtualIMUSensor)
+
+    def simulate_motion(self, linear_accel, angular_vel, dt=0.01):
+        """模拟IMU运动数据 (直接接受加速度和角速度)
+
+        Args:
+            linear_accel: 加速度 [ax, ay, az] m/s²
+            angular_vel: 角速度 [gx, gy, gz] rad/s
+            dt: 时间步 (s)
+
+        Returns:
+            IMUFrame: IMU帧
+        """
+        accel = np.array(linear_accel, dtype=np.float64)
+        gyro = np.array(angular_vel, dtype=np.float64)
+        noise_a = getattr(self, 'accel_noise', None) or 0.05
+        noise_g = getattr(self, 'gyro_noise', None) or 0.01
+        return IMUFrame(
+            accel=accel + np.random.randn(3) * noise_a,
+            gyro=gyro + np.random.randn(3) * noise_g,
+            timestamp=0.0,
+            frame_id=0
+        )
+
+    VirtualIMUSensor.simulate_motion = MethodType(simulate_motion, VirtualIMUSensor)
 
 
 _add_virtual_imu_methods()

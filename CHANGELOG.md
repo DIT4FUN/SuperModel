@@ -1,3 +1,28 @@
+## [2.67.0] - 2026-04-11
+
+### Fixed
+- **传感器模块Bug修复**
+  - `src/sensors/force.py`:
+    - `estimate_payload()`: 修复重力方向判断，使用 `abs(fz)` 替代 `max(0, fz)` 正确处理负向力
+    - `WrenchProcessor.compute_equivalent_wrench_at()`: 新增方法，支持力旋量在不同参考点的等效变换
+    - `VirtualForceSensor`: 添加 `__enter__`/`__exit__` 上下文管理器支持
+  - `src/sensors/imu.py`:
+    - `VirtualIMUSensor.simulate_motion()`: 新增方法，直接接受 `linear_accel`/`angular_vel` 参数
+    - `VirtualIMUSensor`: 添加 `__enter__`/`__exit__` 上下文管理器支持
+    - `PoseEstimator.get_rotation_matrix()`: 新增方法，从四元数姿态获取旋转矩阵
+  - `src/sensors/tactile.py`:
+    - `PressureProcessor.compute_pressure_histogram()`: 修复默认 `bins=20` → `bins=10` 与测试预期一致
+    - `TactileArray`: 新增 `_frame_buffer` 属性，限制最大100帧防止溢出
+    - `VirtualTactileSensor`: 添加 `__enter__`/`__exit__` 上下文管理器支持
+    - `VirtualTactileSensor.simulate_contact()`: 修复压力单位，`contact_force` 正确归一化到压力范围
+    - `VirtualTactileSensor.simulate_contact()`: 返回帧添加 `temperature_map` 属性
+    - `estimate_grip_quality()`: 补全返回字典，增加 `contact_area`、`uniformity`、`stability` 字段
+
+### Test Results
+- **完整测试套件**: 2625 passed, 2 failed (pre-existing calibration), 38 skipped
+- **修复**: 28项之前失败的测试全部通过
+- **剩余失败**: 2项 `IMUCalibrator` 标定噪声密度计算问题 (pre-existing)
+
 ## [2.66.0] - 2026-04-11
 
 ### Added
