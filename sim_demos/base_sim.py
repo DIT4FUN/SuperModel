@@ -9,6 +9,7 @@ import os
 import sys
 import time
 import math
+from typing import Tuple
 import pybullet as p
 import pybullet_data
 import numpy as np
@@ -195,6 +196,59 @@ def screenToWorld(mx, my, state):
         if t > 0:
             return cx + t * wx, cy + t * wy
     return None, None
+
+
+class AGVRobot:
+    """仿真AGV机器人类"""
+    
+    def __init__(self, agv_id: str, start_pos: np.ndarray, urdf_path: str = "r2d2.urdf"):
+        self.agv_id = agv_id
+        self.start_pos = start_pos
+        self.urdf_path = urdf_path
+        self.body_id = None
+        self.current_pos = start_pos.copy()
+        self.current_theta = 0.0
+        self.current_v = 0.0
+        self.current_omega = 0.0
+        
+    def load(self, client_id: int):
+        """加载AGV模型到仿真环境"""
+        start_orientation = p.getQuaternionFromEuler([0, 0, self.current_theta])
+        self.body_id = p.loadURDF(self.urdf_path, self.start_pos, start_orientation, physicsClientId=client_id)
+        return self.body_id
+    
+    def set_velocity(self, v: float, omega: float):
+        """设置AGV速度"""
+        self.current_v = v
+        self.current_omega = omega
+        # 差速驱动控制
+        wheel_radius = 0.1
+        wheel_separation = 0.4
+        left_wheel_vel = (v - omega * wheel_separation / 2) / wheel_radius
+        right_wheel_vel = (v + omega * wheel_separation / 2) / wheel_radius
+        p.setJointMotorControlArray(
+            self.body_id, [2, 3], p.VELOCITY_CONTROL,
+            targetVelocities=[left_wheel_vel, right_wheel_vel],
+            forces=[10, 10]
+        )
+    
+    def update_state(self):
+        """更新AGV状态"""
+        pos, ori = p.getBasePositionAndOrientation(self.body_id)
+        self.current_pos = np.array(pos[:2])
+        euler = p.getEulerFromQuaternion(ori)
+        self.current_theta = euler[2]
+        vel, ang_vel = p.getBaseVelocity(self.body_id)
+        self.current_v = np.linalg.norm(vel[:2]) * np.sign(np.dot(vel[:2], np.array([np.cos(self.current_theta), np.sin(self.current_theta)])))
+        self.current_omega = ang_vel[2]
+    
+    def get_pose(self) -> Tuple[float, float, float]:
+        """获取当前位姿"""
+        return self.current_pos[0], self.current_pos[1], self.current_theta
+    
+    def get_velocity(self) -> Tuple[float, float]:
+        """获取当前速度"""
+        return self.current_v, self.current_omega
 
 
 if __name__ == '__main__':

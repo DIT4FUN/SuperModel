@@ -20,9 +20,16 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 
 # Add parent path
 sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
-from core.logger import logger
-from control.agv_kinematics import AGVSpec, AGVState
-from simulation.embodied_sim import WarehouseScene
+import logging
+logger = logging.getLogger(__name__)
+try:
+    from control.agv_kinematics import AGVSpec, AGVState
+    from simulation.embodied_sim import WarehouseScene
+except ImportError:
+    # 模块不存在时使用占位符
+    AGVSpec = object
+    AGVState = object
+    WarehouseScene = object
 
 class TaskPriority(Enum):
     """任务优先级"""

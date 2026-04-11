@@ -1699,6 +1699,10 @@ class MultiAGVBehaviorTreeManager:
 
 __all__ += [
     'MultiAGVBehaviorTreeManager',
+    'BehaviorTreeBuilder',
 ]
+
+# 行为树构建器别名 - 兼容旧代码
+BehaviorTreeBuilder = create_behavior_tree_from_dict
 
 
