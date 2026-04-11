@@ -10,10 +10,11 @@ import numpy as np
 from typing import List, Dict
 from sim_demos.base_sim import BaseSimulation, AGVRobot
 from control.swarm_control import SwarmController
-from control.behavior_tree import BehaviorTreePlanner
+from control.behavior_tree import BehaviorTree
 from sensors.imu import IMUSensor
-from sensors.tactile import TactileSensor
-from sensors.force import ForceSensor
+from src.sensors.tactile import VirtualTactileSensor as TactileSensor
+from src.sensors.force import VirtualForceSensor as ForceSensor
+from src.sensors.imu import VirtualIMUSensor as IMUSensor
 
 class CollaborativeLogisticsSim(BaseSimulation):
     def __init__(self, num_agvs: int = 6):

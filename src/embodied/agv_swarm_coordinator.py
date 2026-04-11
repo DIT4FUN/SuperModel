@@ -577,8 +577,6 @@ class AGVSwarmCoordinator:
                 resolved_count += 1
         
         return resolved_count
-        
-        return resolved_count
     
     def plan_path_for_agv(self, agv: AGVSwarmMember, target: Tuple[float, float, float]) -> List[Tuple[float, float, float]]:
         """为AGV规划路径（A*算法）"""

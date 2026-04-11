@@ -7,7 +7,9 @@ import math
 import sys
 sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel')
 from src.embodied.behavior_tree import (
-    NodeStatus, BehaviorTreeBuilder,
+    NodeStatus, BehaviorTreeBuilder
+)
+from control.planner import (
     IsAtTarget, IsBatteryLow, MoveTo, Pickup
 )
 

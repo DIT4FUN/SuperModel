@@ -117,10 +117,20 @@ from .scene_task_planner import (
     get_scene_task_planner,
 )
 
+from .agv_swarm_coordinator import (
+    TaskPriority,
+    TaskStatus,
+    SwarmTask,
+    AGVSwarmMember,
+    SwarmConflict,
+    AGVSwarmCoordinator,
+)
+
 __all__ = [
     # 枚举
     'NodeStatus',
     'TaskStatus',
+    'TaskPriority',
     # 节点类
     'BTNode',
     'SequenceNode',
@@ -218,6 +228,11 @@ __all__ = [
     'OutdoorTaskPlanner',
     'SceneAdaptationEngine',
     'get_scene_task_planner',
+    # 多AGV蜂群协调器
+    'SwarmTask',
+    'AGVSwarmMember',
+    'SwarmConflict',
+    'AGVSwarmCoordinator',
 ]
 
 __version__ = "2.2.0"
