@@ -30,6 +30,21 @@ from .behavior_tree import (
     AGVMoveToAction,
     AGVGraspAction,
     AGVReleaseAction,
+    # 多AGV蜂群协同
+    AGVNegotiateRoleAction,
+    AGVMoveToFormationAction,
+    AGVCheckFormationReachedCondition,
+    AGVParallelGraspAction,
+    AGVCoordinatedMoveToAction,
+    AGVParallelReleaseAction,
+    MultiAGVBehaviorTreePlanner,
+    # 别名
+    AGVNegotiateRole,
+    AGVMoveToFormation,
+    AGVCheckFormationReached,
+    AGVParallelGrasp,
+    AGVCoordinatedMoveTo,
+    AGVParallelRelease,
 )
 
 from .simulation_enhancement import (
@@ -116,6 +131,21 @@ __all__ = [
     'AGVMoveToAction',
     'AGVGraspAction',
     'AGVReleaseAction',
+    # 多AGV蜂群协同节点
+    'AGVNegotiateRoleAction',
+    'AGVMoveToFormationAction',
+    'AGVCheckFormationReachedCondition',
+    'AGVParallelGraspAction',
+    'AGVCoordinatedMoveToAction',
+    'AGVParallelReleaseAction',
+    'MultiAGVBehaviorTreePlanner',
+    # 蜂群节点别名
+    'AGVNegotiateRole',
+    'AGVMoveToFormation',
+    'AGVCheckFormationReached',
+    'AGVParallelGrasp',
+    'AGVCoordinatedMoveTo',
+    'AGVParallelRelease',
     # 仿真增强
     'PhysicsParameters',
     'SensorNoiseModel',

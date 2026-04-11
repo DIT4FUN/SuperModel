@@ -871,6 +871,42 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
         )
         self.register_task_type('patrol', patrol_root)
 
+        # 4. 多AGV协同任务
+        if self.capabilities.get('support_multi_agent', False):
+            self._setup_swarm_tasks()
+
+    def _setup_swarm_tasks(self) -> None:
+        """设置蜂群协同任务"""
+        # 协同搬运任务
+        swarm_transport = SequenceNode("SwarmTransportSequence")
+        swarm_transport.add_children(
+            AGVCheckSafeCondition(),
+            AGVCheckBatteryCondition(0.4),
+            # 协商分工
+            AGVNegotiateRoleAction(),
+            # 移动到协同位置
+            AGVMoveToFormation(),
+            AGVCheckFormationReached(),
+            # 协同抓取
+            AGVParallelGraspAction(),
+            # 协同移动
+            AGVCoordinatedMoveTo(),
+            AGVCheckPositionReached(),
+            # 协同释放
+            AGVParallelReleaseAction(),
+        )
+        self.register_task_type('swarm_transport', swarm_transport)
+
+        # 区域搜索任务
+        area_search_sequence = ParallelNode(
+            "AreaSearchParallel",
+            success_policy=ParallelNode.Policy.REQUIRE_ALL,
+            failure_policy=ParallelNode.Policy.REQUIRE_ANY
+        )
+        # 每个AGV负责子区域并行搜索
+        # 实际由动态添加子节点完成
+        self.register_task_type('area_search', area_search_sequence)
+
     def _set_pickup_target(self, blackboard: Blackboard) -> NodeStatus:
         """设置拾取目标点到黑板"""
         pickup_pos = blackboard.goal_state.get('pickup_position')
@@ -895,6 +931,197 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
             'grade': self.grade,
             **self.capabilities,
         }
+
+
+# 多AGV蜂群协同特定节点
+# -----------------------------------------------------------------------------
+
+class AGVNegotiateRoleAction(ActionNode):
+    """AGV角色协商动作节点 - 蜂群协同"""
+
+    def __init__(self, name: str = "NegotiateRole"):
+        super().__init__(name)
+        self._negotiation_started = False
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        """协商角色分配"""
+        if not self._negotiation_started:
+            logger.info("Starting role negotiation for swarm task")
+            self._negotiation_started = True
+            # 在实际系统中，这里会和其他AGV通信协商
+            # 这里简化为直接成功
+            return NodeStatus.RUNNING
+
+        # 模拟协商完成
+        self._negotiation_started = False
+        roles = blackboard.goal_state.get('swarm_roles', {})
+        logger.info(f"Role negotiation completed, assigned roles: {roles}")
+        return NodeStatus.SUCCESS
+
+    def reset(self) -> None:
+        self._negotiation_started = False
+        super().reset()
+
+
+class AGVMoveToFormationAction(ActionNode):
+    """移动到协同阵位动作节点"""
+
+    def __init__(self, name: str = "MoveToFormation"):
+        super().__init__(name)
+        self._started = False
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        formation_pos = blackboard.goal_state.get('formation_position')
+        if formation_pos is None:
+            return NodeStatus.FAILURE
+
+        if not self._started:
+            logger.info(f"Moving to formation position: {formation_pos}")
+            self._started = True
+
+        current_pos = blackboard.get_robot_position()
+        if current_pos is not None:
+            distance = np.linalg.norm(current_pos - np.array(formation_pos))
+            if distance < 0.15:  # 阵位容差稍大
+                self._started = False
+                return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self) -> None:
+        self._started = False
+        super().reset()
+
+
+class AGVCheckFormationReachedCondition(ConditionNode):
+    """检查是否到达协同阵位"""
+
+    def __init__(self, threshold: float = 0.15, name: str = "CheckFormationReached"):
+        def check(bb: Blackboard) -> bool:
+            current_pos = bb.get_robot_position()
+            formation_pos = bb.goal_state.get('formation_position')
+            if current_pos is None or formation_pos is None:
+                return False
+            distance = np.linalg.norm(current_pos - np.array(formation_pos))
+            return distance < threshold
+        super().__init__(check, name)
+
+
+class AGVParallelGraspAction(ActionNode):
+    """并行抓取动作 - 多AGV协同抓取重物"""
+
+    def __init__(self, name: str = "ParallelGrasp"):
+        super().__init__(name)
+        self._start_time: Optional[float] = None
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if self._start_time is None:
+            logger.info("Starting parallel coordinated grasp")
+            self._start_time = time.time()
+            return NodeStatus.RUNNING
+
+        # 同步抓取需要协调时间
+        if time.time() - self._start_time > 3.0:
+            logger.info("Parallel grasp completed")
+            self._start_time = None
+            return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self) -> None:
+        self._start_time = None
+        super().reset()
+
+
+class AGVCoordinatedMoveToAction(ActionNode):
+    """协同移动动作 - 保持阵位移动"""
+
+    def __init__(self, name: str = "CoordinatedMoveTo"):
+        super().__init__(name)
+        self._started = False
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        target = blackboard.goal_state.get('target_position')
+        if target is None:
+            return NodeStatus.FAILURE
+
+        if not self._started:
+            logger.info(f"Starting coordinated movement to: {target}")
+            self._started = True
+
+        current_pos = blackboard.get_robot_position()
+        if current_pos is not None:
+            distance = np.linalg.norm(current_pos - np.array(target))
+            if distance < 0.2:
+                self._started = False
+                return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self) -> None:
+        self._started = False
+        super().reset()
+
+
+class AGVParallelReleaseAction(ActionNode):
+    """并行释放动作"""
+
+    def __init__(self, name: str = "ParallelRelease"):
+        super().__init__(name)
+        self._start_time: Optional[float] = None
+
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if self._start_time is None:
+            logger.info("Starting parallel coordinated release")
+            self._start_time = time.time()
+            return NodeStatus.RUNNING
+
+        if time.time() - self._start_time > 1.5:
+            logger.info("Parallel release completed")
+            self._start_time = None
+            return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self) -> None:
+        self._start_time = None
+        super().reset()
+
+
+# 别名简化注册
+AGVMoveToFormation = AGVMoveToFormationAction
+AGVCheckFormationReached = AGVCheckFormationReachedCondition
+AGVNegotiateRole = AGVNegotiateRoleAction
+AGVParallelGrasp = AGVParallelGraspAction
+AGVCoordinatedMoveTo = AGVCoordinatedMoveToAction
+AGVParallelRelease = AGVParallelReleaseAction
+
+
+class MultiAGVBehaviorTreePlanner:
+    """多AGV行为树规划器 - 蜂群协同"""
+
+    def __init__(self, num_agvs: int, grade: str = "L"):
+        self.num_agvs = num_agvs
+        self.grade = grade
+        self.planners: Dict[str, AGVTaskPlanner] = {}
+        self.shared_blackboard = Blackboard()
+
+    def register_agv(self, agv_id: str, planner: AGVTaskPlanner) -> None:
+        """注册一个AGV规划器"""
+        self.planners[agv_id] = planner
+
+    def coordinate_swarm_task(self, task_type: str, goal: Dict[str, Any]) -> None:
+        """协调蜂群任务"""
+        # 设置共享目标
+        for agv_id, planner in self.planners.items():
+            # 每个AGV获得子任务
+            if task_type == 'swarm_transport':
+                # 分配不同的阵位
+                formation_positions = goal.get('formation_positions', {})
+                if agv_id in formation_positions:
+                    self.shared_blackboard.goal_state['formation_position'] = formation_positions[agv_id]
+
+        logger.info(f"Coordinated swarm task {task_type} for {self.num_agvs} AGVs")
 
 
 def create_behavior_tree_from_dict(config: Dict[str, Any]) -> BTNode:
