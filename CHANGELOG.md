@@ -23,7 +23,7 @@
 - `tests/calibration_manager_tests.py`: 2项IMU标定测试之前因噪声密度计算bug失败,现全部通过
 
 ### Test Results
-- **完整测试套件**: 2679 passed, 16 skipped, 17 warnings
+- **完整测试套件**: 2650 passed, 16 skipped, 17 warnings
 - **新增**: 30项部署管理测试全部通过
 - **修复**: 3项之前失败的测试现在通过
 
