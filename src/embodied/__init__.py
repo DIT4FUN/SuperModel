@@ -103,6 +103,20 @@ from .deployment import (
     create_deployment_manager,
 )
 
+from .scene_task_planner import (
+    SceneTaskConfig,
+    SceneTaskTemplate,
+    SceneTaskLibrary,
+    SceneTaskPlanner,
+    WarehouseTaskPlanner,
+    HospitalTaskPlanner,
+    FactoryTaskPlanner,
+    RestaurantTaskPlanner,
+    OutdoorTaskPlanner,
+    SceneAdaptationEngine,
+    get_scene_task_planner,
+)
+
 __all__ = [
     # 枚举
     'NodeStatus',
@@ -192,6 +206,18 @@ __all__ = [
     'EmergencyProcedure',
     'DeploymentManager',
     'create_deployment_manager',
+    # 场景任务规划
+    'SceneTaskConfig',
+    'SceneTaskTemplate',
+    'SceneTaskLibrary',
+    'SceneTaskPlanner',
+    'WarehouseTaskPlanner',
+    'HospitalTaskPlanner',
+    'FactoryTaskPlanner',
+    'RestaurantTaskPlanner',
+    'OutdoorTaskPlanner',
+    'SceneAdaptationEngine',
+    'get_scene_task_planner',
 ]
 
-__version__ = "2.1.0"
+__version__ = "2.2.0"

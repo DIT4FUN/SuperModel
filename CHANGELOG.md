@@ -1,3 +1,35 @@
+## [2.77.0] - 2026-04-11
+
+### Added
+- **场景化具身任务规划器** (`src/embodied/scene_task_planner.py`, ~1100行)
+  - `SceneTaskLibrary`: 场景任务模板库 (9个场景类型, 20+任务模板)
+  - `SceneTaskPlanner`: 场景化具身任务规划器 (经验驱动/动态重规划)
+  - 专用规划器: Warehouse/Hospital/Factory/Restaurant/Outdoor
+  - `SceneAdaptationEngine`: 场景适应引擎 (从执行结果学习参数调整)
+  - 场景任务模板: pick_and_stow/inventory_patrol/medication_delivery/specimen_transport/
+    production_line_feed/quality_inspection/food_delivery/outdoor_delivery 等
+
+- **场景任务规划测试** (`tests/embodied_scene_task_tests.py`, 49项)
+  - `TestSceneTaskLibrary`: 任务模板库测试 (8项)
+  - `TestSceneTaskPlanner`: 场景任务规划器测试 (11项)
+  - `TestWarehouseTaskPlanner`: 仓库规划器测试 (2项)
+  - `TestHospitalTaskPlanner`: 医院规划器测试 (2项)
+  - `TestFactoryTaskPlanner`: 工厂规划器测试 (1项)
+  - `TestRestaurantTaskPlanner`: 餐厅规划器测试 (1项)
+  - `TestOutdoorTaskPlanner`: 户外规划器测试 (1项)
+  - `TestSceneAdaptationEngine`: 场景适应引擎测试 (6项)
+  - `TestSceneTaskPlannerIntegration`: 集成测试 (3项)
+  - `TestSceneTaskPlannerPerformance`: 性能测试 (2项)
+  - `TestSceneTaskPlannerErrorHandling`: 错误处理测试 (1项)
+
+### Changed
+- 模块导出更新: `src/embodied/__init__.py` 新增12个场景任务规划导出
+
+### Fixed
+- `SceneTaskPlanner._select_template`: 修复任务描述匹配逻辑,优先精确匹配
+
+---
+
 ## [2.67.0] - 2026-04-11
 ## [2.68.0] - 2026-04-11
 

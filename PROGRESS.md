@@ -1,7 +1,47 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-11 15:00 (v2.74.0)
+> Last Updated: 2026-04-11 17:10 (v2.77.0)
+
+---
+
+## v2.77.0 (2026-04-11 17:10) - 场景化具身任务规划器 + 49项测试
+
+### 本次更新
+
+1. **场景化具身任务规划器** (`src/embodied/scene_task_planner.py`, ~1100行)
+   - `SceneTaskLibrary`: 场景任务模板库, 9个场景类型, 20+任务模板
+   - `SceneTaskPlanner`: 场景化具身任务规划器, 经验驱动, 动态重规划
+   - 专用规划器: WarehouseTaskPlanner / HospitalTaskPlanner / FactoryTaskPlanner /
+     RestaurantTaskPlanner / OutdoorTaskPlanner
+   - `SceneAdaptationEngine`: 场景适应引擎, 从执行结果学习参数调整
+   - 场景任务模板: pick_and_stow / inventory_patrol / emergency_shutdown / cold_chain_check /
+     medication_delivery / specimen_transport / sanitization_patrol / production_line_feed /
+     quality_inspection / food_delivery / outdoor_delivery / sample_transport 等
+
+2. **场景任务规划测试** (`tests/embodied_scene_task_tests.py`, 49项)
+   - 完整覆盖 SceneTaskLibrary / SceneTaskPlanner / 专用规划器 / 适应引擎 / 集成测试
+   - 全部49项测试通过 ✅
+
+3. **模块导出更新**
+   - `src/embodied/__init__.py`: 新增12个场景任务规划导出
+   - 版本更新: embodied 2.1.0 → 2.2.0
+
+### 测试结果
+```
+python3 -m pytest tests/embodied_scene_task_tests.py -q
+============================== 49 passed in 0.18s ==============================
+python3 -m pytest tests -q --tb=no
+========== 2711 passed, 38 skipped, 17 warnings in 108.10s (0:01:48) ===========
+```
+**累计测试: 2711 项全部通过 ✅**
+
+### 当前进度
+- 整体完成度: **~95%**
+- 已完成: 基础架构/视觉/听觉/触觉/力觉/IMU/跨模态融合/核心目标/自主学习
+  控制模块/五级AGV规格/仿真环境/具身行为树规划/场景任务规划/
+  多AGV蜂群协同/部署管理/文档
+- 待推进: 多机协同深度优化/长期记忆增强/边缘计算优化/端侧推理
 
 ---
 
