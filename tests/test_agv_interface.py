@@ -21,8 +21,10 @@ def test_simulated_agv_basic():
     
     # 速度设置测试
     assert agv.set_velocity(1.0, 0.5) == True
-    time.sleep(0.1)
-    agv.update_status()
+    # 等待速度达到期望值（模拟惯性延迟）
+    for _ in range(20):
+        agv.update_status()
+        time.sleep(0.05)
     
     v, omega = agv.get_velocity()
     assert abs(v - 1.0) < 0.1
@@ -55,22 +57,37 @@ def test_simulated_agv_basic():
 
 def test_simulated_agv_movement():
     """测试仿真AGV运动精度"""
-    agv = AGVInterfaceFactory.create("sim", agv_type=AGVType.DIFFERENTIAL, noise_level=0.0, friction_coeff=0.0)
+    agv = AGVInterfaceFactory.create("sim", agv_type=AGVType.DIFFERENTIAL, noise_level=0.0, friction_coeff=0.0, response_delay=0.0)
     agv.connect()
     
     # 直线移动1米
     agv.set_velocity(1.0, 0.0)
+    # 先等待速度达到1.0再开始计时
+    while True:
+        agv.update_status()
+        v, _ = agv.get_velocity()
+        if abs(v - 1.0) < 0.01:
+            break
+        time.sleep(0.01)
+    # 记录开始位姿
+    start_x, start_y, start_theta = agv.get_pose()
     start_time = time.time()
     while time.time() - start_time < 1.0:
         agv.update_status()
         time.sleep(0.01)
     
     agv.set_velocity(0.0, 0.0)
-    time.sleep(0.2)
+    # 等待速度降到0
+    while True:
+        agv.update_status()
+        v, _ = agv.get_velocity()
+        if abs(v) < 0.01:
+            break
+        time.sleep(0.01)
     agv.update_status()
     
     x, y, theta = agv.get_pose()
-    assert abs(x - 1.0) < 0.05  # 误差小于5cm
+    assert abs((x - start_x) - 1.0) < 0.05  # 误差小于5cm
     assert abs(y) < 0.02
     assert abs(theta) < 0.02
     

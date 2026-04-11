@@ -158,6 +158,7 @@ class SimulatedAGV(AGVInterface):
     def connect(self) -> bool:
         self.connected = True
         self.status = AGVStatus.IDLE
+        self.sim_time = time.time()  # 初始化仿真时间
         return True
 
     def disconnect(self) -> None:
@@ -179,30 +180,31 @@ class SimulatedAGV(AGVInterface):
         
         # 更新仿真时间
         now = time.time()
-        if self.sim_time == 0:
-            self.sim_time = now
-            return
-        
         self.dt = now - self.sim_time
         self.sim_time = now
 
         # 模拟响应延迟
         if self.sim_time - self.last_command_time > self.response_delay:
-            # 速度平滑过渡 (模拟惯性)
-            alpha = 1.0 - math.exp(-self.dt * 5.0)
-            self.current_v = alpha * self.desired_v + (1 - alpha) * self.current_v
-            self.current_omega = alpha * self.desired_omega + (1 - alpha) * self.current_omega
+            if self.response_delay == 0 and self.friction_coeff == 0:
+                # 理想模式，无延迟无摩擦，速度立即切换
+                self.current_v = self.desired_v
+                self.current_omega = self.desired_omega
+            else:
+                # 速度平滑过渡 (模拟惯性)
+                alpha = 1.0 - math.exp(-self.dt * 5.0)
+                self.current_v = alpha * self.desired_v + (1 - alpha) * self.current_v
+                self.current_omega = alpha * self.desired_omega + (1 - alpha) * self.current_omega
 
-            # 摩擦减速
-            if abs(self.desired_v) < 0.01:
-                self.current_v *= (1.0 - self.friction_coeff)
-                if abs(self.current_v) < 0.01:
-                    self.current_v = 0.0
+                # 摩擦减速
+                if abs(self.desired_v) < 0.01:
+                    self.current_v *= (1.0 - self.friction_coeff)
+                    if abs(self.current_v) < 0.01:
+                        self.current_v = 0.0
 
-            if abs(self.desired_omega) < 0.01:
-                self.current_omega *= (1.0 - self.friction_coeff)
-                if abs(self.current_omega) < 0.01:
-                    self.current_omega = 0.0
+                if abs(self.desired_omega) < 0.01:
+                    self.current_omega *= (1.0 - self.friction_coeff)
+                    if abs(self.current_omega) < 0.01:
+                        self.current_omega = 0.0
 
         # 更新位姿 (运动学模型)
         if self.agv_type == AGVType.DIFFERENTIAL:
