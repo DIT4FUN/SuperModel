@@ -225,8 +225,24 @@ class TactileArray:
             # 对于不同传感器实现不同协议
             return self._baseline + np.random.randn(self.rows, self.cols) * 0.1
         else:
-            # 模拟模式: 返回随机噪声
-            return self._baseline + np.random.randn(self.rows, self.cols) * 0.5
+            # 模拟模式: 返回随机噪声，如果有接触位置添加高斯接触压力
+            raw = self._baseline + np.random.randn(self.rows, self.cols) * 0.5
+            
+            # 如果有指定接触位置，添加高斯接触压力
+            if hasattr(self, '_last_contact_pos') and self._last_contact_pos is not None:
+                # 归一化坐标 -> 像素坐标
+                x_norm, y_norm = self._last_contact_pos
+                x = int(round(x_norm * (self.cols - 1)))
+                y = int(round(y_norm * (self.rows - 1)))
+                
+                # 添加2D高斯压力分布
+                sigma = 2.0  # 高斯半径
+                yy, xx = np.mgrid[0:self.rows, 0:self.cols]
+                gauss = np.exp(-((xx - x)**2 + (yy - y)**2) / (2 * sigma**2))
+                peak_pressure = 5.0  # kPa
+                raw += peak_pressure * gauss
+            
+            return raw
     
     def read(self) -> TactileFrame:
         """读取一帧触觉数据"""

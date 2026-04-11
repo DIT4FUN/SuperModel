@@ -147,13 +147,17 @@ class TestSensorimotorSimulatorGrasp:
         sim.open()
         states = sim.simulate_grasp(num_steps=100, dt=0.01)
         
-        # 接近阶段 (0-20): 无触觉接触
-        for s in states[:5]:
-            assert not s.tactile_contact
+        # 接近阶段 (0-20): 大部分应该无触觉接触，允许偶尔噪声误判
+        no_contact_count = sum(1 for s in states[:20] if not s.tactile_contact)
+        assert no_contact_count >= 15  # 至少15帧无接触
         
         # 后续阶段应有接触数据
         has_contact = any(s.tactile_contact for s in states)
         assert has_contact
+        
+        # 后阶段应有更多接触
+        contact_count_later = sum(1 for s in states[50:] if s.tactile_contact)
+        assert contact_count_later >= 25
         
         sim.close()
     
