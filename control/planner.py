@@ -943,3 +943,516 @@ class MinimumSnapTrajectory:
             ))
 
         return smoothed
+
+
+# =============================================================================
+# 行为树 (Behavior Tree) 具身任务规划
+# =============================================================================
+
+class NodeStatus(Enum):
+    """行为树节点状态"""
+    SUCCESS = "success"   # 执行成功
+    FAILURE = "failure"   # 执行失败
+    RUNNING = "running"   # 正在执行
+
+
+class BehaviorNode(ABC):
+    """行为树节点基类"""
+    def __init__(self, name: str = ""):
+        self.name = name or self.__class__.__name__
+        self.parent: Optional[BehaviorNode] = None
+        self.status = NodeStatus.SUCCESS
+        self.blackboard: Dict = {}  # 全局状态黑板
+
+    @abstractmethod
+    def tick(self) -> NodeStatus:
+        """执行节点逻辑，返回状态"""
+        pass
+
+    def reset(self):
+        """重置节点状态"""
+        self.status = NodeStatus.SUCCESS
+
+
+# -----------------------------------------------------------------------------
+# 组合节点 (Composite Nodes)
+# -----------------------------------------------------------------------------
+
+class CompositeNode(BehaviorNode):
+    """组合节点基类，包含多个子节点"""
+    def __init__(self, children: List[BehaviorNode], name: str = ""):
+        super().__init__(name)
+        self.children = children
+        for child in children:
+            child.parent = self
+            child.blackboard = self.blackboard
+
+    def reset(self):
+        super().reset()
+        for child in self.children:
+            child.reset()
+
+
+class Sequence(CompositeNode):
+    """
+    顺序节点：依次执行所有子节点，只要有一个失败就返回失败，全部成功才返回成功
+    逻辑与：AND
+    """
+    def tick(self) -> NodeStatus:
+        for child in self.children:
+            status = child.tick()
+            if status != NodeStatus.SUCCESS:
+                self.status = status
+                return status
+        self.status = NodeStatus.SUCCESS
+        return NodeStatus.SUCCESS
+
+
+class Selector(CompositeNode):
+    """
+    选择节点：依次执行所有子节点，只要有一个成功就返回成功，全部失败才返回失败
+    逻辑或：OR
+    """
+    def tick(self) -> NodeStatus:
+        for child in self.children:
+            status = child.tick()
+            if status != NodeStatus.FAILURE:
+                self.status = status
+                return status
+        self.status = NodeStatus.FAILURE
+        return NodeStatus.FAILURE
+
+
+class Parallel(CompositeNode):
+    """
+    并行节点：同时执行所有子节点
+    策略：成功需要多少子节点成功，失败需要多少子节点失败
+    """
+    def __init__(self, children: List[BehaviorNode], success_threshold: int = 1, failure_threshold: int = 1, name: str = ""):
+        super().__init__(children, name)
+        self.success_threshold = success_threshold
+        self.failure_threshold = failure_threshold
+
+    def tick(self) -> NodeStatus:
+        success_count = 0
+        failure_count = 0
+        running_count = 0
+
+        for child in self.children:
+            status = child.tick()
+            if status == NodeStatus.SUCCESS:
+                success_count += 1
+            elif status == NodeStatus.FAILURE:
+                failure_count += 1
+            else:
+                running_count += 1
+
+        if success_count >= self.success_threshold:
+            self.status = NodeStatus.SUCCESS
+            return NodeStatus.SUCCESS
+        if failure_count >= self.failure_threshold:
+            self.status = NodeStatus.FAILURE
+            return NodeStatus.FAILURE
+        self.status = NodeStatus.RUNNING
+        return NodeStatus.RUNNING
+
+
+# -----------------------------------------------------------------------------
+# 装饰节点 (Decorator Nodes)
+# -----------------------------------------------------------------------------
+
+class DecoratorNode(BehaviorNode):
+    """装饰节点基类，包含一个子节点，修改子节点的行为/返回值"""
+    def __init__(self, child: BehaviorNode, name: str = ""):
+        super().__init__(name)
+        self.child = child
+        child.parent = self
+        child.blackboard = self.blackboard
+
+    def reset(self):
+        super().reset()
+        self.child.reset()
+
+
+class Inverter(DecoratorNode):
+    """反转器：子节点成功返回失败，子节点失败返回成功"""
+    def tick(self) -> NodeStatus:
+        status = self.child.tick()
+        if status == NodeStatus.SUCCESS:
+            self.status = NodeStatus.FAILURE
+        elif status == NodeStatus.FAILURE:
+            self.status = NodeStatus.SUCCESS
+        else:
+            self.status = status
+        return self.status
+
+
+class Repeater(DecoratorNode):
+    """重复执行子节点指定次数，或者一直重复"""
+    def __init__(self, child: BehaviorNode, count: int = -1, name: str = ""):
+        super().__init__(child, name)
+        self.count = count  # -1 表示无限重复
+        self.current = 0
+
+    def tick(self) -> NodeStatus:
+        while self.count == -1 or self.current < self.count:
+            status = self.child.tick()
+            if status == NodeStatus.RUNNING:
+                self.status = NodeStatus.RUNNING
+                return NodeStatus.RUNNING
+            self.current += 1
+            if self.count != -1 and self.current >= self.count:
+                break
+        self.current = 0
+        self.status = NodeStatus.SUCCESS
+        return NodeStatus.SUCCESS
+
+
+class Succeeder(DecoratorNode):
+    """无论子节点返回什么，都返回成功"""
+    def tick(self) -> NodeStatus:
+        self.child.tick()
+        self.status = NodeStatus.SUCCESS
+        return NodeStatus.SUCCESS
+
+
+# -----------------------------------------------------------------------------
+# 条件节点 (Condition Nodes)
+# -----------------------------------------------------------------------------
+
+class ConditionNode(BehaviorNode):
+    """条件节点基类：检查条件是否满足，返回成功/失败，不会返回运行中"""
+    @abstractmethod
+    def check(self) -> bool:
+        """检查条件是否满足，返回True/False"""
+        pass
+
+    def tick(self) -> NodeStatus:
+        if self.check():
+            self.status = NodeStatus.SUCCESS
+        else:
+            self.status = NodeStatus.FAILURE
+        return self.status
+
+
+class IsAtTarget(ConditionNode):
+    """检查是否到达目标位置"""
+    def __init__(self, target: Tuple[float, float], tolerance: float = 0.1, name: str = ""):
+        super().__init__(name)
+        self.target = target
+        self.tolerance = tolerance
+
+    def check(self) -> bool:
+        current_x = self.blackboard.get("current_x", 0.0)
+        current_y = self.blackboard.get("current_y", 0.0)
+        dist = math.hypot(current_x - self.target[0], current_y - self.target[1])
+        return dist <= self.tolerance
+
+
+class IsObstacleNear(ConditionNode):
+    """检查附近是否有障碍物"""
+    def __init__(self, distance_threshold: float = 0.5, name: str = ""):
+        super().__init__(name)
+        self.distance_threshold = distance_threshold
+
+    def check(self) -> bool:
+        obstacles = self.blackboard.get("obstacles", [])
+        current_x = self.blackboard.get("current_x", 0.0)
+        current_y = self.blackboard.get("current_y", 0.0)
+        for (ox, oy, r) in obstacles:
+            dist = math.hypot(current_x - ox, current_y - oy) - r
+            if dist <= self.distance_threshold:
+                return True
+        return False
+
+
+class IsBatteryLow(ConditionNode):
+    """检查电池电量是否过低"""
+    def __init__(self, threshold: float = 0.2, name: str = ""):
+        super().__init__(name)
+        self.threshold = threshold
+
+    def check(self) -> bool:
+        battery = self.blackboard.get("battery_level", 1.0)
+        return battery <= self.threshold
+
+
+class IsTaskCompleted(ConditionNode):
+    """检查当前任务是否完成"""
+    def check(self) -> bool:
+        return self.blackboard.get("task_completed", False)
+
+
+# -----------------------------------------------------------------------------
+# 动作节点 (Action Nodes)
+# -----------------------------------------------------------------------------
+
+class ActionNode(BehaviorNode):
+    """动作节点基类：执行具体动作，可能返回成功/失败/运行中"""
+    @abstractmethod
+    def execute(self) -> NodeStatus:
+        """执行动作，返回状态"""
+        pass
+
+    def tick(self) -> NodeStatus:
+        self.status = self.execute()
+        return self.status
+
+
+class MoveTo(ActionNode):
+    """移动到目标位置动作"""
+    def __init__(self, target: Tuple[float, float], name: str = ""):
+        super().__init__(name)
+        self.target = target
+        self.planner = TrajectoryPlanner()
+        self.tracker = PurePursuitTracker()
+        self.trajectory: Optional[Trajectory] = None
+        self.start_time: Optional[float] = None
+
+    def execute(self) -> NodeStatus:
+        current_x = self.blackboard.get("current_x", 0.0)
+        current_y = self.blackboard.get("current_y", 0.0)
+        current_theta = self.blackboard.get("current_theta", 0.0)
+        current_time = self.blackboard.get("current_time", 0.0)
+
+        # 首次执行，生成轨迹
+        if self.trajectory is None:
+            start_wp = Waypoint(x=current_x, y=current_y, theta=current_theta, v=0.0)
+            end_wp = Waypoint(x=self.target[0], y=self.target[1], v=0.0)
+            self.trajectory = self.planner.plan_path([start_wp, end_wp])
+            self.start_time = current_time
+            self.blackboard["current_trajectory"] = self.trajectory
+            return NodeStatus.RUNNING
+
+        # 计算控制量
+        elapsed = current_time - self.start_time
+        v_ref, omega_ref = self.tracker.compute(current_x, current_y, current_theta, self.trajectory, elapsed)
+
+        # 输出到控制接口
+        self.blackboard["desired_velocity"] = v_ref
+        self.blackboard["desired_omega"] = omega_ref
+
+        # 检查是否到达目标
+        dist = math.hypot(current_x - self.target[0], current_y - self.target[1])
+        if dist < 0.1:
+            self.reset()
+            return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self):
+        super().reset()
+        self.trajectory = None
+        self.start_time = None
+
+
+class AvoidObstacle(ActionNode):
+    """避障动作"""
+    def execute(self) -> NodeStatus:
+        current_x = self.blackboard.get("current_x", 0.0)
+        current_y = self.blackboard.get("current_y", 0.0)
+        obstacles = self.blackboard.get("obstacles", [])
+
+        if not obstacles:
+            return NodeStatus.SUCCESS
+
+        # 找到最近障碍物
+        min_dist = float('inf')
+        nearest_obstacle = None
+        for (ox, oy, r) in obstacles:
+            dist = math.hypot(current_x - ox, current_y - oy) - r
+            if dist < min_dist:
+                min_dist = dist
+                nearest_obstacle = (ox, oy, r)
+
+        if nearest_obstacle and min_dist < 0.5:
+            # 简单避障：向垂直于障碍物方向移动
+            dx = current_x - nearest_obstacle[0]
+            dy = current_y - nearest_obstacle[1]
+            angle = math.atan2(dy, dx) + math.pi / 2  # 90度避让
+            v_ref = 0.2
+            omega_ref = 0.5 if min_dist < 0.3 else 0.2
+
+            self.blackboard["desired_velocity"] = v_ref
+            self.blackboard["desired_omega"] = omega_ref
+            return NodeStatus.RUNNING
+
+        return NodeStatus.SUCCESS
+
+
+class Pickup(ActionNode):
+    """抓取物体动作"""
+    def __init__(self, object_id: str, name: str = ""):
+        super().__init__(name)
+        self.object_id = object_id
+        self.duration = 2.0  # 抓取需要2秒
+        self.start_time: Optional[float] = None
+
+    def execute(self) -> NodeStatus:
+        current_time = self.blackboard.get("current_time", 0.0)
+
+        if self.start_time is None:
+            self.start_time = current_time
+            # 发送抓取指令到机械臂
+            self.blackboard["gripper_command"] = "close"
+            return NodeStatus.RUNNING
+
+        elapsed = current_time - self.start_time
+        if elapsed >= self.duration:
+            self.blackboard["gripper_command"] = "hold"
+            self.blackboard["held_object"] = self.object_id
+            self.reset()
+            return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self):
+        super().reset()
+        self.start_time = None
+
+
+class Place(ActionNode):
+    """放置物体动作"""
+    def __init__(self, position: Tuple[float, float], name: str = ""):
+        super().__init__(name)
+        self.position = position
+        self.duration = 1.5
+        self.start_time: Optional[float] = None
+
+    def execute(self) -> NodeStatus:
+        current_time = self.blackboard.get("current_time", 0.0)
+
+        if self.start_time is None:
+            self.start_time = current_time
+            self.blackboard["gripper_command"] = "open"
+            return NodeStatus.RUNNING
+
+        elapsed = current_time - self.start_time
+        if elapsed >= self.duration:
+            self.blackboard["gripper_command"] = "idle"
+            self.blackboard["held_object"] = None
+            self.reset()
+            return NodeStatus.SUCCESS
+
+        return NodeStatus.RUNNING
+
+    def reset(self):
+        super().reset()
+        self.start_time = None
+
+
+class Charge(ActionNode):
+    """充电动作"""
+    def execute(self) -> NodeStatus:
+        battery = self.blackboard.get("battery_level", 0.0)
+        if battery >= 0.95:
+            return NodeStatus.SUCCESS
+        # 充电中，缓慢恢复电量
+        self.blackboard["battery_level"] = min(1.0, battery + 0.01)
+        self.blackboard["desired_velocity"] = 0.0
+        self.blackboard["desired_omega"] = 0.0
+        return NodeStatus.RUNNING
+
+
+class Patrol(ActionNode):
+    """巡逻动作：在多个点位之间循环移动"""
+    def __init__(self, waypoints: List[Tuple[float, float]], name: str = ""):
+        super().__init__(name)
+        self.waypoints = waypoints
+        self.current_target_idx = 0
+        self.move_action: Optional[MoveTo] = None
+
+    def execute(self) -> NodeStatus:
+        if self.move_action is None:
+            target = self.waypoints[self.current_target_idx]
+            self.move_action = MoveTo(target)
+            self.move_action.blackboard = self.blackboard
+
+        status = self.move_action.tick()
+        if status == NodeStatus.SUCCESS:
+            # 到达当前点位，移动到下一个
+            self.current_target_idx = (self.current_target_idx + 1) % len(self.waypoints)
+            self.move_action = None
+            return NodeStatus.RUNNING
+
+        return status
+
+    def reset(self):
+        super().reset()
+        self.current_target_idx = 0
+        self.move_action = None
+
+
+# -----------------------------------------------------------------------------
+# 行为树构建器
+# -----------------------------------------------------------------------------
+
+class BehaviorTreeBuilder:
+    """行为树快速构建器，用于创建常用的AGV任务行为树"""
+
+    @staticmethod
+    def create_warehouse_transfer_task(
+        pick_location: Tuple[float, float],
+        place_location: Tuple[float, float],
+        charge_station: Tuple[float, float]
+    ) -> BehaviorNode:
+        """
+        创建仓库搬运任务行为树
+        逻辑：低电量先充电 → 去取货点 → 抓取货物 → 去放货点 → 放置货物 → 重复
+        """
+        # 充电分支：电量低时去充电
+        charge_branch = Sequence([
+            IsBatteryLow(0.2),
+            MoveTo(charge_station),
+            Charge()
+        ])
+
+        # 避障分支：始终运行避障
+        obstacle_branch = Sequence([
+            IsObstacleNear(0.5),
+            AvoidObstacle()
+        ])
+
+        # 主任务分支
+        main_task = Repeater(Sequence([
+            MoveTo(pick_location),
+            Pickup("cargo_01"),
+            MoveTo(place_location),
+            Place(place_location)
+        ]), count=-1)
+
+        # 根节点：并行执行避障、充电检查、主任务
+        root = Parallel([
+            obstacle_branch,
+            charge_branch,
+            main_task
+        ], success_threshold=3, failure_threshold=1, name="WarehouseTransferTask")
+
+        return root
+
+    @staticmethod
+    def create_patrol_task(patrol_points: List[Tuple[float, float]]) -> BehaviorNode:
+        """创建巡逻任务行为树"""
+        return Parallel([
+            Sequence([IsObstacleNear(0.5), AvoidObstacle()]),
+            Patrol(patrol_points)
+        ], success_threshold=2, name="PatrolTask")
+
+    @staticmethod
+    def create_multi_agv_coordination_task(agv_count: int, task_list: List[Dict]) -> BehaviorNode:
+        """创建多AGV协同任务行为树"""
+        agv_tasks = []
+        for i in range(agv_count):
+            if i < len(task_list):
+                task = task_list[i]
+                if task["type"] == "transfer":
+                    agv_task = BehaviorTreeBuilder.create_warehouse_transfer_task(
+                        task["pick"], task["place"], task["charge"]
+                    )
+                elif task["type"] == "patrol":
+                    agv_task = BehaviorTreeBuilder.create_patrol_task(task["points"])
+                else:
+                    continue
+                agv_tasks.append(agv_task)
+
+        return Parallel(agv_tasks, success_threshold=len(agv_tasks), name="MultiAGVCoordinator")
