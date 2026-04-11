@@ -75,7 +75,7 @@ class TestTactileServoIntegration(unittest.TestCase):
             
             if contacts:
                 # 基于触觉反馈调整抓取力
-                mean_force = np.mean([c.contact_force for c in contacts])
+                mean_force = np.mean([c.total_force for c in contacts])
                 if mean_force < 5.0:
                     # 力度不足，增加夹持力
                     cmd = self._mock_servo_command(position=0.5, force=mean_force + 2.0)
