@@ -1,0 +1,18 @@
+[project]
+name = "SuperModel"
+version = "2.88.0"
+authors = [
+  { name="DIT4FUN", email="dev@dit4fun.com" }
+]
+description = "超模态机器人具身智能大脑"
+readme = "README.md"
+license = { file="LICENSE" }
+requires-python = ">=3.10"
+classifiers = [
+    "Programming Language :: Python :: 3",
+    "License :: OSI Approved :: MIT License",
+    "Operating System :: OS Independent",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

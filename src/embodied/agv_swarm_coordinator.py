@@ -609,7 +609,8 @@ class AGVSwarmCoordinator:
                 
                 # 计算进度（基于已行驶距离/总距离）
                 if agv.current_state.path:
-                    traveled = np.linalg.norm(np.array(agv.current_state.pose[:3]) - np.array(agv.current_state.path[0]))
+                    path = agv.current_state.path
+                    traveled = np.linalg.norm(np.array(agv.current_state.pose[:3]) - np.array(path[0]))
                     total = sum(np.linalg.norm(np.array(path[i+1]) - np.array(path[i])) for i in range(len(path)-1))
                     if total > 0:
                         agv.current_task.progress = min(traveled / total, 1.0)
