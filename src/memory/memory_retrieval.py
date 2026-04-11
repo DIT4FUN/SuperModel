@@ -20,6 +20,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 import time
 import threading
+from collections import OrderedDict
 
 
 class RetrievalStrategy(Enum):
@@ -88,10 +89,15 @@ class MemoryRetrieval:
         self._history: List[RetrievalQuery] = []
         self._max_history = 100
         
-        # 缓存
-        self._cache: Dict[str, List[RetrievalResult]] = {}
+        # 缓存 (LRU)
+        self._cache: OrderedDict[str, Tuple[float, List[RetrievalResult]]] = OrderedDict()
         self._cache_lock = threading.RLock()
-        self._cache_ttl = 60.0  # 缓存生存时间 (秒)
+        self._default_cache_ttl = 60.0  # 默认缓存生存时间 (秒)
+        self._max_cache_entries = 200  # 最大缓存条目数
+        # 缓存统计
+        self._cache_hits = 0
+        self._cache_misses = 0
+        self._query_access_count: Dict[str, int] = {}  # 查询访问次数，用于调整ttl
     
     # ==================== 主检索接口 ====================
     
@@ -110,11 +116,29 @@ class MemoryRetrieval:
         # 检查缓存
         cache_key = self._get_cache_key(query)
         with self._cache_lock:
+            # 更新访问计数
+            self._query_access_count[cache_key] = self._query_access_count.get(cache_key, 0) + 1
+            
             if cache_key in self._cache:
                 cached_time, results = self._cache[cache_key]
-                if time.time() - cached_time < self._cache_ttl:
+                # 热门查询延长ttl：访问次数>10次，ttl延长到5分钟；>50次，延长到30分钟
+                access_count = self._query_access_count[cache_key]
+                ttl = self._default_cache_ttl
+                if access_count > 50:
+                    ttl = 1800.0
+                elif access_count > 10:
+                    ttl = 300.0
+                
+                if time.time() - cached_time < ttl:
+                    # LRU：移动到末尾
+                    self._cache.move_to_end(cache_key)
+                    self._cache_hits += 1
                     return results
+                else:
+                    # 过期删除
+                    del self._cache[cache_key]
         
+        self._cache_misses += 1
         # 执行检索
         results = self._execute_retrieval(query)
         
@@ -124,6 +148,9 @@ class MemoryRetrieval:
         # 缓存
         with self._cache_lock:
             self._cache[cache_key] = (time.time(), results)
+            # LRU淘汰超过最大条目的
+            if len(self._cache) > self._max_cache_entries:
+                self._cache.popitem(last=False)
         
         # 记录历史
         self._history.append(query)
@@ -474,11 +501,29 @@ class MemoryRetrieval:
         """获取检索历史"""
         return self._history[-limit:]
     
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取检索统计信息"""
+        with self._cache_lock:
+            total_queries = self._cache_hits + self._cache_misses
+            hit_rate = self._cache_hits / total_queries if total_queries > 0 else 0.0
+            
+            return {
+                'total_queries': total_queries,
+                'cache_hits': self._cache_hits,
+                'cache_misses': self._cache_misses,
+                'cache_hit_rate': hit_rate,
+                'cache_entries': len(self._cache),
+                'max_cache_entries': self._max_cache_entries,
+            }
+    
     def clear_history(self) -> None:
         """清除检索历史"""
         self._history.clear()
         with self._cache_lock:
             self._cache.clear()
+            self._cache_hits = 0
+            self._cache_misses = 0
+            self._query_access_count.clear()
 
 
 # ==================== 便捷函数 ====================

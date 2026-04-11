@@ -483,6 +483,7 @@ class LongTermMemory:
                     'stats': self.procedural.get_statistics(),
                 },
                 'working': self.working.get_status(),
+                'retrieval': self.retrieval.get_statistics(),
                 'consolidation': self.get_consolidation_status(),
                 'storage': self.store.get_storage_info(),
             }
