@@ -17,6 +17,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 import logging
+import time
 
 logger = logging.getLogger(__name__)
 __all__ = [
@@ -35,6 +36,15 @@ class CoordinationStrategy(Enum):
     DECENTRALIZED = "decentralized"  # 分布式协商
     HYBRID = "hybrid"                 # 混合策略
     MARKET_BASED = "market_based"     # 基于市场拍卖
+
+
+class AGVPriority(Enum):
+    """AGV任务优先级，数值越小优先级越高"""
+    P0_EMERGENCY = 0   # 紧急任务，如医疗物资、故障救援，最高优先级
+    P1_HIGH = 1        # 高优先级任务
+    P2_MEDIUM = 2      # 中等优先级
+    P3_LOW = 3         # 低优先级
+    P4_BACKGROUND = 4  # 后台任务，最低优先级
 
 
 @dataclass
@@ -81,7 +91,7 @@ class ConflictResolution:
 class TaskAllocator:
     """多AGV任务分配器
     基于成本矩阵的二分图最优匹配
-    支持距离和电量成本
+    支持距离、电量和负载均衡成本
     """
 
     def __init__(
@@ -90,11 +100,17 @@ class TaskAllocator:
         strategy: str = "bipartite",
         consider_battery: bool = True,
         battery_weight: float = 0.3,
+        consider_load: bool = True,
+        load_weight: float = 0.4,
+        max_tasks_per_robot: int = 5,
     ):
         self.num_robots = num_robots
         self.strategy = strategy
         self.consider_battery = consider_battery
         self.battery_weight = battery_weight
+        self.consider_load = consider_load
+        self.load_weight = load_weight
+        self.max_tasks_per_robot = max_tasks_per_robot
 
     def calculate_cost(
         self,
@@ -114,6 +130,14 @@ class TaskAllocator:
             battery_cost = (1.0 - battery) * self.battery_weight * 10.0
             distance_cost += battery_cost
 
+        # 负载均衡成本
+        if self.consider_load:
+            # 已分配任务数量作为负载
+            num_tasks = len(robot.get('assigned_tasks', []))
+            load_factor = num_tasks / self.max_tasks_per_robot if self.max_tasks_per_robot > 0 else 0
+            load_cost = load_factor * self.load_weight * 10.0
+            distance_cost += load_cost
+
         return distance_cost
 
     def allocate(
@@ -124,14 +148,17 @@ class TaskAllocator:
         """分配任务给机器人
 
         Args:
-            robots: 可用机器人列表，每项包含 'id', 'position', 'available'
+            robots: 可用机器人列表，每项包含 'id', 'position', 'available', 'assigned_tasks'
             tasks: 待分配任务列表，每项包含 'id', 'target'
 
         Returns:
             分配结果列表，每项包含 'task_id', 'robot_id', 'cost'
         """
-        # 过滤出可用机器人
-        available_robots = [r for r in robots if r.get('available', True)]
+        # 过滤出可用机器人，且任务数量未超过上限
+        available_robots = [
+            r for r in robots
+            if r.get('available', True) and len(r.get('assigned_tasks', [])) < self.max_tasks_per_robot
+        ]
         if not available_robots or not tasks:
             return []
 
@@ -139,16 +166,15 @@ class TaskAllocator:
         # 实际大规模使用可替换为scipy.optimize.linear_sum_assignment
         assignments: List[Dict[str, Any]] = []
         unassigned_tasks = tasks.copy()
-        used_robot_ids: Set[str] = set()
 
-        # 按成本贪婪分配
-        while unassigned_tasks and len(used_robot_ids) < len(available_robots):
+        # 按成本贪婪分配，支持多任务分配给同一机器人（只要不超过上限）
+        while unassigned_tasks:
             best_assignment = None
             best_cost = float('inf')
 
             for task in unassigned_tasks:
                 for robot in available_robots:
-                    if robot['id'] in used_robot_ids:
+                    if len(robot.get('assigned_tasks', [])) >= self.max_tasks_per_robot:
                         continue
                     cost = self.calculate_cost(robot, task)
                     if cost < best_cost:
@@ -161,7 +187,13 @@ class TaskAllocator:
 
             if best_assignment:
                 assignments.append(best_assignment)
-                used_robot_ids.add(best_assignment['robot_id'])
+                # 更新机器人任务列表
+                for robot in available_robots:
+                    if robot['id'] == best_assignment['robot_id']:
+                        if 'assigned_tasks' not in robot:
+                            robot['assigned_tasks'] = []
+                        robot['assigned_tasks'].append(best_assignment['task_id'])
+                        break
                 unassigned_tasks = [t for t in unassigned_tasks if t['id'] != best_assignment['task_id']]
             else:
                 break
@@ -289,10 +321,12 @@ class SwarmCoordinator:
     def __init__(
         self,
         num_robots: int = 1,
-        strategy: CoordinationStrategy = CoordinationStrategy.CENTRALIZED
+        strategy: CoordinationStrategy = CoordinationStrategy.CENTRALIZED,
+        max_communication_latency_ms: int = 100,
     ):
         self.num_robots = num_robots
         self.strategy = strategy
+        self.max_communication_latency_ms = max_communication_latency_ms
         self.robots: Dict[str, Dict[str, Any]] = {}
         self.pending_tasks: List[Dict[str, Any]] = []
         self.allocations: List[Dict[str, Any]] = []
@@ -301,12 +335,19 @@ class SwarmCoordinator:
         self.total_conflicts_detected = 0
         self.conflicts_resolved = 0
 
+        # 通信同步相关
+        self.last_sync_timestamp: Dict[str, float] = {}  # 每个机器人最后同步时间
+        self.communication_latency_ms: Dict[str, List[float]] = {}  # 每个机器人的通信延迟历史
+        self.sync_failure_count: Dict[str, int] = {}  # 同步失败计数
+
         # 统计
         self.stats = {
             'total_tasks_allocated': 0,
             'total_conflicts': 0,
             'conflicts_resolved': 0,
             'conflicts_unresolved': 0,
+            'average_communication_latency_ms': 0.0,
+            'sync_failure_rate': 0.0,
         }
 
     def register_robot(self, robot_id: str, position: np.ndarray, **kwargs) -> None:
@@ -377,29 +418,118 @@ class SwarmCoordinator:
         """解决两个机器人之间的路径冲突
 
         策略:
-        1. 尝试速度调整错开时间
-        2. 如果不行，让一台等待
-        3. 如果还是不行，重规划路径
+        1. 优先处理紧急优先级任务，高优先级AGV拥有绝对路权
+        2. 尝试速度调整错开时间
+        3. 如果不行，让优先级低的AGV等待
+        4. 对头冲突：空载AGV避让满载AGV
+        5. 交叉路口：右侧AGV优先（交通规则）
         """
-        # 策略1: 速度调整 - 一个加速，一个减速
         robot1 = self.robots[conflict.robot1_id]
         robot2 = self.robots[conflict.robot2_id]
         current_speed1 = robot1.get('current_speed', 0.5)
         current_speed2 = robot2.get('current_speed', 0.5)
+        priority1 = robot1.get('priority', AGVPriority.P2_MEDIUM.value)
+        priority2 = robot2.get('priority', AGVPriority.P2_MEDIUM.value)
 
-        # 如果时间接近，调整速度错开
+        # 规则1: 紧急优先级AGV（P0）拥有绝对路权，另一方必须完全停止
+        if priority1 == AGVPriority.P0_EMERGENCY.value and priority2 > AGVPriority.P0_EMERGENCY.value:
+            robot2['current_speed'] = 0.0
+            robot2['waiting_for'] = conflict.robot1_id
+            return ConflictResolution(
+                conflict=conflict,
+                resolved=True,
+                method='emergency_right_of_way',
+                wait_time2=float('inf')  # 直到紧急车辆通过
+            )
+        if priority2 == AGVPriority.P0_EMERGENCY.value and priority1 > AGVPriority.P0_EMERGENCY.value:
+            robot1['current_speed'] = 0.0
+            robot1['waiting_for'] = conflict.robot2_id
+            return ConflictResolution(
+                conflict=conflict,
+                resolved=True,
+                method='emergency_right_of_way',
+                wait_time1=float('inf')
+            )
+
+        # 规则2: 优先级高的AGV优先，低优先级等待或减速
+        if priority1 < priority2:
+            # robot1优先级更高，robot2减速或等待
+            time_diff = abs(conflict.time1 - conflict.time2)
+            if time_diff < 0.3:
+                # 时间太近，robot2完全等待
+                wait_time = time_diff + 2.0
+                return ConflictResolution(
+                    conflict=conflict,
+                    resolved=True,
+                    method='priority_waiting',
+                    wait_time2=wait_time
+                )
+            else:
+                # robot2适当减速让行
+                new_speed2 = max(current_speed2 * 0.4, 0.1)
+                robot2['current_speed'] = new_speed2
+                return ConflictResolution(
+                    conflict=conflict,
+                    resolved=True,
+                    method='priority_speed_reduction',
+                    new_speed2=new_speed2
+                )
+        elif priority2 < priority1:
+            # robot2优先级更高，robot1减速或等待
+            time_diff = abs(conflict.time1 - conflict.time2)
+            if time_diff < 0.3:
+                wait_time = time_diff + 2.0
+                return ConflictResolution(
+                    conflict=conflict,
+                    resolved=True,
+                    method='priority_waiting',
+                    wait_time1=wait_time
+                )
+            else:
+                new_speed1 = max(current_speed1 * 0.4, 0.1)
+                robot1['current_speed'] = new_speed1
+                return ConflictResolution(
+                    conflict=conflict,
+                    resolved=True,
+                    method='priority_speed_reduction',
+                    new_speed1=new_speed1
+                )
+
+        # 优先级相同，应用其他规则
+        # 规则3: 对头冲突，空载AGV避让满载AGV
+        if conflict.is_head_on:
+            load1 = robot1.get('load_weight', 0.0)
+            load2 = robot2.get('load_weight', 0.0)
+            if load1 > load2:
+                # robot1负载更高，robot2避让
+                new_speed2 = max(current_speed2 * 0.3, 0.1)
+                robot2['current_speed'] = new_speed2
+                return ConflictResolution(
+                    conflict=conflict,
+                    resolved=True,
+                    method='load_based_right_of_way',
+                    new_speed2=new_speed2
+                )
+            elif load2 > load1:
+                new_speed1 = max(current_speed1 * 0.3, 0.1)
+                robot1['current_speed'] = new_speed1
+                return ConflictResolution(
+                    conflict=conflict,
+                    resolved=True,
+                    method='load_based_right_of_way',
+                    new_speed1=new_speed1
+                )
+
+        # 规则4: 速度调整策略，错开到达时间
         time_diff = abs(conflict.time1 - conflict.time2)
         if time_diff < 0.5:
-            # 一个加速，一个减速
-            # 保持平均速度，只是错开时间
             if conflict.time1 < conflict.time2:
-                new_speed1 = min(current_speed1 * 1.5, 1.5)
-                new_speed2 = max(current_speed2 * 0.5, 0.1)
+                new_speed1 = min(current_speed1 * 1.5, 1.5)  # 先到的加速
+                new_speed2 = max(current_speed2 * 0.5, 0.1)  # 后到的减速
             else:
                 new_speed1 = max(current_speed1 * 0.5, 0.1)
                 new_speed2 = min(current_speed2 * 1.5, 1.5)
 
-            # 更新机器人速度
             robot1['current_speed'] = new_speed1
             robot2['current_speed'] = new_speed2
 
@@ -411,34 +541,68 @@ class SwarmCoordinator:
                 new_speed2=new_speed2
             )
 
-        # 策略2: 等待 - 优先级低的等待
-        priority1 = robot1.get('priority', 5)
-        priority2 = robot2.get('priority', 5)
-
-        if priority1 > priority2:
-            # robot2 等待
-            wait_time = abs(conflict.time1 - conflict.time2) + 1.0
+        # 所有其他情况，让先到达的先走，后到达的等待
+        if conflict.time1 < conflict.time2:
+            wait_time = conflict.time1 - conflict.time2 + 1.0
             return ConflictResolution(
                 conflict=conflict,
                 resolved=True,
-                method='waiting',
+                method='first_come_first_serve_waiting',
                 wait_time2=wait_time
             )
         else:
-            wait_time = abs(conflict.time1 - conflict.time2) + 1.0
+            wait_time = conflict.time2 - conflict.time1 + 1.0
             return ConflictResolution(
                 conflict=conflict,
                 resolved=True,
-                method='waiting',
+                method='first_come_first_serve_waiting',
                 wait_time1=wait_time
             )
 
-        # 如果以上都不行，返回未解决（需要路径重规划）
-        return ConflictResolution(
-            conflict=conflict,
-            resolved=False,
-            method='none'
-        )
+    def real_time_collision_avoidance(self) -> List[ConflictResolution]:
+        """实时碰撞检测与避让，每100ms运行一次
+        检测当前位置的即将发生的碰撞，立即执行避让动作
+        """
+        resolutions: List[ConflictResolution] = []
+        robot_ids = list(self.robots.keys())
+        safety_distance = self.detector.conflict_distance_threshold
+
+        # 两两检测距离
+        for i, id1 in enumerate(robot_ids):
+            r1 = self.robots[id1]
+            pos1 = np.array(r1['position'])
+            speed1 = r1.get('current_speed', 0.5)
+            velocity1 = np.array(r1.get('velocity', [speed1, 0.0]))
+
+            for j, id2 in enumerate(robot_ids[i+1:]):
+                r2 = self.robots[id2]
+                pos2 = np.array(r2['position'])
+                speed2 = r2.get('current_speed', 0.5)
+                velocity2 = np.array(r2.get('velocity', [speed2, 0.0]))
+
+                distance = float(np.linalg.norm(pos1 - pos2))
+
+                # 即将碰撞：距离小于安全距离，且相对速度朝向对方
+                if distance < safety_distance * 1.5:
+                    relative_velocity = velocity2 - velocity1
+                    relative_position = pos2 - pos1
+                    approaching = float(np.dot(relative_velocity, relative_position)) < 0
+
+                    if approaching:
+                        # 立即创建冲突并解决
+                        conflict = PathConflict(
+                            robot1_id=id1,
+                            robot2_id=id2,
+                            position=(pos1 + pos2) / 2,
+                            time1=0.1,  # 0.1秒后碰撞
+                            time2=0.1,
+                            distance=distance,
+                            is_head_on=float(np.dot(velocity1, velocity2)) < 0
+                        )
+                        resolution = self.resolve_conflict(conflict)
+                        resolutions.append(resolution)
+
+        return resolutions
 
     def get_statistics(self) -> Dict[str, Any]:
         """获取协调统计信息"""
@@ -458,6 +622,93 @@ class SwarmCoordinator:
         if robot_id in self.robots:
             self.robots[robot_id]['available'] = True
             self.robots[robot_id]['current_task'] = None
+            # 从已分配任务列表中移除
+            if 'assigned_tasks' in self.robots[robot_id]:
+                if self.robots[robot_id]['assigned_tasks']:
+                    self.robots[robot_id]['assigned_tasks'].pop(0)
+
+    def sync_robot_state(self, robot_id: str, state: Dict[str, Any], send_timestamp: float) -> bool:
+        """同步机器人状态，测量通信延迟
+        Args:
+            robot_id: 机器人ID
+            state: 机器人状态字典，包含position, current_speed, battery等
+            send_timestamp: 机器人发送状态时的时间戳（秒级浮点数）
+        Returns:
+            是否同步成功（延迟在允许范围内
+        """
+        if robot_id not in self.robots:
+            return False
+
+        receive_timestamp = time.time()
+        latency_ms = (receive_timestamp - send_timestamp) * 1000
+
+        # 记录延迟
+        if robot_id not in self.communication_latency_ms:
+            self.communication_latency_ms[robot_id] = []
+        self.communication_latency_ms[robot_id].append(latency_ms)
+        # 保留最近100条延迟记录
+        if len(self.communication_latency_ms[robot_id]) > 100:
+            self.communication_latency_ms[robot_id].pop(0)
+
+        # 更新最后同步时间
+        self.last_sync_timestamp[robot_id] = receive_timestamp
+
+        # 检查延迟是否超过阈值
+        if latency_ms > self.max_communication_latency_ms:
+            if robot_id not in self.sync_failure_count:
+                self.sync_failure_count[robot_id] = 0
+            self.sync_failure_count[robot_id] += 1
+            return False
+
+        # 更新机器人状态
+        self.robots[robot_id].update(state)
+        self.robots[robot_id]['last_state_update'] = receive_timestamp
+
+        # 更新统计数据
+        all_latencies = []
+        for l in self.communication_latency_ms.values():
+            all_latencies.extend(l)
+        if all_latencies:
+            self.stats['average_communication_latency_ms'] = sum(all_latencies) / len(all_latencies)
+
+        total_sync_attempts = sum(len(l) for l in self.communication_latency_ms.values())
+        total_failures = sum(self.sync_failure_count.values())
+        if total_sync_attempts > 0:
+            self.stats['sync_failure_rate'] = total_failures / total_sync_attempts * 100
+
+        return True
+
+    def get_communication_health(self) -> Dict[str, Any]:
+        """获取通信健康状态
+        Returns:
+            包含每个机器人的平均延迟、失败率、是否正常的字典
+        """
+        health = {
+            'overall_healthy': True,
+            'average_latency_ms': self.stats['average_communication_latency_ms'],
+            'total_failure_rate': self.stats['sync_failure_rate'],
+            'robots': {}
+        }
+
+        for robot_id in self.robots:
+            latencies = self.communication_latency_ms.get(robot_id, [])
+            avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+            failures = self.sync_failure_count.get(robot_id, 0)
+            total = len(latencies) if latencies else 0
+            failure_rate = failures / total * 100 if total > 0 else 0.0
+
+            robot_healthy = avg_latency <= self.max_communication_latency_ms and failure_rate < 5.0
+            if not robot_healthy:
+                health['overall_healthy'] = False
+
+            health['robots'][robot_id] = {
+                'average_latency_ms': avg_latency,
+                'failure_rate_pct': failure_rate,
+                'healthy': robot_healthy,
+                'last_sync_seconds_ago': time.time() - self.last_sync_timestamp.get(robot_id, 0.0) if robot_id in self.last_sync_timestamp else None
+            }
+
+        return health
 
 
 @dataclass

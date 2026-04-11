@@ -78,11 +78,11 @@ class TestTaskAllocator:
         assert assigned_robots == {'agv1', 'agv2'}
 
     def test_allocate_more_tasks_than_robots(self):
-        """测试任务比机器人多"""
-        allocator = TaskAllocator(num_robots=2)
+        """测试任务比机器人多（单任务模式）"""
+        allocator = TaskAllocator(num_robots=2, max_tasks_per_robot=1)
         robots = [
-            {'id': 'a1', 'position': np.array([0.0, 0.0]), 'available': True},
-            {'id': 'a2', 'position': np.array([10.0, 0.0]), 'available': True},
+            {'id': 'a1', 'position': np.array([0.0, 0.0]), 'available': True, 'assigned_tasks': []},
+            {'id': 'a2', 'position': np.array([10.0, 0.0]), 'available': True, 'assigned_tasks': []},
         ]
         tasks = [
             {'id': 't1', 'target': np.array([1.0, 0.0])},
@@ -418,6 +418,184 @@ def test_module_import():
     assert SwarmCoordinator is not None
     assert TaskAllocator is not None
     assert ConflictDetector is not None
+
+
+class TestDynamicTaskAllocationLoadBalancing:
+    """动态任务分配与负载均衡测试"""
+
+    def test_load_balancing_distributes_tasks_evenly(self):
+        """测试负载均衡均匀分配任务"""
+        allocator = TaskAllocator(num_robots=2, consider_load=True, load_weight=1.0, max_tasks_per_robot=3)
+        robots = [
+            {'id': 'agv1', 'position': np.array([0.0, 0.0]), 'available': True, 'assigned_tasks': []},
+            {'id': 'agv2', 'position': np.array([10.0, 0.0]), 'available': True, 'assigned_tasks': []},
+        ]
+        # 创建4个任务，分布在中间区域
+        tasks = []
+        for i in range(4):
+            tasks.append({'id': f't{i}', 'target': np.array([4.0 + i*0.5, 0.0])})
+
+        assignments = allocator.allocate(robots, tasks)
+        # 应该分配所有4个任务
+        assert len(assignments) == 4
+        # 负载均衡：每个机器人分配2个任务
+        tasks_per_robot = {}
+        for a in assignments:
+            if a['robot_id'] not in tasks_per_robot:
+                tasks_per_robot[a['robot_id']] = 0
+            tasks_per_robot[a['robot_id']] += 1
+        assert tasks_per_robot['agv1'] == 2
+        assert tasks_per_robot['agv2'] == 2
+
+    def test_max_tasks_per_robot_limit(self):
+        """测试每个机器人最大任务数限制"""
+        allocator = TaskAllocator(num_robots=2, max_tasks_per_robot=2)
+        robots = [
+            {'id': 'agv1', 'position': np.array([0.0, 0.0]), 'available': True, 'assigned_tasks': ['t1', 't2']},
+            {'id': 'agv2', 'position': np.array([10.0, 0.0]), 'available': True, 'assigned_tasks': []},
+        ]
+        tasks = [
+            {'id': 't3', 'target': np.array([1.0, 0.0])},
+            {'id': 't4', 'target': np.array([2.0, 0.0])},
+            {'id': 't5', 'target': np.array([3.0, 0.0])},
+        ]
+        assignments = allocator.allocate(robots, tasks)
+        # agv1已经有2个任务，agv2最多2个任务，所以总分配2个
+        assert len(assignments) == 2
+        for a in assignments:
+            assert a['robot_id'] == 'agv2'
+
+
+class TestPriorityRightOfWay:
+    """优先级路权测试"""
+
+    def test_emergency_priority_has_absolute_right_of_way(self):
+        """测试紧急优先级AGV拥有绝对路权"""
+        coord = SwarmCoordinator(num_robots=2)
+        # AGV1是紧急优先级，AGV2是普通优先级
+        coord.register_robot('agv1', np.array([0.0, 0.0]), priority=0, current_speed=1.0)
+        coord.register_robot('agv2', np.array([2.0, 0.0]), priority=2, current_speed=1.0)
+
+        conflict = PathConflict(
+            robot1_id='agv1',
+            robot2_id='agv2',
+            position=np.array([1.0, 0.0]),
+            time1=1.0,
+            time2=1.0,
+            distance=0.0,
+            is_head_on=True
+        )
+
+        resolution = coord.resolve_conflict(conflict)
+        assert resolution.resolved
+        assert resolution.method == 'emergency_right_of_way'
+        # 普通优先级AGV应该完全停止
+        assert coord.robots['agv2']['current_speed'] == 0.0
+        assert coord.robots['agv2']['waiting_for'] == 'agv1'
+
+    def test_higher_priority_agv_gets_right_of_way(self):
+        """测试高优先级AGV优先通行"""
+        coord = SwarmCoordinator(num_robots=2)
+        coord.register_robot('agv1', np.array([0.0, 0.0]), priority=1, current_speed=1.0)  # 高优先级
+        coord.register_robot('agv2', np.array([2.0, 0.0]), priority=3, current_speed=1.0)  # 低优先级
+
+        conflict = PathConflict(
+            robot1_id='agv1',
+            robot2_id='agv2',
+            position=np.array([1.0, 0.0]),
+            time1=1.0,
+            time2=1.4,  # 时间差0.4s，在0.3-0.5之间，触发减速
+            distance=0.0,
+        )
+
+        resolution = coord.resolve_conflict(conflict)
+        assert resolution.resolved
+        assert 'priority' in resolution.method
+        # 低优先级AGV减速或等待
+        assert coord.robots['agv2']['current_speed'] < 1.0
+
+
+class TestRealTimeCommunicationSync:
+    """实时通信同步测试"""
+
+    def test_communication_latency_measurement(self):
+        """测试通信延迟测量"""
+        coord = SwarmCoordinator(max_communication_latency_ms=100)
+        coord.register_robot('agv1', np.array([0.0, 0.0]))
+
+        # 模拟延迟50ms的同步
+        send_time = time.time() - 0.05
+        success = coord.sync_robot_state('agv1', {'position': np.array([1.0, 0.0])}, send_time)
+        assert success == True
+        assert 'average_communication_latency_ms' in coord.stats
+        assert 45 <= coord.stats['average_communication_latency_ms'] <= 55
+
+    def test_latency_exceeding_threshold_fails_sync(self):
+        """测试延迟超过阈值时同步失败"""
+        coord = SwarmCoordinator(max_communication_latency_ms=100)
+        coord.register_robot('agv1', np.array([0.0, 0.0]))
+
+        # 模拟延迟150ms的同步
+        send_time = time.time() - 0.15
+        success = coord.sync_robot_state('agv1', {'position': np.array([1.0, 0.0])}, send_time)
+        assert success == False
+        assert coord.sync_failure_count['agv1'] == 1
+
+    def test_communication_health_monitoring(self):
+        """测试通信健康监控"""
+        coord = SwarmCoordinator(max_communication_latency_ms=100)
+        coord.register_robot('agv1', np.array([0.0, 0.0]))
+        coord.register_robot('agv2', np.array([10.0, 0.0]))
+
+        # AGV1延迟正常，AGV2延迟过高
+        send_time1 = time.time() - 0.03
+        coord.sync_robot_state('agv1', {'position': np.array([1.0, 0.0])}, send_time1)
+        send_time2 = time.time() - 0.2
+        coord.sync_robot_state('agv2', {'position': np.array([11.0, 0.0])}, send_time2)
+
+        health = coord.get_communication_health()
+        assert health['robots']['agv1']['healthy'] == True
+        assert health['robots']['agv2']['healthy'] == False
+        assert health['overall_healthy'] == False  # 因为AGV2不健康
+
+
+class TestRealTimeCollisionAvoidance:
+    """实时碰撞避让测试"""
+
+    def test_real_time_avoidance_detects_approaching_robots(self):
+        """测试实时避让检测正在靠近的机器人"""
+        coord = SwarmCoordinator(num_robots=2)
+        # 两个机器人相距0.4m，相向而行
+        coord.register_robot('agv1', np.array([0.0, 0.0]), current_speed=1.0, velocity=[1.0, 0.0])
+        coord.register_robot('agv2', np.array([0.4, 0.0]), current_speed=1.0, velocity=[-1.0, 0.0])
+
+        resolutions = coord.real_time_collision_avoidance()
+        # 应该检测到即将碰撞并生成解决方案
+        assert len(resolutions) == 1
+        assert resolutions[0].resolved == True
+        # 至少一个机器人会减速或停止
+        assert coord.robots['agv1']['current_speed'] < 1.0 or coord.robots['agv2']['current_speed'] < 1.0
+
+
+class TestDynamicTaskReallocation:
+    """动态任务重分配测试"""
+
+    def test_reallocate_tasks_when_robot_overloaded(self):
+        """测试当机器人过载时重新分配任务"""
+        coord = SwarmCoordinator(num_robots=2)
+        coord.allocator.max_tasks_per_robot = 2
+        coord.register_robot('agv1', np.array([0.0, 0.0]), available=True, assigned_tasks=['t1', 't2'])
+        coord.register_robot('agv2', np.array([10.0, 0.0]), available=True, assigned_tasks=[])
+
+        # 添加新任务
+        coord.add_global_task({'id': 't3', 'target': np.array([1.0, 0.0])})
+        coord.add_global_task({'id': 't4', 'target': np.array([2.0, 0.0])})
+
+        assignments = coord.coordinate_step()
+        # 所有新任务应该分配给agv2，因为agv1已经满负载
+        assert len(assignments) == 2
+        for a in assignments:
+            assert a['robot_id'] == 'agv2'
 
 
 if __name__ == '__main__':
