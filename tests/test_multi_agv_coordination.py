@@ -35,6 +35,7 @@ class MockAGVState:
     occupying_resource: str = None
     path: list = field(default_factory=list)
     velocity: Tuple[float, float, float] = (0.0, 0.0, 0.0)
+    battery_level: float = 100.0
 
 class MockWarehouseScene:
     def __init__(self):
