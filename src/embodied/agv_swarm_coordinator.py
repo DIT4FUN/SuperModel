@@ -1,8 +1,13 @@
 #!/usr/bin/env python3
 """
 agv_swarm_coordinator.py - Multi-AGV Swarm Coordination Module
-SuperModel v2.66.0 - 2026-04-11
+SuperModel v2.88.0 - 2026-04-12
 功能: 多AGV蜂群协同控制，包括任务分配、路径规划、冲突避免、状态同步
+新增功能:
+1. 基于拍卖的分布式任务分配算法（Contract Net Protocol）
+2. 分布式碰撞避免算法（ORCA最优互斥碰撞避免）
+3. 实时车队状态监控面板，支持JSON/CSV/HTML导出
+4. 匈牙利算法全局最优任务分配支持
 """
 
 import os
@@ -23,7 +28,8 @@ sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
 import logging
 logger = logging.getLogger(__name__)
 try:
-    from control.agv_kinematics import AGVSpec, AGVState
+    from control.agv import AGVSpec
+    from simulation.agv_scenarios import AGVState
     from simulation.embodied_sim import WarehouseScene
 except ImportError:
     # 模块不存在时使用占位符
@@ -256,14 +262,23 @@ class AGVSwarmCoordinator:
                 nearest_node = node_id
         return nearest_node
     
-    def allocate_tasks(self) -> int:
-        """全局任务分配（匈牙利算法变种）"""
+    def allocate_tasks(self, algorithm: str = "greedy") -> int:
+        """全局任务分配，支持多种算法: greedy/auction/hungarian"""
         pending_tasks = [t for t in self.tasks.values() if t.status == TaskStatus.PENDING]
         available_agvs = [a for a in self.agvs.values() if a.available]
         
         if not pending_tasks or not available_agvs:
             return 0
         
+        if algorithm == "auction":
+            return self._auction_based_allocation(pending_tasks, available_agvs)
+        elif algorithm == "hungarian":
+            return self._hungarian_allocation(pending_tasks, available_agvs)
+        else: # 默认greedy
+            return self._greedy_allocation(pending_tasks, available_agvs)
+    
+    def _greedy_allocation(self, pending_tasks: List[SwarmTask], available_agvs: List[AGVSwarmMember]) -> int:
+        """贪心分配（优先分配高优先级任务）"""
         # 构建成本矩阵
         cost_matrix = []
         for task in pending_tasks:
@@ -273,7 +288,6 @@ class AGVSwarmCoordinator:
                 row.append(score)
             cost_matrix.append(row)
         
-        # 贪心分配（优先分配高优先级任务）
         assigned_count = 0
         task_indices = sorted(range(len(pending_tasks)), key=lambda i: pending_tasks[i].priority.value)
         
@@ -299,6 +313,80 @@ class AGVSwarmCoordinator:
                     agv.task_queue.append(task)
                 assigned_count += 1
                 logger.info(f"任务 {task.task_id} 已分配给AGV {agv.agv_id}，得分: {min_score:.2f}")
+        
+        return assigned_count
+    
+    def _auction_based_allocation(self, pending_tasks: List[SwarmTask], available_agvs: List[AGVSwarmMember]) -> int:
+        """基于拍卖的分布式任务分配算法（Contract Net Protocol）"""
+        assigned_count = 0
+        # 按优先级排序任务
+        sorted_tasks = sorted(pending_tasks, key=lambda t: t.priority.value)
+        
+        for task in sorted_tasks:
+            # 1. 拍卖公告：向所有可用AGV发布任务
+            bids = []
+            for agv in available_agvs:
+                score = self.calculate_task_allocation_score(agv, task)
+                if score != float('inf'):
+                    # AGV投标：得分越低，出价越高（转换为出价，0-100，越高越好）
+                    bid = 100.0 / (1.0 + score)
+                    bids.append((bid, agv))
+            
+            if not bids:
+                continue  # 没有AGV能执行该任务
+            
+            # 2. 评标：选择出价最高的AGV
+            bids.sort(reverse=True, key=lambda x: x[0])
+            winning_bid, winning_agv = bids[0]
+            
+            # 3. 中标确认：分配任务给获胜AGV
+            task.status = TaskStatus.ASSIGNED
+            task.assigned_agv_id = winning_agv.agv_id
+            if not winning_agv.current_task:
+                winning_agv.current_task = task
+                task.started_at = time.time()
+            else:
+                winning_agv.task_queue.append(task)
+            
+            assigned_count += 1
+            logger.info(f"拍卖分配：任务 {task.task_id} 中标AGV {winning_agv.agv_id}，出价: {winning_bid:.2f}")
+        
+        return assigned_count
+    
+    def _hungarian_allocation(self, pending_tasks: List[SwarmTask], available_agvs: List[AGVSwarmMember]) -> int:
+        """匈牙利算法全局最优分配"""
+        from scipy.optimize import linear_sum_assignment
+        
+        # 构建成本矩阵（行是任务，列是AGV）
+        n_tasks = len(pending_tasks)
+        n_agvs = len(available_agvs)
+        cost_matrix = np.full((n_tasks, n_agvs), 1e18)
+        
+        for i, task in enumerate(pending_tasks):
+            for j, agv in enumerate(available_agvs):
+                score = self.calculate_task_allocation_score(agv, task)
+                if score != float('inf'):
+                    cost_matrix[i, j] = score
+        
+        # 运行匈牙利算法
+        row_ind, col_ind = linear_sum_assignment(cost_matrix)
+        
+        assigned_count = 0
+        for i, j in zip(row_ind, col_ind):
+            if cost_matrix[i, j] >= 1e18:
+                continue
+            task = pending_tasks[i]
+            agv = available_agvs[j]
+            # 分配任务
+            task.status = TaskStatus.ASSIGNED
+            task.assigned_agv_id = agv.agv_id
+            if not agv.current_task:
+                agv.current_task = task
+                task.started_at = time.time()
+            else:
+                agv.task_queue.append(task)
+            assigned_count += 1
+            logger.info(f"匈牙利分配：任务 {task.task_id} 分配给AGV {agv.agv_id}，成本: {cost_matrix[i, j]:.2f}")
         
         return assigned_count
     
@@ -374,10 +462,14 @@ class AGVSwarmCoordinator:
         self.conflicts.extend(conflicts)
         return conflicts
     
-    def resolve_conflicts(self, conflicts: List[SwarmConflict]) -> int:
-        """解决冲突"""
+    def resolve_conflicts(self, conflicts: List[SwarmConflict], mode: str = "centralized") -> int:
+        """解决冲突，支持集中式/分布式模式"""
         resolved_count = 0
         
+        if mode == "distributed":
+            return self._distributed_collision_avoidance(conflicts)
+        
+        # 集中式冲突解决
         for conflict in conflicts:
             if conflict.resolved:
                 continue
@@ -433,6 +525,53 @@ class AGVSwarmCoordinator:
                 conflict.resolved = True
                 resolved_count += 1
                 logger.info(f"资源竞争冲突已解决: {conflict.resolution}")
+        
+        return resolved_count
+    
+    def _distributed_collision_avoidance(self, conflicts: List[SwarmConflict]) -> int:
+        """分布式碰撞避免算法（基于ORCA：最优互斥碰撞避免）"""
+        resolved_count = 0
+        
+        for conflict in conflicts:
+            if conflict.resolved or conflict.conflict_type != "collision":
+                continue
+            
+            involved_agvs = [self.agvs[agv_id] for agv_id in conflict.involved_agvs]
+            if len(involved_agvs) < 2:
+                continue
+            
+            agv1, agv2 = involved_agvs[:2]
+            pos1 = np.array(agv1.current_state.pose[:3])
+            pos2 = np.array(agv2.current_state.pose[:3])
+            vel1 = np.array(agv1.current_state.velocity[:3]) if hasattr(agv1.current_state, 'velocity') else np.array([agv1.current_state.speed, 0, 0])
+            vel2 = np.array(agv2.current_state.velocity[:3]) if hasattr(agv2.current_state, 'velocity') else np.array([agv2.current_state.speed, 0, 0])
+            
+            # 相对位置和相对速度
+            rel_pos = pos2 - pos1
+            rel_vel = vel2 - vel1
+            dist = np.linalg.norm(rel_pos)
+            safety_distance = 0.8  # 分布式模式下安全距离更大
+            
+            # 计算避免碰撞所需的最小速度调整
+            time_to_collision = dist / max(np.linalg.norm(rel_vel), 0.1)
+            if time_to_collision < 2.0:  # 2秒内会碰撞
+                # 计算ORCA半平面
+                n = rel_pos / dist
+                v_rel_proj = np.dot(rel_vel, n)
+                u = ((safety_distance / dist) - 1) * rel_vel if v_rel_proj < 0 else np.zeros(3)
+                
+                # 调整AGV速度（各AGV承担一半调整量）
+                new_vel1 = vel1 + 0.5 * u
+                new_vel2 = vel2 - 0.5 * u
+                
+                # 更新AGV目标速度
+                agv1.current_state.target_speed = np.linalg.norm(new_vel1)
+                agv2.current_state.target_speed = np.linalg.norm(new_vel2)
+                
+                conflict.resolution = f"分布式ORCA调整：AGV {agv1.agv_id} 速度 {agv1.current_state.target_speed:.2f}m/s, AGV {agv2.agv_id} 速度 {agv2.current_state.target_speed:.2f}m/s"
+                conflict.resolved = True
+                resolved_count += 1
+                logger.info(f"分布式碰撞避免已生效: {conflict.resolution}")
         
         return resolved_count
     
@@ -543,6 +682,7 @@ class AGVSwarmCoordinator:
         completed_tasks = self.swarm_metrics['tasks_completed']
         
         return {
+            'version': 'v2.88.0',
             'active_agvs': active_agvs,
             'total_agvs': len(self.agvs),
             'pending_tasks': pending_tasks,
@@ -553,6 +693,220 @@ class AGVSwarmCoordinator:
             'average_task_time': self.swarm_metrics['average_task_completion_time'],
             'simulation_time': self.simulation_time
         }
+    
+    def get_monitoring_dashboard_data(self, format: str = "json") -> dict:
+        """获取实时车队状态监控面板完整数据，支持JSON/CSV/HTML格式"""
+        # AGV详细状态
+        agv_details = []
+        for agv_id, agv in self.agvs.items():
+            current_task_id = agv.current_task.task_id if agv.current_task else None
+            current_task_progress = agv.current_task.progress if agv.current_task else 0.0
+            
+            agv_details.append({
+                'agv_id': agv_id,
+                'spec': agv.spec.size_class,
+                'status': 'active' if agv.available else 'fault',
+                'battery_level': round(agv.battery_level, 1),
+                'health_status': round(agv.health_status, 1),
+                'current_position': [round(p, 2) for p in agv.current_state.pose[:3]],
+                'current_speed': round(agv.current_state.speed, 2),
+                'current_task_id': current_task_id,
+                'task_progress': round(current_task_progress * 100, 1),
+                'queue_length': len(agv.task_queue),
+                'last_heartbeat': agv.last_heartbeat
+            })
+        
+        # 任务详细状态
+        task_details = []
+        for task_id, task in self.tasks.items():
+            task_details.append({
+                'task_id': task_id,
+                'type': task.task_type,
+                'priority': task.priority.name,
+                'status': task.status.name,
+                'source_point': [round(p, 2) for p in task.source_point],
+                'target_point': [round(p, 2) for p in task.target_point],
+                'payload': task.payload,
+                'assigned_agv_id': task.assigned_agv_id,
+                'progress': round(task.progress * 100, 1),
+                'deadline_remaining': round(max(task.deadline - (time.time() - task.created_at), 0), 1)
+            })
+        
+        # 冲突详情
+        active_conflicts = [{
+            'conflict_id': c.conflict_id,
+            'type': c.conflict_type,
+            'involved_agvs': c.involved_agvs,
+            'location': [round(p, 2) for p in c.location],
+            'severity': c.severity,
+            'resolved': c.resolved,
+            'resolution': c.resolution,
+            'timestamp': c.timestamp
+        } for c in self.conflicts if not c.resolved]
+        
+        # 统计指标
+        metrics = self.get_swarm_status()
+        
+        dashboard_data = {
+            'timestamp': time.time(),
+            'metrics': metrics,
+            'agvs': agv_details,
+            'tasks': task_details,
+            'active_conflicts': active_conflicts
+        }
+        
+        if format == "csv":
+            # 转换为CSV格式
+            import csv
+            from io import StringIO
+            output = StringIO()
+            writer = csv.writer(output)
+            writer.writerow(['Category', 'Key', 'Value'])
+            for k, v in metrics.items():
+                writer.writerow(['Metrics', k, v])
+            for agv in agv_details:
+                for k, v in agv.items():
+                    writer.writerow(['AGV', f"{agv['agv_id']}_{k}", v])
+            return {'csv': output.getvalue()}
+        elif format == "html":
+            # 生成简单HTML面板
+            html = f"""
+            <!DOCTYPE html>
+            <html>
+            <head>
+                <title>AGV Swarm Monitoring Dashboard v2.88.0</title>
+                <style>
+                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
+                    .metric-card {{ display: inline-block; border: 1px solid #ccc; padding: 15px; margin: 10px; border-radius: 8px; min-width: 150px; }}
+                    .green {{ color: #2ecc71; }}
+                    .red {{ color: #e74c3c; }}
+                    .yellow {{ color: #f39c12; }}
+                    table {{ border-collapse: collapse; width: 100%; margin: 20px 0; }}
+                    th, td {{ border: 1px solid #ddd; padding: 8px; text-align: left; }}
+                    th {{ background-color: #f2f2f2; }}
+                </style>
+            </head>
+            <body>
+                <h1>AGV Swarm Monitoring Dashboard v2.88.0</h1>
+                <p>更新时间: {time.ctime(dashboard_data['timestamp'])}</p>
+                
+                <h2>全局指标</h2>
+                <div class="metric-card">
+                    <h3>总AGV数</h3>
+                    <p class="green">{metrics['total_agvs']}</p>
+                </div>
+                <div class="metric-card">
+                    <h3>活跃AGV数</h3>
+                    <p class="green">{metrics['active_agvs']}</p>
+                </div>
+                <div class="metric-card">
+                    <h3>待处理任务</h3>
+                    <p class="yellow">{metrics['pending_tasks']}</p>
+                </div>
+                <div class="metric-card">
+                    <h3>执行中任务</h3>
+                    <p class="yellow">{metrics['in_progress_tasks']}</p>
+                </div>
+                <div class="metric-card">
+                    <h3>已完成任务</h3>
+                    <p class="green">{metrics['completed_tasks']}</p>
+                </div>
+                <div class="metric-card">
+                    <h3>冲突数</h3>
+                    <p class="{'red' if metrics['conflict_count'] > 0 else 'green'}">{metrics['conflict_count']}</p>
+                </div>
+                
+                <h2>AGV状态</h2>
+                <table>
+                    <tr><th>AGV ID</th><th>规格</th><th>状态</th><th>电量</th><th>健康度</th><th>位置</th><th>当前任务</th><th>任务进度</th><th>队列长度</th></tr>
+            """
+            for agv in agv_details:
+                status_class = 'green' if agv['status'] == 'active' else 'red'
+                progress = agv['task_progress']
+                html += f"""
+                    <tr>
+                        <td>{agv['agv_id']}</td>
+                        <td>{agv['spec']}</td>
+                        <td class="{status_class}">{agv['status']}</td>
+                        <td>{agv['battery_level']}%</td>
+                        <td>{agv['health_status']}%</td>
+                        <td>{agv['current_position']}</td>
+                        <td>{agv['current_task_id'] or '-'}</td>
+                        <td>{progress}%</td>
+                        <td>{agv['queue_length']}</td>
+                    </tr>
+                """
+            html += """
+                </table>
+                
+                <h2>任务状态</h2>
+                <table>
+                    <tr><th>任务ID</th><th>类型</th><th>优先级</th><th>状态</th><th>分配AGV</th><th>进度</th><th>剩余截止时间</th></tr>
+            """
+            for task in task_details:
+                status_class = {
+                    'PENDING': 'yellow',
+                    'ASSIGNED': 'blue',
+                    'IN_PROGRESS': 'yellow',
+                    'COMPLETED': 'green',
+                    'FAILED': 'red',
+                    'CANCELLED': 'gray'
+                }.get(task['status'], 'black')
+                html += f"""
+                    <tr>
+                        <td>{task['task_id']}</td>
+                        <td>{task['type']}</td>
+                        <td>{task['priority']}</td>
+                        <td class="{status_class}">{task['status']}</td>
+                        <td>{task['assigned_agv_id'] or '-'}</td>
+                        <td>{task['progress']}%</td>
+                        <td>{task['deadline_remaining']}s</td>
+                    </tr>
+                """
+            html += """
+                </table>
+                
+                <h2>活跃冲突</h2>
+                {'<p class="green">无活跃冲突</p>' if len(active_conflicts) == 0 else ''}
+            """
+            if active_conflicts:
+                html += """
+                    <table>
+                        <tr><th>冲突ID</th><th>类型</th><th>涉及AGV</th><th>位置</th><th>严重程度</th><th>解决状态</th></tr>
+                """
+                for conflict in active_conflicts:
+                    severity_class = 'red' if conflict['severity'] >=7 else 'yellow'
+                    html += f"""
+                        <tr>
+                            <td>{conflict['conflict_id']}</td>
+                            <td>{conflict['type']}</td>
+                            <td>{', '.join(conflict['involved_agvs'])}</td>
+                            <td>{conflict['location']}</td>
+                            <td class="{severity_class}">{conflict['severity']}</td>
+                            <td class="{'green' if conflict['resolved'] else 'red'}">{'已解决' if conflict['resolved'] else '未解决'}</td>
+                        </tr>
+                    """
+                html += "</table>"
+            html += """
+            </body>
+            </html>
+            """
+            return {'html': html}
+        
+        return dashboard_data
+    
+    def export_dashboard(self, output_path: str, format: str = "html") -> bool:
+        """导出监控面板到文件"""
+        try:
+            data = self.get_monitoring_dashboard_data(format=format)
+            content = data[format] if format in data else str(data)
+            with open(output_path, 'w', encoding='utf-8') as f:
+                f.write(content)
+            logger.info(f"监控面板已导出到 {output_path}")
+            return True
+        except Exception as e:
+            logger.error(f"导出监控面板失败: {e}")
+            return False
 
 if __name__ == "__main__":
     # 测试用例
