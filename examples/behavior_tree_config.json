@@ -1,0 +1,96 @@
+{
+  "task_configs": [
+    {
+      "task_type": "navigate",
+      "task_name": "安全导航任务",
+      "tree": {
+        "type": "sequence",
+        "name": "NavigateSequence",
+        "children": [
+          {"type": "agv_check_safe", "name": "安全检查"},
+          {"type": "agv_check_battery", "params": {"min_battery": 0.2}, "name": "电量检查"},
+          {"type": "agv_move_to", "params": {"speed": 0.8}, "name": "移动到目标"},
+          {"type": "agv_check_position", "params": {"threshold": 0.15}, "name": "位置确认"}
+        ]
+      }
+    },
+    {
+      "task_type": "transport",
+      "task_name": "搬运任务",
+      "tree": {
+        "type": "sequence",
+        "name": "TransportSequence",
+        "children": [
+          {"type": "agv_check_safe", "name": "安全检查"},
+          {"type": "agv_check_battery", "params": {"min_battery": 0.3}, "name": "电量检查"},
+          {"type": "agv_move_to", "name": "移动到拾取点"},
+          {"type": "agv_check_position", "params": {"threshold": 0.1}, "name": "到达拾取点"},
+          {"type": "agv_grasp", "name": "抓取货物"},
+          {"type": "agv_move_to", "name": "移动到放置点"},
+          {"type": "agv_release", "name": "释放货物"}
+        ]
+      }
+    },
+    {
+      "task_type": "patrol",
+      "task_name": "巡逻任务",
+      "tree": {
+        "type": "until_fail",
+        "name": "PatrolLoop",
+        "children": [
+          {
+            "type": "selector",
+            "name": "PatrolSelector",
+            "children": [
+              {"type": "agv_move_to", "params": {"speed": 0.5}, "name": "巡逻移动"},
+              {"type": "lambda", "name": "等待", "action_name": "release"}
+            ]
+          }
+        ]
+      }
+    },
+    {
+      "task_type": "swarm_transport",
+      "task_name": "蜂群协同搬运",
+      "tree": {
+        "type": "sequence",
+        "name": "SwarmTransport",
+        "children": [
+          {"type": "agv_check_safe", "name": "安全检查"},
+          {"type": "agv_check_battery", "params": {"min_battery": 0.4}, "name": "电量检查"},
+          {"type": "agv_negotiate_role", "name": "角色协商"},
+          {"type": "agv_move_to_formation", "name": "移动到阵位"},
+          {"type": "agv_check_formation", "params": {"threshold": 0.15}, "name": "阵位确认"},
+          {"type": "agv_parallel_grasp", "name": "协同抓取"},
+          {"type": "agv_coordinated_move", "name": "协同移动"},
+          {"type": "agv_parallel_release", "name": "协同释放"}
+        ]
+      }
+    },
+    {
+      "task_type": "warehouse_pick_and_place",
+      "task_name": "仓库拣货任务",
+      "tree": {
+        "type": "sequence",
+        "name": "PickAndPlace",
+        "children": [
+          {"type": "agv_check_safe", "name": "安全检查"},
+          {
+            "type": "selector",
+            "name": "电量决策",
+            "children": [
+              {"type": "agv_check_battery", "params": {"min_battery": 0.5}, "name": "高电量检查"},
+              {"type": "lambda", "name": "低电量降速", "action_name": "move_to"}
+            ]
+          },
+          {"type": "agv_move_to", "name": "移动到货架"},
+          {"type": "agv_grasp", "name": "抓取"},
+          {"type": "repeater", "name": "重复检查", "num_repeats": 3, "children": [
+            {"type": "lambda", "name": "持续监控", "action_name": "move_to"}
+          ]},
+          {"type": "agv_release", "name": "放置"}
+        ]
+      }
+    }
+  ]
+}

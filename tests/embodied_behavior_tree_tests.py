@@ -552,3 +552,375 @@ class TestMultiAgentBehaviorTree:
 
 if __name__ == '__main__':
     pytest.main([__file__, '-v'])
+
+# ============================================================================
+# 配置驱动的行为树构建器测试
+# ============================================================================
+
+class TestConfigDrivenBehaviorTree:
+    """测试create_behavior_tree_from_dict配置驱动行为树构建"""
+
+    def test_create_simple_sequence(self):
+        """测试简单序列节点构建"""
+        config = {
+            "type": "sequence",
+            "name": "SimpleSequence",
+            "children": [
+                {"type": "condition", "name": "CheckTrue", "condition_type": "safe"},
+                {"type": "condition", "name": "CheckBattery"},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict, BehaviorTree
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, SequenceNode)
+        assert root.name == "SimpleSequence"
+        assert len(root.children) == 2
+
+    def test_create_selector(self):
+        """测试选择器节点构建"""
+        config = {
+            "type": "selector",
+            "name": "FallbackSelector",
+            "children": [
+                {"type": "lambda", "name": "TryPrimary", "action_name": "grasp"},
+                {"type": "lambda", "name": "TrySecondary", "action_name": "release"},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, SelectorNode)
+        assert len(root.children) == 2
+
+    def test_create_parallel_node(self):
+        """测试并行节点构建"""
+        config = {
+            "type": "parallel",
+            "name": "ParallelCheck",
+            "success_threshold": 2,
+            "children": [
+                {"type": "condition", "condition_type": "safe"},
+                {"type": "condition", "condition_type": "battery"},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, ParallelNode)
+        assert root.success_policy == ParallelNode.Policy.REQUIRE_ALL
+
+    def test_create_nested_tree(self):
+        """测试嵌套行为树构建"""
+        config = {
+            "type": "sequence",
+            "name": "NestedRoot",
+            "children": [
+                {"type": "condition", "condition_type": "safe"},
+                {
+                    "type": "selector",
+                    "name": "ActionSelector",
+                    "children": [
+                        {"type": "action", "action_name": "move_to", "params": {"speed": 0.8}},
+                        {"type": "lambda", "name": "Wait", "action_name": "release"},
+                    ]
+                }
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, SequenceNode)
+        assert len(root.children) == 2
+        assert isinstance(root.children[1], SelectorNode)
+
+    def test_create_decorator_repeater(self):
+        """测试Repeater装饰器节点"""
+        config = {
+            "type": "repeater",
+            "name": "Repeat3Times",
+            "num_repeats": 3,
+            "children": [
+                {"type": "lambda", "name": "DoSomething", "action_name": "grasp"}
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, RepeaterNode)
+        assert root.times == 3
+
+    def test_create_decorator_until_fail(self):
+        """测试UntilFail装饰器节点"""
+        config = {
+            "type": "until_fail",
+            "name": "RetryUntilFail",
+            "children": [
+                {"type": "lambda", "action_name": "move_to"}
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, UntilFailNode)
+
+    def test_create_decorator_inverter(self):
+        """测试Inverter装饰器节点"""
+        config = {
+            "type": "inverter",
+            "name": "InvertCondition",
+            "children": [
+                {"type": "condition", "condition_type": "safe"}
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, InverterNode)
+
+    def test_create_agv_navigate_task(self):
+        """测试AGV导航任务配置"""
+        config = {
+            "type": "sequence",
+            "name": "NavigateTask",
+            "children": [
+                {"type": "agv_check_safe", "name": "SafetyCheck"},
+                {"type": "agv_check_battery", "params": {"min_battery": 0.2}},
+                {"type": "agv_move_to", "params": {"speed": 0.8}},
+                {"type": "agv_check_position", "params": {"threshold": 0.15}},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict, BehaviorTree
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, SequenceNode)
+        assert len(root.children) == 4
+        bt = BehaviorTree(root, name="NavigateFromConfig")
+        # 执行一次tick
+        bt.update_robot_state({'safety': False, 'battery_level': 0.8, 'position': [0.0, 0.0, 0.0]})
+        bt.set_goal({'target_position': [5.0, 0.0, 0.0]})
+        # 第一次tick：安全检查失败 → selector失败
+        status = bt.tick()
+        assert status == NodeStatus.FAILURE
+
+    def test_create_agv_transport_task(self):
+        """测试AGV搬运任务配置"""
+        config = {
+            "type": "sequence",
+            "name": "TransportTask",
+            "children": [
+                {"type": "agv_check_safe"},
+                {"type": "agv_check_battery", "params": {"min_battery": 0.3}},
+                {"type": "agv_move_to"},
+                {"type": "agv_check_position"},
+                {"type": "agv_grasp"},
+                {"type": "agv_move_to"},
+                {"type": "agv_release"},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict, BehaviorTree
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, SequenceNode)
+        assert len(root.children) == 7
+
+    def test_create_swarm_task_config(self):
+        """测试蜂群协同任务配置"""
+        config = {
+            "type": "sequence",
+            "name": "SwarmTransportTask",
+            "children": [
+                {"type": "agv_check_safe"},
+                {"type": "agv_check_battery", "params": {"min_battery": 0.4}},
+                {"type": "agv_negotiate_role"},
+                {"type": "agv_move_to_formation"},
+                {"type": "agv_check_formation"},
+                {"type": "agv_parallel_grasp"},
+                {"type": "agv_coordinated_move"},
+                {"type": "agv_parallel_release"},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert isinstance(root, SequenceNode)
+        assert len(root.children) == 8
+
+    def test_lambda_action_from_config(self):
+        """测试Lambda动作节点"""
+        config = {
+            "type": "lambda",
+            "name": "CustomAction",
+            "action": lambda bb: NodeStatus.SUCCESS,
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        node = create_behavior_tree_from_dict(config)
+        assert isinstance(node, LambdaActionNode)
+        assert node.name == "CustomAction"
+
+    def test_config_with_alias_keys(self):
+        """测试childs别名（兼容childs拼写）"""
+        config = {
+            "type": "sequence",
+            "childs": [
+                {"type": "condition", "condition_type": "safe"},
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        root = create_behavior_tree_from_dict(config)
+        assert len(root.children) == 1
+
+    def test_unknown_type_fallback(self):
+        """测试未知节点类型降级为SUCCESS节点"""
+        config = {
+            "type": "unknown_mystery_node",
+            "name": "UnknownNode",
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict, LambdaActionNode
+        node = create_behavior_tree_from_dict(config)
+        assert isinstance(node, LambdaActionNode)
+
+    def test_full_bt_execution_from_config(self):
+        """测试从配置创建完整行为树并执行"""
+        config = {
+            "type": "sequence",
+            "name": "ExecuteTest",
+            "children": [
+                {"type": "condition", "condition_type": "safe"},
+                {"type": "condition", "condition_type": "battery", "params": {"min_battery": 0.2}},
+                {
+                    "type": "selector",
+                    "name": "ActionChoice",
+                    "children": [
+                        {"type": "action", "action_name": "move_to", "params": {"speed": 0.5}},
+                        {"type": "lambda", "name": "Idle", "action": lambda bb: NodeStatus.SUCCESS},
+                    ]
+                },
+            ]
+        }
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict, BehaviorTree
+        root = create_behavior_tree_from_dict(config)
+        bt = BehaviorTree(root, name="ExecuteFromConfig")
+
+        # 初始状态：安全，电量足，距离远
+        bt.update_robot_state({
+            'safety': True,
+            'battery_level': 0.8,
+            'position': [0.0, 0.0, 0.0]
+        })
+        bt.set_goal({'target_position': [5.0, 0.0, 0.0]})
+
+        # 执行几个tick
+        statuses = []
+        for _ in range(5):
+            status = bt.tick()
+            statuses.append(status)
+            if status in (NodeStatus.SUCCESS, NodeStatus.FAILURE):
+                break
+
+        # 不会FAILURE因为有lambda fallback
+        assert all(s in (NodeStatus.RUNNING, NodeStatus.SUCCESS) for s in statuses)
+
+    def test_serialize_roundtrip(self):
+        """测试序列化-反序列化往返"""
+        config = {
+            "type": "sequence",
+            "name": "RoundtripTest",
+            "children": [
+                {"type": "agv_check_safe"},
+                {"type": "agv_check_battery", "params": {"min_battery": 0.3}},
+            ]
+        }
+        from src.embodied.behavior_tree import (
+            create_behavior_tree_from_dict,
+            serialize_behavior_tree,
+            BehaviorTree
+        )
+        root = create_behavior_tree_from_dict(config)
+        serialized = serialize_behavior_tree(root)
+        assert serialized['type'] == 'SequenceNode'
+        assert serialized['name'] == 'RoundtripTest'
+        assert len(serialized['children']) == 2
+
+    def test_create_task_bt_from_config(self):
+        """测试create_task_bt_from_config快捷函数"""
+        task_config = {
+            "task_type": "navigate",
+            "task_name": "MyNavigateTask",
+            "tree": {
+                "type": "sequence",
+                "children": [
+                    {"type": "agv_check_safe"},
+                    {"type": "agv_move_to", "params": {"speed": 1.0}},
+                ]
+            }
+        }
+        from src.embodied.behavior_tree import create_task_bt_from_config
+        bt = create_task_bt_from_config(task_config)
+        assert bt.name == "MyNavigateTask"
+        assert isinstance(bt.root, SequenceNode)
+        assert len(bt.root.children) == 2
+
+    def test_invalid_config_raises(self):
+        """测试无效配置抛出异常"""
+        from src.embodied.behavior_tree import create_behavior_tree_from_dict
+        import pytest
+        # 没有type字段
+        with pytest.raises(ValueError):
+            create_behavior_tree_from_dict({"name": "NoType"})
+        # 不是dict
+        with pytest.raises(TypeError):
+            create_behavior_tree_from_dict("not a dict")
+
+    def test_load_json_behavior_tree(self, tmp_path):
+        """测试从JSON文件加载行为树"""
+        import json
+        from src.embodied.behavior_tree import load_behavior_tree_from_json, SequenceNode
+
+        config = {
+            "type": "sequence",
+            "name": "JSONLoadTest",
+            "children": [
+                {"type": "agv_check_safe"},
+            ]
+        }
+        json_file = tmp_path / "test_bt.json"
+        json_file.write_text(json.dumps(config))
+
+        root = load_behavior_tree_from_json(str(json_file))
+        assert isinstance(root, SequenceNode)
+        assert root.name == "JSONLoadTest"
+
+
+class TestAGVTaskPlannerWithConfig:
+    """测试AGV任务规划器使用配置驱动构建"""
+
+    def test_planner_register_config_tree(self):
+        """测试规划器注册配置构建的行为树"""
+        from src.embodied.behavior_tree import (
+            AGVTaskPlanner,
+            create_behavior_tree_from_dict,
+            EmbodiedTask,
+            TaskStatus
+        )
+
+        planner = AGVTaskPlanner(grade="L")
+
+        # 注册自定义行为树
+        custom_config = {
+            "type": "sequence",
+            "name": "CustomNav",
+            "children": [
+                {"type": "agv_check_safe"},
+                {"type": "agv_move_to", "params": {"speed": 1.0}},
+            ]
+        }
+        custom_root = create_behavior_tree_from_dict(custom_config)
+        planner.register_task_type('custom_navigate', custom_root)
+
+        # 创建任务
+        task = EmbodiedTask(
+            task_id='t1',
+            task_type='custom_navigate',
+            goal_description='Navigate with custom tree',
+            target_position=np.array([5.0, 0.0, 0.0]),
+        )
+        planner.add_task(task)
+
+        # 执行规划
+        status = planner.tick(
+            robot_state={'safety': True, 'battery_level': 0.8, 'position': [0.0, 0.0, 0.0]},
+            world_state={}
+        )
+        assert status in (NodeStatus.RUNNING, NodeStatus.SUCCESS, NodeStatus.FAILURE)
+

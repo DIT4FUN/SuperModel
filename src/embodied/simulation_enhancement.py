@@ -574,3 +574,305 @@ class EmbodiedSimulationEnhancer:
             self.noise_model.reset_drift()
         if self.delay_simulator:
             self.delay_simulator.clear()
+# ============================================================================
+# 多AGV仿真增强器
+# ============================================================================
+
+
+class MultiAGVSimulationEnhancer:
+    """
+    多AGV仿真增强器 - 管理多个AGV的仿真环境
+
+    功能:
+    - 为每个AGV创建独立的仿真增强器
+    - 管理AGV间碰撞检测
+    - 协调场景级仿真参数
+    - 支持蜂群协同仿真
+    """
+
+    def __init__(
+        self,
+        agv_configs: Dict[str, Dict[str, Any]],
+        shared_scene: Optional[Dict[str, Any]] = None,
+        enable_inter_agv_collision: bool = True,
+        seed: int = 42,
+    ):
+        """
+        Args:
+            agv_configs: AGV ID -> 配置字典
+                {
+                    'agv1': {'grade': 'L', 'enable_noise': True},
+                    'agv2': {'grade': 'M', 'enable_noise': True},
+                }
+            shared_scene: 共享场景信息 (障碍物/货架位置等)
+            enable_inter_agv_collision: 是否启用AGV间碰撞检测
+            seed: 随机种子
+        """
+        self.agv_ids = list(agv_configs.keys())
+        self.shared_scene = shared_scene or {}
+        self.enable_inter_agv_collision = enable_inter_agv_collision
+        self.seed = seed
+
+        # 为每个AGV创建独立的仿真增强器
+        self.enhancers: Dict[str, EmbodiedSimulationEnhancer] = {}
+        self._robot_states: Dict[str, Dict[str, Any]] = {}
+
+        for agv_id, config in agv_configs.items():
+            self.enhancers[agv_id] = EmbodiedSimulationEnhancer(
+                agv_grade=config.get('grade', 'M'),
+                enable_noise=config.get('enable_noise', True),
+                enable_delay=config.get('enable_delay', True),
+                enable_enhanced_collision=config.get('enable_collision', True),
+                seed=seed + self.agv_ids.index(agv_id),
+            )
+            self._robot_states[agv_id] = {
+                'position': np.zeros(3),
+                'velocity': np.zeros(3),
+                'heading': 0.0,
+            }
+
+    def update_robot_state(self, agv_id: str, state: Dict[str, Any]) -> None:
+        """更新某个AGV的状态"""
+        if agv_id in self._robot_states:
+            self._robot_states[agv_id].update(state)
+
+    def process_sensor_data(
+        self,
+        agv_id: str,
+        sensor_type: str,
+        data: Any
+    ) -> Any:
+        """为指定AGV处理传感器数据"""
+        if agv_id not in self.enhancers:
+            return data
+        return self.enhancers[agv_id].process_sensor_data(sensor_type, data)
+
+    def check_inter_agv_collision(
+        self,
+        agv1_id: str,
+        agv2_id: str,
+    ) -> Tuple[bool, float]:
+        """
+        检查两个AGV之间是否可能碰撞
+
+        Returns:
+            (is_close, min_distance)
+        """
+        if not self.enable_inter_agv_collision:
+            return False, float('inf')
+
+        if agv1_id not in self._robot_states or agv2_id not in self._robot_states:
+            return False, float('inf')
+
+        pos1 = np.array(self._robot_states[agv1_id].get('position', [0, 0, 0]))
+        pos2 = np.array(self._robot_states[agv2_id].get('position', [0, 0, 0]))
+
+        # 使用AGV的最小转向半径作为安全距离
+        safe_distance = 0.6  # 米
+
+        distance = np.linalg.norm(pos1[:2] - pos2[:2])
+        is_close = distance < safe_distance
+
+        return is_close, distance
+
+    def get_all_collision_warnings(self) -> List[Dict[str, Any]]:
+        """获取所有AGV对的碰撞警告"""
+        warnings = []
+        for i, agv1_id in enumerate(self.agv_ids):
+            for agv2_id in self.agv_ids[i + 1:]:
+                is_close, distance = self.check_inter_agv_collision(agv1_id, agv2_id)
+                if is_close:
+                    warnings.append({
+                        'agv_pair': (agv1_id, agv2_id),
+                        'min_distance': distance,
+                        'severity': 'HIGH' if distance < 0.3 else 'MEDIUM',
+                    })
+        return warnings
+
+    def generate_shared_scene(self, scene_type: str = "warehouse", **kwargs) -> Dict[str, Any]:
+        """生成共享场景"""
+        if scene_type == "warehouse":
+            scene = self.enhancers[self.agv_ids[0]].generate_warehouse_scene(**kwargs)
+        elif scene_type == "factory":
+            scene = self.enhancers[self.agv_ids[0]].environment_generator.generate_cluttered_environment(**kwargs)
+        else:
+            scene = {}
+
+        self.shared_scene = scene
+        return scene
+
+    def reset_all(self) -> None:
+        """重置所有AGV的仿真增强器"""
+        for enhancer in self.enhancers.values():
+            enhancer.reset()
+
+    def get_enhancer(self, agv_id: str) -> Optional[EmbodiedSimulationEnhancer]:
+        """获取指定AGV的仿真增强器"""
+        return self.enhancers.get(agv_id)
+
+    def get_statistics(self) -> Dict[str, Any]:
+        """获取统计信息"""
+        return {
+            'num_agvs': len(self.agv_ids),
+            'agv_ids': self.agv_ids,
+            'grades': {agv_id: e.grade for agv_id, e in self.enhancers.items()},
+            'inter_agv_collision_enabled': self.enable_inter_agv_collision,
+            'active_collision_warnings': len(self.get_all_collision_warnings()),
+        }
+
+
+# ============================================================================
+# 仿真指标收集器
+# ============================================================================
+
+
+class SimulationMetricsCollector:
+    """
+    仿真指标收集器 - 跟踪和记录仿真 KPIs
+
+    跟踪指标:
+    - 任务完成率 / 平均任务时间
+    - 能耗统计 (电机电流/电压积分)
+    - 碰撞次数
+    - 路径效率 (实际路径 vs 最短路径)
+    - 传感器数据质量 (延迟/丢包率)
+    - AGV利用率
+    """
+
+    def __init__(self):
+        self.reset()
+
+    def reset(self) -> None:
+        """重置所有指标"""
+        self.task_stats: List[Dict[str, Any]] = []
+        self.energy_samples: List[float] = []
+        self.collision_events: List[Dict[str, Any]] = []
+        self.path_lengths: List[float] = []
+        self.sensor_drop_events: List[Dict[str, Any]] = []
+        self.active_time_per_agv: Dict[str, float] = {}
+        self._task_start_times: Dict[str, float] = {}
+
+    def start_task(self, task_id: str) -> None:
+        """记录任务开始时间"""
+        import time
+        self._task_start_times[task_id] = time.time()
+
+    def end_task(self, task_id: str, success: bool, task_type: str = "") -> None:
+        """记录任务完成"""
+        import time
+        if task_id in self._task_start_times:
+            duration = time.time() - self._task_start_times[task_id]
+            self.task_stats.append({
+                'task_id': task_id,
+                'duration': duration,
+                'success': success,
+                'task_type': task_type,
+            })
+            del self._task_start_times[task_id]
+
+    def record_energy(self, energy_joules: float) -> None:
+        """记录能耗样本"""
+        self.energy_samples.append(energy_joules)
+
+    def record_collision(
+        self,
+        position: np.ndarray,
+        severity: str = "LOW",
+        agv_id: str = "",
+    ) -> None:
+        """记录碰撞事件"""
+        import time
+        self.collision_events.append({
+            'timestamp': time.time(),
+            'position': position.tolist() if isinstance(position, np.ndarray) else position,
+            'severity': severity,
+            'agv_id': agv_id,
+        })
+
+    def record_path_length(self, actual: float, optimal: float) -> None:
+        """记录路径长度 (实际 vs 最优)"""
+        efficiency = optimal / actual if actual > 0 else 1.0
+        self.path_lengths.append({
+            'actual': actual,
+            'optimal': optimal,
+            'efficiency': efficiency,
+        })
+
+    def record_sensor_drop(self, sensor_type: str, agv_id: str = "") -> None:
+        """记录传感器丢包"""
+        import time
+        self.sensor_drop_events.append({
+            'timestamp': time.time(),
+            'sensor_type': sensor_type,
+            'agv_id': agv_id,
+        })
+
+    def update_active_time(self, agv_id: str, delta_seconds: float) -> None:
+        """更新AGV活跃时间"""
+        self.active_time_per_agv[agv_id] = self.active_time_per_agv.get(agv_id, 0.0) + delta_seconds
+
+    def get_summary(self) -> Dict[str, Any]:
+        """获取指标汇总"""
+        import time as time_module
+
+        total_tasks = len(self.task_stats)
+        successful_tasks = sum(1 for t in self.task_stats if t['success'])
+        task_success_rate = successful_tasks / total_tasks if total_tasks > 0 else 0.0
+
+        avg_task_duration = (
+            sum(t['duration'] for t in self.task_stats) / total_tasks
+            if total_tasks > 0 else 0.0
+        )
+
+        total_energy = sum(self.energy_samples)
+        avg_energy_per_sample = total_energy / len(self.energy_samples) if self.energy_samples else 0.0
+
+        collision_count = len(self.collision_events)
+        high_severity_collisions = sum(
+            1 for c in self.collision_events if c['severity'] == 'HIGH'
+        )
+
+        path_efficiencies = [p['efficiency'] for p in self.path_lengths]
+        avg_path_efficiency = (
+            sum(path_efficiencies) / len(path_efficiencies)
+            if path_efficiencies else 0.0
+        )
+
+        total_sensor_drops = len(self.sensor_drop_events)
+        drop_rate = (
+            total_sensor_drops / (total_sensor_drops + 1000)  # 假设基准1000次
+            if total_sensor_drops > 0 else 0.0
+        )
+
+        return {
+            'timestamp': time_module.time(),
+            'tasks': {
+                'total': total_tasks,
+                'successful': successful_tasks,
+                'success_rate': task_success_rate,
+                'avg_duration_s': avg_task_duration,
+            },
+            'energy': {
+                'total_joules': total_energy,
+                'avg_per_sample_joules': avg_energy_per_sample,
+            },
+            'collisions': {
+                'total': collision_count,
+                'high_severity': high_severity_collisions,
+            },
+            'path_efficiency': {
+                'average': avg_path_efficiency,
+                'samples': len(path_efficiencies),
+            },
+            'sensor_drops': {
+                'total': total_sensor_drops,
+                'drop_rate': drop_rate,
+            },
+            'active_time_per_agv': dict(self.active_time_per_agv),
+        }
+
+
+__all__ += [
+    'MultiAGVSimulationEnhancer',
+    'SimulationMetricsCollector',
+]

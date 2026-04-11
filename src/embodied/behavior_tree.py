@@ -52,6 +52,12 @@ __all__ = [
     'EmbodiedTaskPlanner',
     'AGVTaskPlanner',
     'TaskStatus',
+    # Config-driven builder
+    'create_behavior_tree_from_dict',
+    'serialize_behavior_tree',
+    'create_task_bt_from_config',
+    'load_behavior_tree_from_yaml',
+    'load_behavior_tree_from_json',
 ]
 
 
@@ -1128,3 +1134,320 @@ def create_behavior_tree_from_dict(config: Dict[str, Any]) -> BTNode:
     """从字典配置创建行为树 - 用于反序列化/配置文件驱动"""
     # TODO: 实现配置驱动的行为树创建
     pass
+# ============================================================================
+# 配置驱动的行为树构建器
+# ============================================================================
+
+# 节点类型注册表
+_NODE_TYPE_REGISTRY: Dict[str, type] = {
+    # Composite
+    'sequence': SequenceNode,
+    'selector': SelectorNode,
+    'parallel': ParallelNode,
+    # Decorator
+    'repeater': RepeaterNode,
+    'until_fail': UntilFailNode,
+    'until_success': UntilSuccessNode,
+    'inverter': InverterNode,
+    # Condition
+    'condition': ConditionNode,
+    # Action
+    'action': ActionNode,
+    'lambda': LambdaActionNode,
+    # AGV专用
+    'agv_check_battery': AGVCheckBatteryCondition,
+    'agv_check_safe': AGVCheckSafeCondition,
+    'agv_check_position': AGVCheckPositionReached,
+    'agv_check_formation': AGVCheckFormationReachedCondition,
+    'agv_move_to': AGVMoveToAction,
+    'agv_grasp': AGVGraspAction,
+    'agv_release': AGVReleaseAction,
+    'agv_negotiate_role': AGVNegotiateRoleAction,
+    'agv_move_to_formation': AGVMoveToFormationAction,
+    'agv_parallel_grasp': AGVParallelGraspAction,
+    'agv_coordinated_move': AGVCoordinatedMoveToAction,
+    'agv_parallel_release': AGVParallelReleaseAction,
+}
+
+
+def _get_node_name(config: Dict[str, Any], index: int) -> str:
+    """从配置中获取节点名称"""
+    if 'name' in config:
+        return str(config['name'])
+    if 'type' in config:
+        return f"{config['type']}_{index}"
+    return f"node_{index}"
+
+
+def _build_node_from_config(config: Dict[str, Any], index: int = 0) -> BTNode:
+    """从配置字典递归构建行为树节点"""
+    node_type = config.get('type', '').lower()
+    node_name = _get_node_name(config, index)
+
+    # 处理复合节点（序列/选择/并行）
+    if node_type in ('sequence', 'selector', 'parallel'):
+        children_configs = config.get('children', config.get('childs', []))
+        node_class = _NODE_TYPE_REGISTRY.get(node_type, SequenceNode)
+        if node_type == 'parallel':
+            # ParallelNode 使用 success_policy/failure_policy (enum Policy)
+            success_threshold = config.get('success_threshold', len(children_configs))
+            if success_threshold >= len(children_configs):
+                policy = ParallelNode.Policy.REQUIRE_ALL
+            else:
+                policy = ParallelNode.Policy.REQUIRE_ANY
+            node = node_class(name=node_name, success_policy=policy)
+        else:
+            node = node_class(name=node_name)
+        for i, child_config in enumerate(children_configs):
+            child_node = _build_node_from_config(child_config, i)
+            node.add_child(child_node)
+        return node
+
+    # 处理装饰器节点
+    if node_type in ('repeater', 'until_fail', 'until_success', 'inverter'):
+        children = config.get('children', config.get('childs', []))
+        # 先构建子节点，因为装饰器需要child作为构造参数
+        child_node = _build_node_from_config(children[0], 0) if children else LambdaActionNode(lambda bb: NodeStatus.SUCCESS)
+        decorator_class = _NODE_TYPE_REGISTRY.get(node_type, RepeaterNode)
+        if node_type == 'repeater':
+            times = config.get('num_repeats', config.get('times', -1))
+            node = decorator_class(child=child_node, times=times, name=node_name)
+        elif node_type == 'until_fail':
+            node = decorator_class(child=child_node, name=node_name)
+        elif node_type == 'until_success':
+            node = decorator_class(child=child_node, name=node_name)
+        elif node_type == 'inverter':
+            node = decorator_class(child=child_node, name=node_name)
+        else:
+            node = decorator_class(child=child_node, name=node_name)
+        return node
+
+    # 处理通用条件节点
+    if node_type == 'condition':
+        condition_lambda = config.get('condition')
+        if callable(condition_lambda):
+            return ConditionNode(condition_lambda, name=node_name)
+        # 从参数构建简单条件
+        condition_type = config.get('condition_type', '')
+        if condition_type == 'battery':
+            min_battery = config.get('min_battery', 0.2)
+            return AGVCheckBatteryCondition(min_battery=min_battery, name=node_name)
+        elif condition_type == 'safe':
+            return AGVCheckSafeCondition(name=node_name)
+        elif condition_type == 'position':
+            threshold = config.get('threshold', 0.1)
+            return AGVCheckPositionReached(threshold=threshold, name=node_name)
+        elif condition_type == 'formation':
+            threshold = config.get('threshold', 0.15)
+            return AGVCheckFormationReachedCondition(threshold=threshold, name=node_name)
+        # 默认：始终返回成功
+        return ConditionNode(lambda bb: True, name=node_name)
+
+    # 处理Lambda动作节点
+    if node_type in ('lambda', 'action'):
+        action_lambda = config.get('action')
+        if callable(action_lambda):
+            return LambdaActionNode(action_lambda, name=node_name)
+        # 从参数构建AGV动作
+        action_name = config.get('action_name', '')
+        if action_name == 'move_to':
+            speed = config.get('speed', 0.5)
+            return AGVMoveToAction(speed=speed, name=node_name)
+        elif action_name == 'grasp':
+            return AGVGraspAction(name=node_name)
+        elif action_name == 'release':
+            return AGVReleaseAction(name=node_name)
+        elif action_name == 'negotiate_role':
+            return AGVNegotiateRoleAction(name=node_name)
+        elif action_name == 'move_to_formation':
+            return AGVMoveToFormationAction(name=node_name)
+        elif action_name == 'parallel_grasp':
+            return AGVParallelGraspAction(name=node_name)
+        elif action_name == 'coordinated_move':
+            return AGVCoordinatedMoveToAction(name=node_name)
+        elif action_name == 'parallel_release':
+            return AGVParallelReleaseAction(name=node_name)
+        # 默认：返回成功（用于占位）
+        return LambdaActionNode(lambda bb: NodeStatus.SUCCESS, name=node_name)
+
+    # 处理AGV专用节点快捷方式
+    agv_node_type = config.get('type', '').lower()
+    if agv_node_type in _NODE_TYPE_REGISTRY:
+        node_class = _NODE_TYPE_REGISTRY[agv_node_type]
+        params = config.get('params', {})
+        try:
+            return node_class(name=node_name, **params)
+        except TypeError:
+            try:
+                return node_class(**params)
+            except TypeError:
+                return node_class(name=node_name)
+
+    # 未知类型，默认创建Lambda成功节点
+    logger.warning(f"Unknown node type '{node_type}' in config, creating fallback SUCCESS node")
+    return LambdaActionNode(lambda bb: NodeStatus.SUCCESS, name=node_name)
+
+
+def create_behavior_tree_from_dict(config: Dict[str, Any]) -> BTNode:
+    """
+    从字典配置创建行为树 - 用于反序列化/配置文件驱动
+
+    支持的节点类型:
+        - composite: sequence, selector, parallel
+        - decorator: repeater, until_fail, until_success, inverter
+        - condition: condition (通用), agv_check_battery, agv_check_safe, agv_check_position, agv_check_formation
+        - action: lambda, agv_move_to, agv_grasp, agv_release, agv_negotiate_role,
+                  agv_move_to_formation, agv_parallel_grasp, agv_coordinated_move, agv_parallel_release
+
+    配置格式:
+        {
+            "type": "sequence",           # 节点类型
+            "name": "MySequence",         # 可选，节点名称
+            "children": [                 # 子节点配置
+                {"type": "agv_check_safe", "name": "SafetyCheck"},
+                {
+                    "type": "selector",
+                    "name": "MoveOrWait",
+                    "children": [
+                        {"type": "agv_move_to", "params": {"speed": 0.5}},
+                        {"type": "lambda", "action": lambda bb: NodeStatus.SUCCESS, "name": "Wait"},
+                    ]
+                },
+            ],
+            # parallel 节点专用:
+            "success_threshold": 2,       # parallel 节点成功阈值
+            # repeater 节点专用:
+            "num_repeats": 3,             # 重复次数
+        }
+
+    示例 - 导航任务:
+        config = {
+            "type": "sequence",
+            "name": "NavigateTask",
+            "children": [
+                {"type": "agv_check_safe", "name": "SafetyCheck"},
+                {"type": "agv_check_battery", "params": {"min_battery": 0.2}},
+                {"type": "agv_move_to", "params": {"speed": 0.8}},
+                {"type": "agv_check_position", "params": {"threshold": 0.15}},
+            ]
+        }
+        root = create_behavior_tree_from_dict(config)
+        bt = BehaviorTree(root, name="Navigate")
+
+    示例 - 搬运任务:
+        config = {
+            "type": "sequence",
+            "name": "TransportTask",
+            "children": [
+                {"type": "agv_check_safe"},
+                {"type": "agv_check_battery", "params": {"min_battery": 0.3}},
+                {"type": "agv_move_to"},
+                {"type": "agv_check_position"},
+                {"type": "agv_grasp"},
+                {"type": "agv_move_to"},
+                {"type": "agv_release"},
+            ]
+        }
+    """
+    if not isinstance(config, dict):
+        raise TypeError(f"Config must be a dict, got {type(config).__name__}")
+    if 'type' not in config:
+        raise ValueError("Config must have a 'type' field")
+
+    return _build_node_from_config(config, index=0)
+
+
+def serialize_behavior_tree(node: BTNode) -> Dict[str, Any]:
+    """
+    将行为树节点序列化为字典（反向操作）
+
+    注意: 不是所有节点都能完美序列化（如Lambda函数的源码），
+    此函数主要用于可配置节点的序列化
+    """
+    result: Dict[str, Any] = {
+        'type': node.__class__.__name__,
+        'name': node.name,
+    }
+
+    if isinstance(node, CompositeNode):
+        result['children'] = [serialize_behavior_tree(child) for child in node.children]
+        if isinstance(node, ParallelNode):
+            result['success_threshold'] = node.success_threshold
+
+    if isinstance(node, DecoratorNode):
+        if node.children:
+            result['children'] = [serialize_behavior_tree(node.children[0])]
+        if isinstance(node, RepeaterNode):
+            result['num_repeats'] = node.num_repeats
+
+    if isinstance(node, ConditionNode):
+        if isinstance(node, AGVCheckBatteryCondition):
+            result['type'] = 'agv_check_battery'
+            result['params'] = {'min_battery': node.min_battery}
+        elif isinstance(node, AGVCheckSafeCondition):
+            result['type'] = 'agv_check_safe'
+        elif isinstance(node, AGVCheckPositionReached):
+            result['type'] = 'agv_check_position'
+            result['params'] = {'threshold': node.threshold}
+        elif isinstance(node, AGVCheckFormationReachedCondition):
+            result['type'] = 'agv_check_formation'
+            result['params'] = {'threshold': node.threshold}
+
+    if isinstance(node, ActionNode):
+        if isinstance(node, AGVMoveToAction):
+            result['type'] = 'agv_move_to'
+            result['params'] = {'speed': node.speed}
+        elif isinstance(node, AGVGraspAction):
+            result['type'] = 'agv_grasp'
+        elif isinstance(node, AGVReleaseAction):
+            result['type'] = 'agv_release'
+        elif isinstance(node, LambdaActionNode):
+            result['type'] = 'lambda'
+            result['note'] = 'Lambda function - cannot be serialized'
+
+    return result
+
+
+def create_task_bt_from_config(task_config: Dict[str, Any]) -> BehaviorTree:
+    """
+    从任务配置创建完整行为树（快捷函数）
+
+    任务配置格式:
+        {
+            "task_type": "navigate",
+            "task_name": "MyNavigateTask",
+            "tree": {
+                "type": "sequence",
+                "children": [...]
+            }
+        }
+    """
+    tree_config = task_config.get('tree', task_config)
+    root = create_behavior_tree_from_dict(tree_config)
+    task_name = task_config.get('task_name', task_config.get('task_type', 'Task'))
+    return BehaviorTree(root, name=task_name)
+
+
+# ============================================================================
+# 配置文件加载器（支持YAML/JSON）
+# ============================================================================
+
+def load_behavior_tree_from_yaml(yaml_path: str) -> BTNode:
+    """从YAML文件加载行为树配置并构建树"""
+    try:
+        import yaml
+        with open(yaml_path, 'r', encoding='utf-8') as f:
+            config = yaml.safe_load(f)
+        return create_behavior_tree_from_dict(config)
+    except ImportError:
+        raise RuntimeError("PyYAML is required for YAML loading. Install with: pip install pyyaml")
+
+
+def load_behavior_tree_from_json(json_path: str) -> BTNode:
+    """从JSON文件加载行为树配置并构建树"""
+    import json
+    with open(json_path, 'r', encoding='utf-8') as f:
+        config = json.load(f)
+    return create_behavior_tree_from_dict(config)
+
+
