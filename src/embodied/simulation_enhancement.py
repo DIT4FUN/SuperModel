@@ -16,9 +16,55 @@ from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, Tuple, Union
+from enum import Enum
 import logging
 import random
 import math
+
+class WeatherType(Enum):
+    CLEAR = "clear"
+    RAIN = "rain"
+    SNOW = "snow"
+    DUST = "dust"
+    FOG = "fog"
+
+@dataclass
+class WeatherEffect:
+    lidar_noise_multiplier: float = 1.0
+    camera_noise_multiplier: float = 1.0
+    tactile_noise_multiplier: float = 1.0
+    imu_noise_multiplier: float = 1.0
+    friction_multiplier: float = 1.0
+    visibility_range: float = 100.0  # meters
+
+WEATHER_EFFECTS: Dict[WeatherType, WeatherEffect] = {
+    WeatherType.CLEAR: WeatherEffect(),
+    WeatherType.RAIN: WeatherEffect(
+        lidar_noise_multiplier=1.8,
+        camera_noise_multiplier=2.5,
+        tactile_noise_multiplier=1.2,
+        friction_multiplier=0.7,
+        visibility_range=50.0
+    ),
+    WeatherType.SNOW: WeatherEffect(
+        lidar_noise_multiplier=2.2,
+        camera_noise_multiplier=3.0,
+        tactile_noise_multiplier=1.5,
+        friction_multiplier=0.4,
+        visibility_range=30.0
+    ),
+    WeatherType.DUST: WeatherEffect(
+        lidar_noise_multiplier=2.0,
+        camera_noise_multiplier=4.0,
+        imu_noise_multiplier=1.3,
+        visibility_range=20.0
+    ),
+    WeatherType.FOG: WeatherEffect(
+        lidar_noise_multiplier=1.5,
+        camera_noise_multiplier=5.0,
+        visibility_range=15.0
+    )
+}
 
 logger = logging.getLogger(__name__)
 __all__ = [
