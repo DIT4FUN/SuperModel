@@ -7,6 +7,7 @@ import tempfile
 import time
 import numpy as np
 import importlib
+import shutil
 from pathlib import Path
 
 from src.memory.long_term_memory import LongTermMemory, MemoryConfig
@@ -227,12 +228,18 @@ def test_backup_and_restore():
         
         # Create backup
         backup_path = ltm1.create_backup()
+        backup_name = Path(backup_path).name
         assert Path(backup_path).exists()
+        
+        # Copy backup to second memory system's backup directory
+        target_backup_dir = Path(tmpdir2) / "backups"
+        target_backup_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copytree(backup_path, target_backup_dir / backup_name)
         
         # Restore to new memory system
         config2 = MemoryConfig(store_path=tmpdir2)
         ltm2 = LongTermMemory(config=config2)
-        assert ltm2.store.restore_backup(Path(backup_path).name) is True
+        assert ltm2.store.restore_backup(backup_name) is True
         
         # Check that data was restored
         assert len(ltm2.episodic._episodes) == 1

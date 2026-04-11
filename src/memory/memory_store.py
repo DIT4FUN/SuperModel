@@ -469,18 +469,22 @@ class MemoryStore:
     def delete(self, key: str) -> bool:
         """删除数据"""
         with self._cache_lock:
+            deleted = False
             if key in self._cache:
                 del self._cache[key]
+                deleted = True
             
-            self._dirty.discard(key)
+            if key in self._dirty:
+                self._dirty.discard(key)
+                deleted = True
             
             # 删除文件
             file_path = self._get_file_path(key)
             if file_path.exists():
                 file_path.unlink()
-                return True
+                deleted = True
         
-        return False
+        return deleted
     
     def exists(self, key: str) -> bool:
         """检查是否存在"""

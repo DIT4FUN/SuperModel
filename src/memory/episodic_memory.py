@@ -500,6 +500,13 @@ class EpisodicMemory:
         """获取指定记忆"""
         return self._episodes.get(episode_id)
     
+    def delete_episode(self, episode_id: str) -> bool:
+        """删除指定记忆"""
+        if episode_id in self._episodes:
+            self._remove_episode(episode_id)
+            return True
+        return False
+    
     def mark_consolidated(self, episode_id: str) -> bool:
         """标记记忆已整合"""
         ep = self._episodes.get(episode_id)
