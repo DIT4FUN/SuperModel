@@ -18,7 +18,7 @@ from src.sensors.imu import VirtualIMUSensor as IMUSensor
 
 class CollaborativeLogisticsSim(BaseSimulation):
     def __init__(self, num_agvs: int = 6):
-        super().__init__(env_name="warehouse_logistics", size=(100, 80))
+        super().__init__(title="多AGV协同物流场景仿真")
         self.num_agvs = num_agvs
         self.agvs: List[AGVRobot] = []
         self.swarm_controller = SwarmController(communication_range=20.0, collision_avoidance_radius=1.5)

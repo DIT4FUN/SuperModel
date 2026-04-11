@@ -357,15 +357,67 @@ class MemoryConsolidation:
         return associations
     
     def _apply_forgetting(self) -> int:
-        """应用遗忘"""
+        """应用遗忘算法 - 基于重要性和时间衰减的综合遗忘"""
         before = len(self._episodic)
+        now = time.time()
         
-        # 情景记忆遗忘
-        pruned = self._episodic.apply_forgetting(
-            forgetting_rate=self.config.decay_base_rate
-        )
+        # 计算所有记忆的保留分数
+        memory_scores = []
+        for ep_id, ep in self._episodic._episodes.items():
+            # 时间衰减: 越旧分数越低 (半衰期30天)
+            age_days = (now - ep.timestamp) / (3600 * 24)
+            time_decay = np.exp(-age_days / 30)  # 指数衰减
+            
+            # 重要性权重: 越重要分数越高
+            importance_weight = ep.importance_score / 10.0
+            
+            # 使用频率加权: 被检索过的记忆更不容易遗忘
+            usage_weight = min(1.0, 0.5 + ep.retrieval_count * 0.1) if hasattr(ep, 'retrieval_count') else 0.5
+            
+            # 综合保留分数
+            retention_score = importance_weight * time_decay * usage_weight
+            
+            # 已整合的记忆保留分数加倍
+            if ep.consolidated:
+                retention_score *= 2.0
+            
+            memory_scores.append((ep_id, retention_score, ep.importance_score, age_days))
         
-        return before - len(self._episodic)
+        # 按保留分数升序排序 (低分先遗忘)
+        memory_scores.sort(key=lambda x: x[1])
+        
+        # 确定要遗忘的数量: 总容量的10%，最低0，最多100条
+        total_memories = len(memory_scores)
+        forget_count = min(100, max(0, int(total_memories * 0.1)))
+        
+        # 保留重要性>=8的记忆，无论分数多低
+        pruned = 0
+        for i in range(forget_count):
+            ep_id, score, importance, age = memory_scores[i]
+            if importance >= 8.0:
+                continue  # 高重要性记忆不遗忘
+            # 遗忘分数低于阈值的记忆
+            if score < 0.2:
+                self._episodic.delete_episode(ep_id)
+                pruned += 1
+        
+        # 语义记忆遗忘: 低置信度、长期未使用的概念
+        if self._semantic:
+            for concept_id, concept in self._semantic._concepts.items():
+                age_days = (now - concept.updated_at) / (3600 * 24) if hasattr(concept, 'updated_at') else 365
+                if concept.confidence < 0.3 and age_days > 90:
+                    self._semantic.delete_concept(concept_id)
+                    pruned += 1
+        
+        # 程序记忆遗忘: 低成功率、长期未使用的技能
+        if self._procedural:
+            for skill_id, skill in self._procedural._skills.items():
+                age_days = (now - skill.last_used) / (3600 * 24) if hasattr(skill, 'last_used') else 180
+                if skill.success_rate < 0.3 and age_days > 60:
+                    self._procedural.delete_skill(skill_id)
+                    pruned += 1
+        
+        return pruned
     
     # ==================== 即时整合 ====================
     

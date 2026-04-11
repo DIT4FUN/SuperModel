@@ -21,6 +21,22 @@ from enum import Enum
 import time
 import threading
 from collections import OrderedDict
+import json
+
+# 可选依赖
+SENTENCE_TRANSFORMERS_AVAILABLE = False
+try:
+    from sentence_transformers import SentenceTransformer
+    SENTENCE_TRANSFORMERS_AVAILABLE = True
+except ImportError:
+    pass
+
+OPENAI_AVAILABLE = False
+try:
+    import openai
+    OPENAI_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class RetrievalStrategy(Enum):
@@ -74,16 +90,42 @@ class MemoryRetrieval:
         episodic_memory=None,
         semantic_memory=None,
         procedural_memory=None,
+        memory_store=None,
+        # 嵌入配置
+        embedding_model: str = "all-MiniLM-L6-v2",  # 本地嵌入模型
+        embedding_provider: str = "local",  # local/openai
+        openai_api_key: Optional[str] = None,
+        openai_base_url: Optional[str] = None,
+        embedding_dim: int = 1536,
     ):
         """
         Args:
             episodic_memory: 情景记忆实例
             semantic_memory: 语义记忆实例
             procedural_memory: 程序记忆实例
+            memory_store: 存储层实例 (用于向量检索)
+            embedding_model: 嵌入模型名称
+            embedding_provider: 嵌入提供商 (local/openai)
+            openai_api_key: OpenAI API密钥
+            openai_base_url: OpenAI API端点
+            embedding_dim: 嵌入维度
         """
         self._episodic = episodic_memory
         self._semantic = semantic_memory
         self._procedural = procedural_memory
+        self._memory_store = memory_store
+        
+        # 嵌入配置
+        self.embedding_provider = embedding_provider
+        self.embedding_dim = embedding_dim
+        self._embedding_model: Optional[Any] = None
+        self._openai_client: Optional[Any] = None
+        
+        # 初始化嵌入模型
+        if embedding_provider == "local" and SENTENCE_TRANSFORMERS_AVAILABLE:
+            self._embedding_model = SentenceTransformer(embedding_model)
+        elif embedding_provider == "openai" and OPENAI_AVAILABLE:
+            self._openai_client = openai.OpenAI(api_key=openai_api_key, base_url=openai_base_url)
         
         # 检索历史
         self._history: List[RetrievalQuery] = []
@@ -98,6 +140,10 @@ class MemoryRetrieval:
         self._cache_hits = 0
         self._cache_misses = 0
         self._query_access_count: Dict[str, int] = {}  # 查询访问次数，用于调整ttl
+        
+        # 经验回放统计
+        self._replay_count = 0
+        self._replay_success_count = 0
     
     # ==================== 主检索接口 ====================
     
@@ -159,6 +205,22 @@ class MemoryRetrieval:
         
         return results
     
+    def _get_embedding(self, text: str) -> Optional[np.ndarray]:
+        """获取文本嵌入向量"""
+        if not text:
+            return None
+        
+        try:
+            if self.embedding_provider == "local" and self._embedding_model:
+                return self._embedding_model.encode(text, convert_to_numpy=True)
+            elif self.embedding_provider == "openai" and self._openai_client:
+                response = self._openai_client.embeddings.create(input=text, model="text-embedding-ada-002")
+                return np.array(response.data[0].embedding)
+        except Exception as e:
+            print(f"Embedding generation failed: {e}")
+        
+        return None
+    
     def _execute_retrieval(self, query: RetrievalQuery) -> List[RetrievalResult]:
         """执行实际检索"""
         results = []
@@ -168,19 +230,135 @@ class MemoryRetrieval:
         if query.memory_type:
             memory_types = [query.memory_type]
         
-        # 情景记忆检索
-        if 'episodic' in memory_types and self._episodic:
-            results.extend(self._retrieve_episodic(query))
+        # 语义向量检索 (优先)
+        if query.strategy in [RetrievalStrategy.SEMANTIC, RetrievalStrategy.HYBRID] and self._memory_store and query.content:
+            query_vector = self._get_embedding(query.content)
+            if query_vector is not None:
+                vector_results = self._memory_store.search_vectors(query_vector, top_k=query.limit * 2)
+                for memory_id, score, metadata in vector_results:
+                    memory_type = metadata.get('type', 'unknown')
+                    if memory_type not in memory_types:
+                        continue
+                    
+                    # 加载记忆数据
+                    if memory_type == 'episodic' and self._episodic:
+                        memory_data = self._episodic.get_episode(memory_id)
+                    elif memory_type == 'semantic' and self._semantic:
+                        memory_data = self._semantic.get_concept(memory_id)
+                    elif memory_type == 'procedural' and self._procedural:
+                        memory_data = self._procedural.get_skill(memory_id)
+                    else:
+                        continue
+                    
+                    if memory_data:
+                        results.append(RetrievalResult(
+                            memory_id=memory_id,
+                            memory_type=memory_type,
+                            score=score,
+                            data=memory_data.to_dict(),
+                            match_reasons=["语义匹配"],
+                            age_hours=(time.time() - memory_data.timestamp) / 3600 if hasattr(memory_data, 'timestamp') else 0.0,
+                        ))
         
-        # 语义记忆检索
-        if 'semantic' in memory_types and self._semantic:
-            results.extend(self._retrieve_semantic(query))
-        
-        # 程序记忆检索
-        if 'procedural' in memory_types and self._procedural:
-            results.extend(self._retrieve_procedural(query))
+        # 传统关键词检索
+        if query.strategy != RetrievalStrategy.SEMANTIC or len(results) < query.limit:
+            # 情景记忆检索
+            if 'episodic' in memory_types and self._episodic:
+                results.extend(self._retrieve_episodic(query))
+            
+            # 语义记忆检索
+            if 'semantic' in memory_types and self._semantic:
+                results.extend(self._retrieve_semantic(query))
+            
+            # 程序记忆检索
+            if 'procedural' in memory_types and self._procedural:
+                results.extend(self._retrieve_procedural(query))
         
         return results
+    
+    # ==================== 经验回放 ====================
+    
+    def experience_replay(
+        self,
+        num_samples: int = 10,
+        priority: str = "importance",  # importance / recency / random
+        task_filter: Optional[str] = None,
+    ) -> List[Dict[str, Any]]:
+        """
+        经验回放 - 从历史记忆中采样经验用于训练和回忆
+        
+        Args:
+            num_samples: 采样数量
+            priority: 采样优先级
+                - importance: 重要性优先
+                - recency: 新近度优先
+                - random: 随机采样
+            task_filter: 可选的任务过滤
+            
+        Returns:
+            经验列表
+        """
+        self._replay_count += 1
+        
+        # 获取所有记忆
+        all_memories = []
+        
+        if self._episodic:
+            for ep in self._episodic._episodes.values():
+                if task_filter and task_filter not in ep.summary:
+                    continue
+                all_memories.append({
+                    'type': 'episodic',
+                    'data': ep,
+                    'importance': ep.importance_score,
+                    'timestamp': ep.timestamp,
+                })
+        
+        if self._procedural:
+            for skill in self._procedural._skills.values():
+                if task_filter and task_filter not in skill.name:
+                    continue
+                all_memories.append({
+                    'type': 'procedural',
+                    'data': skill,
+                    'importance': skill.success_rate * 10,
+                    'timestamp': skill.created_at,
+                })
+        
+        if not all_memories:
+            return []
+        
+        # 采样
+        if priority == "importance":
+            all_memories.sort(key=lambda x: x['importance'], reverse=True)
+        elif priority == "recency":
+            all_memories.sort(key=lambda x: x['timestamp'], reverse=True)
+        elif priority == "random":
+            import random
+            random.shuffle(all_memories)
+        
+        selected = all_memories[:num_samples]
+        
+        # 转换为结果格式
+        results = []
+        for mem in selected:
+            results.append({
+                'type': mem['type'],
+                'content': mem['data'].to_dict(),
+                'importance': mem['importance'],
+                'age_hours': (time.time() - mem['timestamp']) / 3600,
+            })
+        
+        self._replay_success_count += 1
+        return results
+    
+    def get_replay_statistics(self) -> Dict[str, Any]:
+        """获取经验回放统计"""
+        return {
+            'total_replays': self._replay_count,
+            'successful_replays': self._replay_success_count,
+            'success_rate': self._replay_success_count / self._replay_count if self._replay_count > 0 else 0.0,
+        }
     
     def _retrieve_episodic(self, query: RetrievalQuery) -> List[RetrievalResult]:
         """检索情景记忆"""

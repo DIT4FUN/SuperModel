@@ -19,19 +19,45 @@ import json
 import shutil
 import gzip
 import hashlib
+import pickle
 from pathlib import Path
-from typing import Dict, List, Optional, Any, Callable
+from typing import Dict, List, Optional, Any, Callable, Tuple
 from datetime import datetime
 from enum import Enum
 import time
 import threading
+import numpy as np
+
+# 可选依赖
+FAISS_AVAILABLE = False
+try:
+    import faiss
+    FAISS_AVAILABLE = True
+except ImportError:
+    pass
+
+BOTO3_AVAILABLE = False
+try:
+    import boto3
+    from botocore.exceptions import ClientError
+    BOTO3_AVAILABLE = True
+except ImportError:
+    pass
 
 
 class StorageBackend(Enum):
     """存储后端类型"""
     JSON_FILE = "json_file"
     COMPRESSED_JSON = "compressed_json"
+    VECTOR_DB = "vector_db"  # 向量数据库
     # SQLITE = "sqlite"  # 未来扩展
+
+
+class CloudStorageProvider(Enum):
+    """云存储提供商"""
+    S3 = "s3"          # AWS S3/兼容S3的服务 (MinIO/OSS/COS等)
+    # GCS = "gcs"     # Google Cloud Storage (未来扩展)
+    # AZURE = "azure" # Azure Blob Storage (未来扩展)
 
 
 class MemoryStore:
@@ -52,6 +78,16 @@ class MemoryStore:
         auto_save: bool = True,
         save_interval_s: float = 60.0,
         max_backups: int = 5,
+        # 向量数据库配置
+        vector_dim: int = 1536,  # 嵌入维度 (默认OpenAI embedding维度)
+        vector_index_type: str = "IVFFlat",
+        # 云存储配置
+        cloud_provider: Optional[str] = None,
+        cloud_endpoint: Optional[str] = None,
+        cloud_access_key: Optional[str] = None,
+        cloud_secret_key: Optional[str] = None,
+        cloud_bucket: Optional[str] = None,
+        cloud_sync_interval_s: float = 3600.0,  # 云同步间隔
     ):
         """
         Args:
@@ -60,6 +96,14 @@ class MemoryStore:
             auto_save: 自动保存
             save_interval_s: 自动保存间隔
             max_backups: 最大备份数
+            vector_dim: 向量嵌入维度
+            vector_index_type: 向量索引类型
+            cloud_provider: 云存储提供商 (None 表示不启用云存储)
+            cloud_endpoint: 云存储端点
+            cloud_access_key: 云存储访问密钥
+            cloud_secret_key: 云存储秘密密钥
+            cloud_bucket: 云存储桶名
+            cloud_sync_interval_s: 云同步间隔 (秒)
         """
         self.base_path = Path(base_path)
         self.backend = backend
@@ -67,13 +111,42 @@ class MemoryStore:
         self.save_interval = save_interval_s
         self.max_backups = max_backups
         
+        # 向量数据库配置
+        self.vector_dim = vector_dim
+        self.vector_index_type = vector_index_type
+        self._vector_index: Optional[Any] = None
+        self._vector_id_map: Dict[str, int] = {}  # memory_id -> 向量ID
+        self._next_vector_id = 0
+        self._vector_lock = threading.RLock()
+        
+        # 云存储配置
+        self.cloud_provider = CloudStorageProvider(cloud_provider) if cloud_provider else None
+        self.cloud_endpoint = cloud_endpoint
+        self.cloud_access_key = cloud_access_key
+        self.cloud_secret_key = cloud_secret_key
+        self.cloud_bucket = cloud_bucket
+        self.cloud_sync_interval = cloud_sync_interval_s
+        self._cloud_client: Optional[Any] = None
+        self._cloud_sync_thread: Optional[threading.Thread] = None
+        self._stop_cloud_sync = threading.Event()
+        
         # 确保目录存在
         self.base_path.mkdir(parents=True, exist_ok=True)
+        (self.base_path / "vectors").mkdir(parents=True, exist_ok=True)
+        (self.base_path / "backups").mkdir(parents=True, exist_ok=True)
         
         # 内存缓存
         self._cache: Dict[str, Any] = {}
         self._dirty: set = set()
         self._cache_lock = threading.RLock()
+        
+        # 初始化向量索引
+        if backend == StorageBackend.VECTOR_DB.value:
+            self._init_vector_index()
+        
+        # 初始化云存储客户端
+        if self.cloud_provider:
+            self._init_cloud_client()
         
         # 自动保存线程
         self._save_thread: Optional[threading.Thread] = None
@@ -81,6 +154,10 @@ class MemoryStore:
         
         if auto_save:
             self._start_auto_save()
+        
+        # 云同步线程
+        if self.cloud_provider and cloud_sync_interval_s > 0:
+            self._start_cloud_sync()
     
     def _start_auto_save(self) -> None:
         """启动自动保存线程"""
@@ -98,6 +175,252 @@ class MemoryStore:
         self._stop_save_thread.set()
         if self._save_thread:
             self._save_thread.join(timeout=5.0)
+    
+    # ==================== 向量数据库方法 ====================
+    
+    def _init_vector_index(self) -> None:
+        """初始化向量索引"""
+        if not FAISS_AVAILABLE:
+            raise RuntimeError("FAISS is not installed, please install it with 'pip install faiss-cpu' or 'faiss-gpu'")
+        
+        vector_index_path = self.base_path / "vectors" / "index.faiss"
+        id_map_path = self.base_path / "vectors" / "id_map.pkl"
+        
+        if vector_index_path.exists() and id_map_path.exists():
+            # 加载现有索引
+            self._vector_index = faiss.read_index(str(vector_index_path))
+            with open(id_map_path, 'rb') as f:
+                self._vector_id_map = pickle.load(f)
+            self._next_vector_id = max(self._vector_id_map.values()) + 1 if self._vector_id_map else 0
+        else:
+            # 创建新索引
+            if self.vector_index_type == "IVFFlat":
+                quantizer = faiss.IndexFlatL2(self.vector_dim)
+                nlist = min(4096, max(64, len(self._vector_id_map) // 10))  # 自适应聚类数
+                self._vector_index = faiss.IndexIVFFlat(quantizer, self.vector_dim, nlist)
+                self._vector_index.train(np.zeros((1, self.vector_dim), dtype=np.float32))  # 空训练
+            else:  # 默认Flat
+                self._vector_index = faiss.IndexFlatL2(self.vector_dim)
+        
+        self._vector_index.make_direct_map()
+    
+    def add_vector(self, memory_id: str, vector: np.ndarray, metadata: Optional[Dict[str, Any]] = None) -> bool:
+        """
+        添加向量到索引
+        
+        Args:
+            memory_id: 记忆ID
+            vector: 嵌入向量
+            metadata: 元数据
+            
+        Returns:
+            是否成功
+        """
+        if self.backend != StorageBackend.VECTOR_DB.value:
+            return False
+        
+        with self._vector_lock:
+            if memory_id in self._vector_id_map:
+                # 更新现有向量
+                vec_id = self._vector_id_map[memory_id]
+                self._vector_index.remove_ids(np.array([vec_id], dtype=np.int64))
+            else:
+                # 新增向量
+                vec_id = self._next_vector_id
+                self._next_vector_id += 1
+                self._vector_id_map[memory_id] = vec_id
+            
+            # 添加向量
+            vector = vector.reshape(1, -1).astype(np.float32)
+            self._vector_index.add_with_ids(vector, np.array([vec_id], dtype=np.int64))
+            
+            # 存储元数据
+            if metadata:
+                self.save(f"vector_meta_{memory_id}", metadata)
+            
+            return True
+    
+    def search_vectors(self, query_vector: np.ndarray, top_k: int = 10, threshold: float = 0.8) -> List[Tuple[str, float, Dict[str, Any]]]:
+        """
+        搜索相似向量
+        
+        Args:
+            query_vector: 查询向量
+            top_k: 返回前k个结果
+            threshold: 相似度阈值 (L2距离越小越相似，阈值为最大允许距离)
+            
+        Returns:
+            列表: (memory_id, score, metadata)
+        """
+        if self.backend != StorageBackend.VECTOR_DB.value or self._vector_index is None:
+            return []
+        
+        with self._vector_lock:
+            query_vector = query_vector.reshape(1, -1).astype(np.float32)
+            distances, indices = self._vector_index.search(query_vector, top_k)
+            
+            results = []
+            id_to_memory = {v: k for k, v in self._vector_id_map.items()}
+            
+            for dist, idx in zip(distances[0], indices[0]):
+                if idx == -1:
+                    continue
+                if dist > threshold:
+                    continue
+                
+                memory_id = id_to_memory.get(idx)
+                if not memory_id:
+                    continue
+                
+                # 加载元数据
+                metadata = self.load(f"vector_meta_{memory_id}") or {}
+                # 转换为相似度分数 (0-1，越高越相似)
+                similarity = 1.0 / (1.0 + dist)
+                results.append((memory_id, similarity, metadata))
+            
+            return results
+    
+    def delete_vector(self, memory_id: str) -> bool:
+        """删除向量"""
+        if self.backend != StorageBackend.VECTOR_DB.value or memory_id not in self._vector_id_map:
+            return False
+        
+        with self._vector_lock:
+            vec_id = self._vector_id_map.pop(memory_id)
+            self._vector_index.remove_ids(np.array([vec_id], dtype=np.int64))
+            self.delete(f"vector_meta_{memory_id}")
+            return True
+    
+    def _save_vector_index(self) -> None:
+        """保存向量索引到磁盘"""
+        if self.backend != StorageBackend.VECTOR_DB.value or self._vector_index is None:
+            return
+        
+        vector_index_path = self.base_path / "vectors" / "index.faiss"
+        id_map_path = self.base_path / "vectors" / "id_map.pkl"
+        
+        with self._vector_lock:
+            faiss.write_index(self._vector_index, str(vector_index_path))
+            with open(id_map_path, 'wb') as f:
+                pickle.dump(self._vector_id_map, f)
+    
+    # ==================== 云存储方法 ====================
+    
+    def _init_cloud_client(self) -> None:
+        """初始化云存储客户端"""
+        if not BOTO3_AVAILABLE:
+            raise RuntimeError("Boto3 is not installed, please install it with 'pip install boto3'")
+        
+        if self.cloud_provider == CloudStorageProvider.S3:
+            self._cloud_client = boto3.client(
+                's3',
+                endpoint_url=self.cloud_endpoint,
+                aws_access_key_id=self.cloud_access_key,
+                aws_secret_access_key=self.cloud_secret_key,
+            )
+            # 确保桶存在
+            try:
+                self._cloud_client.head_bucket(Bucket=self.cloud_bucket)
+            except ClientError:
+                self._cloud_client.create_bucket(Bucket=self.cloud_bucket)
+    
+    def _start_cloud_sync(self) -> None:
+        """启动云同步线程"""
+        def cloud_sync_loop():
+            while not self._stop_cloud_sync.wait(self.cloud_sync_interval):
+                try:
+                    self.sync_to_cloud()
+                except Exception as e:
+                    print(f"Cloud sync failed: {e}")
+        
+        self._cloud_sync_thread = threading.Thread(target=cloud_sync_loop, daemon=True)
+        self._cloud_sync_thread.start()
+    
+    def stop_cloud_sync(self) -> None:
+        """停止云同步"""
+        self._stop_cloud_sync.set()
+        if self._cloud_sync_thread:
+            self._cloud_sync_thread.join(timeout=10.0)
+    
+    def sync_to_cloud(self) -> bool:
+        """同步本地数据到云存储"""
+        if not self._cloud_client or not self.cloud_bucket:
+            return False
+        
+        try:
+            # 先创建备份
+            backup_path = self.create_backup()
+            backup_name = Path(backup_path).name
+            
+            # 上传备份
+            for f in Path(backup_path).iterdir():
+                if f.is_file():
+                    key = f"backups/{backup_name}/{f.name}"
+                    self._cloud_client.upload_file(str(f), self.cloud_bucket, key)
+            
+            # 上传最新状态
+            for f in self.base_path.iterdir():
+                if f.is_file() and f.suffix in ['.json', '.faiss', '.pkl']:
+                    key = f"latest/{f.name}"
+                    self._cloud_client.upload_file(str(f), self.cloud_bucket, key)
+            
+            # 上传向量文件
+            vector_dir = self.base_path / "vectors"
+            if vector_dir.exists():
+                for f in vector_dir.iterdir():
+                    if f.is_file():
+                        key = f"latest/vectors/{f.name}"
+                        self._cloud_client.upload_file(str(f), self.cloud_bucket, key)
+            
+            return True
+        except Exception as e:
+            print(f"Sync to cloud failed: {e}")
+            return False
+    
+    def restore_from_cloud(self, backup_name: Optional[str] = None) -> bool:
+        """从云存储恢复"""
+        if not self._cloud_client or not self.cloud_bucket:
+            return False
+        
+        try:
+            restore_path = self.base_path / "cloud_restore"
+            restore_path.mkdir(parents=True, exist_ok=True)
+            
+            prefix = f"backups/{backup_name}/" if backup_name else "latest/"
+            
+            # 列出文件
+            paginator = self._cloud_client.get_paginator('list_objects_v2')
+            for page in paginator.paginate(Bucket=self.cloud_bucket, Prefix=prefix):
+                if 'Contents' in page:
+                    for obj in page['Contents']:
+                        key = obj['Key']
+                        local_path = restore_path / key[len(prefix):]
+                        local_path.parent.mkdir(parents=True, exist_ok=True)
+                        self._cloud_client.download_file(self.cloud_bucket, key, str(local_path))
+            
+            # 恢复数据
+            self._cache.clear()
+            self._dirty.clear()
+            
+            # 复制文件到主目录
+            for f in restore_path.iterdir():
+                if f.is_file():
+                    shutil.copy2(f, self.base_path / f.name)
+            
+            # 恢复向量文件
+            vector_restore_dir = restore_path / "vectors"
+            if vector_restore_dir.exists():
+                vector_dir = self.base_path / "vectors"
+                shutil.rmtree(vector_dir, ignore_errors=True)
+                shutil.copytree(vector_restore_dir, vector_dir)
+                # 重新加载向量索引
+                if self.backend == StorageBackend.VECTOR_DB.value:
+                    self._init_vector_index()
+            
+            return True
+        except Exception as e:
+            print(f"Restore from cloud failed: {e}")
+            return False
     
     # ==================== 核心操作 ====================
     
@@ -271,6 +594,11 @@ class MemoryStore:
         """保存所有数据"""
         with self._cache_lock:
             self._save_dirty()
+        
+        # 保存向量索引
+        if self.backend == StorageBackend.VECTOR_DB.value:
+            self._save_vector_index()
+        
         return True
     
     # ==================== 备份 ====================
@@ -384,6 +712,7 @@ class MemoryStore:
     def close(self) -> None:
         """关闭存储"""
         self.stop_auto_save()
+        self.stop_cloud_sync()
         self.save_all()
 
 

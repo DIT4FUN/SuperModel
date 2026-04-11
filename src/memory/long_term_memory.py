@@ -123,6 +123,12 @@ class LongTermMemory:
             episodic_memory=self.episodic,
             semantic_memory=self.semantic,
             procedural_memory=self.procedural,
+            memory_store=self.store,
+            # 嵌入配置 (可通过config调整)
+            embedding_model=getattr(self.config, 'embedding_model', 'all-MiniLM-L6-v2'),
+            embedding_provider=getattr(self.config, 'embedding_provider', 'local'),
+            openai_api_key=getattr(self.config, 'openai_api_key', None),
+            embedding_dim=getattr(self.config, 'embedding_dim', 1536),
         )
         
         # 7. 整合系统
@@ -210,6 +216,23 @@ class LongTermMemory:
                 for entity in entities:
                     self.working.activate(entity)
             
+            # 生成向量嵌入
+            if hasattr(self.retrieval, '_get_embedding') and hasattr(self.store, 'add_vector'):
+                embedding_text = f"{ep.summary} {' '.join(ep.entities)} {' '.join(ep.tags)} {ep.lessons_learned}"
+                vector = self.retrieval._get_embedding(embedding_text)
+                if vector is not None:
+                    self.store.add_vector(
+                        memory_id=ep.id,
+                        vector=vector,
+                        metadata={
+                            'type': 'episodic',
+                            'summary': ep.summary,
+                            'importance': ep.importance_score,
+                            'tags': ep.tags,
+                            'entities': ep.entities,
+                        }
+                    )
+            
             return ep
     
     def retrieve_episodes(
@@ -277,7 +300,7 @@ class LongTermMemory:
         存储知识/概念
         """
         with self._lock:
-            return self.semantic.add_concept(
+            concept = self.semantic.add_concept(
                 name=name,
                 category=category,
                 properties=properties,
@@ -286,6 +309,26 @@ class LongTermMemory:
                 source=KnowledgeSource(source),
                 tags=tags,
             )
+            
+            # 生成向量嵌入
+            if hasattr(self.retrieval, '_get_embedding') and hasattr(self.store, 'add_vector'):
+                embedding_text = f"{name} {category} {description} {' '.join(tags or [])}"
+                vector = self.retrieval._get_embedding(embedding_text)
+                if vector is not None:
+                    self.store.add_vector(
+                        memory_id=concept.id,
+                        vector=vector,
+                        metadata={
+                            'type': 'semantic',
+                            'name': name,
+                            'category': category,
+                            'description': description,
+                            'confidence': confidence,
+                            'tags': tags,
+                        }
+                    )
+            
+            return concept
     
     def add_fact(
         self,
@@ -364,7 +407,7 @@ class LongTermMemory:
         存储技能
         """
         with self._lock:
-            return self.procedural.add_skill(
+            skill = self.procedural.add_skill(
                 name=name,
                 description=description,
                 category=category,
@@ -374,6 +417,25 @@ class LongTermMemory:
                 applicable_contexts=contexts,
                 tags=tags,
             )
+            
+            # 生成向量嵌入
+            if hasattr(self.retrieval, '_get_embedding') and hasattr(self.store, 'add_vector'):
+                embedding_text = f"{name} {description} {category} {' '.join(tags or [])} {' '.join(contexts or [])}"
+                vector = self.retrieval._get_embedding(embedding_text)
+                if vector is not None:
+                    self.store.add_vector(
+                        memory_id=skill.id,
+                        vector=vector,
+                        metadata={
+                            'type': 'procedural',
+                            'name': name,
+                            'category': category,
+                            'description': description,
+                            'tags': tags,
+                        }
+                    )
+            
+            return skill
     
     def update_skill(
         self,
