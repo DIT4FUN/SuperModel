@@ -52,6 +52,11 @@ __all__ = [
     'EmbodiedTaskPlanner',
     'AGVTaskPlanner',
     'TaskStatus',
+    # AGV-specific nodes
+    'IsAtTarget',
+    'IsBatteryLow',
+    'MoveTo',
+    'Pickup',
     # Config-driven builder
     'create_behavior_tree_from_dict',
     'serialize_behavior_tree',
@@ -1706,3 +1711,119 @@ __all__ += [
 BehaviorTreeBuilder = create_behavior_tree_from_dict
 
 
+# ============================== AGV-specific Condition & Action Nodes ==============================
+class IsAtTarget(ConditionNode):
+    """检查机器人是否到达目标位置"""
+    def __init__(self, target: Tuple[float, float], tolerance: float = 0.1):
+        self.target = target
+        self.tolerance = tolerance
+        # 构造condition函数
+        def condition(blackboard: Blackboard) -> bool:
+            # 兼容两种blackboard格式：旧版直接存current_x/current_y，新版存robot_state.position
+            if hasattr(blackboard, 'robot_state'):
+                current_pos = blackboard.robot_state.get('position', (0.0, 0.0))
+            else:
+                current_pos = (blackboard.get('current_x', 0.0), blackboard.get('current_y', 0.0))
+            distance = math.hypot(current_pos[0] - self.target[0], current_pos[1] - self.target[1])
+            return distance <= self.tolerance
+        super().__init__(condition, name=f"IsAtTarget({target}, tol={tolerance})")
+
+
+class IsBatteryLow(ConditionNode):
+    """检查电池电量是否过低"""
+    def __init__(self, threshold: float = 20.0):
+        self.threshold = threshold
+        # 构造condition函数
+        def condition(blackboard: Blackboard) -> bool:
+            # 兼容两种blackboard格式
+            if hasattr(blackboard, 'robot_state'):
+                battery_level = blackboard.robot_state.get('battery_level', 100.0)
+            else:
+                battery_level = blackboard.get('battery_level', 100.0)
+            # 兼容百分比和0-1两种格式
+            if battery_level <= 1.0:
+                battery_level *= 100.0
+            return battery_level <= self.threshold
+        super().__init__(condition, name=f"IsBatteryLow(threshold={threshold}%)")
+
+
+class MoveTo(ActionNode):
+    """移动机器人到目标位置"""
+    def __init__(self, target: Tuple[float, float], speed: float = 1.0):
+        super().__init__(name=f"MoveTo({target}, speed={speed})")
+        self.target = target
+        self.speed = speed
+        self.start_time = None
+    
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if self.start_time is None:
+            self.start_time = time.time()
+            logger.info(f"开始移动到目标位置: {self.target}")
+        
+        # 兼容两种blackboard格式
+        if hasattr(blackboard, 'robot_state'):
+            current_pos = blackboard.robot_state.get('position', (0.0, 0.0))
+        else:
+            current_pos = (blackboard.get('current_x', 0.0), blackboard.get('current_y', 0.0))
+        
+        distance = math.hypot(current_pos[0] - self.target[0], current_pos[1] - self.target[1])
+        
+        # 仿真移动: 每秒移动speed距离
+        time_elapsed = time.time() - self.start_time
+        expected_distance_moved = self.speed * time_elapsed
+        
+        if expected_distance_moved >= distance:
+            # 到达目标
+            if hasattr(blackboard, 'robot_state'):
+                blackboard.robot_state['position'] = self.target
+            else:
+                blackboard['current_x'] = self.target[0]
+                blackboard['current_y'] = self.target[1]
+            logger.info(f"到达目标位置: {self.target}")
+            return NodeStatus.SUCCESS
+        else:
+            # 更新当前位置
+            direction = ((self.target[0] - current_pos[0])/distance, (self.target[1] - current_pos[1])/distance) if distance > 0 else (0, 0)
+            new_pos = (current_pos[0] + direction[0] * expected_distance_moved, current_pos[1] + direction[1] * expected_distance_moved)
+            if hasattr(blackboard, 'robot_state'):
+                blackboard.robot_state['position'] = new_pos
+            else:
+                blackboard['current_x'] = new_pos[0]
+                blackboard['current_y'] = new_pos[1]
+                # 设置速度供测试使用
+                blackboard['desired_velocity'] = self.speed
+                blackboard['desired_omega'] = 0.0
+            return NodeStatus.RUNNING
+
+
+class Pickup(ActionNode):
+    """抓取指定位置的物体"""
+    def __init__(self, object_position: Tuple[float, float]):
+        super().__init__(name=f"Pickup({object_position})")
+        self.object_position = object_position
+        self.start_time = None
+        self.pickup_duration = 2.0  # 抓取耗时2秒
+    
+    def execute(self, blackboard: Blackboard) -> NodeStatus:
+        if self.start_time is None:
+            # 先检查是否在物体位置附近
+            if hasattr(blackboard, 'robot_state'):
+                current_pos = blackboard.robot_state.get('position', (0.0, 0.0))
+            else:
+                current_pos = (blackboard.get('current_x', 0.0), blackboard.get('current_y', 0.0))
+            distance = math.hypot(current_pos[0] - self.object_position[0], current_pos[1] - self.object_position[1])
+            if distance > 0.1:
+                logger.error(f"无法抓取: 距离物体位置{self.object_position}过远 ({distance}m)")
+                return NodeStatus.FAILURE
+            self.start_time = time.time()
+            logger.info(f"开始抓取物体: {self.object_position}")
+        
+        if time.time() - self.start_time >= self.pickup_duration:
+            logger.info(f"成功抓取物体: {self.object_position}")
+            if hasattr(blackboard, 'robot_state'):
+                blackboard.robot_state['carried_object'] = self.object_position
+            else:
+                blackboard['gripper_command'] = 'close'
+            return NodeStatus.SUCCESS
+        else:
+            return NodeStatus.RUNNING

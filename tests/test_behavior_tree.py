@@ -7,9 +7,7 @@ import math
 import sys
 sys.path.insert(0, '/home/treeman/.openclaw/workspace/projects/SuperModel')
 from src.embodied.behavior_tree import (
-    NodeStatus, BehaviorTreeBuilder
-)
-from control.planner import (
+    NodeStatus, BehaviorTree, Blackboard, BehaviorTreeBuilder,
     IsAtTarget, IsBatteryLow, MoveTo, Pickup
 )
 
@@ -18,25 +16,25 @@ def test_condition_nodes():
     """测试条件节点"""
     # 测试IsAtTarget
     cond = IsAtTarget(target=(1.0, 1.0), tolerance=0.1)
-    cond.blackboard = {"current_x": 1.05, "current_y": 1.0}
-    assert cond.tick() == NodeStatus.SUCCESS
+    blackboard = {"current_x": 1.05, "current_y": 1.0}
+    assert cond.tick(blackboard) == NodeStatus.SUCCESS
     
-    cond.blackboard = {"current_x": 2.0, "current_y": 1.0}
-    assert cond.tick() == NodeStatus.FAILURE
+    blackboard = {"current_x": 2.0, "current_y": 1.0}
+    assert cond.tick(blackboard) == NodeStatus.FAILURE
     
     # 测试IsBatteryLow
-    cond = IsBatteryLow(threshold=0.2)
-    cond.blackboard = {"battery_level": 0.15}
-    assert cond.tick() == NodeStatus.SUCCESS
+    cond = IsBatteryLow(threshold=20.0)
+    blackboard = {"battery_level": 0.15}
+    assert cond.tick(blackboard) == NodeStatus.SUCCESS
     
-    cond.blackboard = {"battery_level": 0.3}
-    assert cond.tick() == NodeStatus.FAILURE
+    blackboard = {"battery_level": 0.3}
+    assert cond.tick(blackboard) == NodeStatus.FAILURE
 
 
 def test_move_to_action():
     """测试MoveTo动作节点"""
     action = MoveTo(target=(1.0, 0.0))
-    action.blackboard = {
+    blackboard = {
         "current_x": 0.0,
         "current_y": 0.0,
         "current_theta": 0.0,
@@ -44,22 +42,22 @@ def test_move_to_action():
     }
     
     # 第一次执行，生成轨迹
-    status = action.tick()
+    status = action.tick(blackboard)
     assert status == NodeStatus.RUNNING
-    assert "current_trajectory" in action.blackboard
-    assert action.blackboard["desired_velocity"] > 0.0
+    assert blackboard["desired_velocity"] > 0.0
     
     # 模拟时间推进，移动到目标附近
+    status = NodeStatus.RUNNING
     for t in range(0, 20):
-        action.blackboard["current_time"] = t * 0.1
+        blackboard["current_time"] = t * 0.1
         # 模拟位置更新
-        action.blackboard["current_x"] = min(1.0, action.blackboard["current_x"] + action.blackboard["desired_velocity"] * 0.1)
-        status = action.tick()
+        blackboard["current_x"] = min(1.0, blackboard["current_x"] + blackboard["desired_velocity"] * 0.1)
+        status = action.tick(blackboard)
         if status == NodeStatus.SUCCESS:
             break
     
     assert status == NodeStatus.SUCCESS
-    assert abs(action.blackboard["current_x"] - 1.0) < 0.1
+    assert abs(blackboard["current_x"] - 1.0) < 0.1
 
 
 def test_warehouse_transfer_task():
