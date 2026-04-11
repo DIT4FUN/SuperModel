@@ -872,7 +872,324 @@ class SimulationMetricsCollector:
         }
 
 
+# ============================================================================
+# 动态障碍物生成器
+# ============================================================================
+
+
+class DynamicObstacleGenerator:
+    """
+    动态障碍物生成器 - 生成真实场景中的移动障碍物
+    
+    支持障碍物类型:
+    - 行走的人员 (随机路径/固定路径)
+    - 移动的叉车/其他AGV
+    - 随机掉落的货物
+    - 临时放置的障碍物
+    """
+
+    @dataclass
+    class Obstacle:
+        obstacle_id: str
+        obstacle_type: str  # person, forklift, box, barrier
+        position: np.ndarray
+        velocity: np.ndarray
+        size: Tuple[float, float, float]  # (width, height, depth)
+        moving: bool = True
+        path: Optional[List[np.ndarray]] = None
+        current_path_index: int = 0
+
+    def __init__(self, scene_bounds: Tuple[float, float, float, float]):
+        """
+        初始化动态障碍物生成器
+        
+        Args:
+            scene_bounds: 场景边界 (x_min, y_min, x_max, y_max)
+        """
+        self.scene_bounds = scene_bounds
+        self.obstacles: Dict[str, DynamicObstacleGenerator.Obstacle] = {}
+        self.obstacle_counter = 0
+
+    def generate_person_obstacle(self, start_pos: Optional[np.ndarray] = None, path: Optional[List[np.ndarray]] = None) -> str:
+        """生成人员障碍物"""
+        if start_pos is None:
+            x = random.uniform(self.scene_bounds[0], self.scene_bounds[2])
+            y = random.uniform(self.scene_bounds[1], self.scene_bounds[3])
+            start_pos = np.array([x, y, 0.0])
+        
+        obstacle_id = f"person_{self.obstacle_counter}"
+        self.obstacle_counter += 1
+        
+        velocity = np.array([random.uniform(-0.5, 0.5), random.uniform(-0.5, 0.5), 0.0]) if path is None else np.zeros(3)
+        
+        obstacle = self.Obstacle(
+            obstacle_id=obstacle_id,
+            obstacle_type="person",
+            position=start_pos,
+            velocity=velocity,
+            size=(0.4, 1.7, 0.3),
+            path=path,
+            current_path_index=0
+        )
+        
+        self.obstacles[obstacle_id] = obstacle
+        return obstacle_id
+
+    def generate_forklift_obstacle(self, start_pos: Optional[np.ndarray] = None) -> str:
+        """生成叉车障碍物"""
+        if start_pos is None:
+            x = random.uniform(self.scene_bounds[0], self.scene_bounds[2])
+            y = random.uniform(self.scene_bounds[1], self.scene_bounds[3])
+            start_pos = np.array([x, y, 0.0])
+        
+        obstacle_id = f"forklift_{self.obstacle_counter}"
+        self.obstacle_counter += 1
+        
+        obstacle = self.Obstacle(
+            obstacle_id=obstacle_id,
+            obstacle_type="forklift",
+            position=start_pos,
+            velocity=np.array([random.uniform(-1.0, 1.0), random.uniform(-1.0, 1.0), 0.0]),
+            size=(1.2, 2.0, 0.8)
+        )
+        
+        self.obstacles[obstacle_id] = obstacle
+        return obstacle_id
+
+    def generate_random_box_obstacle(self) -> str:
+        """生成随机掉落的箱子障碍物"""
+        x = random.uniform(self.scene_bounds[0], self.scene_bounds[2])
+        y = random.uniform(self.scene_bounds[1], self.scene_bounds[3])
+        position = np.array([x, y, random.uniform(0.0, 0.5)])
+        
+        obstacle_id = f"box_{self.obstacle_counter}"
+        self.obstacle_counter += 1
+        
+        obstacle = self.Obstacle(
+            obstacle_id=obstacle_id,
+            obstacle_type="box",
+            position=position,
+            velocity=np.zeros(3),
+            size=(random.uniform(0.2, 0.6), random.uniform(0.1, 0.4), random.uniform(0.2, 0.6)),
+            moving=False
+        )
+        
+        self.obstacles[obstacle_id] = obstacle
+        return obstacle_id
+
+    def step(self, delta_time: float = 0.01) -> None:
+        """更新所有障碍物位置"""
+        for obstacle in self.obstacles.values():
+            if not obstacle.moving:
+                continue
+            
+            if obstacle.path is not None and len(obstacle.path) > 0:
+                # 沿路径移动
+                target = obstacle.path[obstacle.current_path_index]
+                direction = target - obstacle.position[:2]
+                distance = np.linalg.norm(direction)
+                
+                if distance < 0.1:
+                    obstacle.current_path_index = (obstacle.current_path_index + 1) % len(obstacle.path)
+                    target = obstacle.path[obstacle.current_path_index]
+                    direction = target - obstacle.position[:2]
+                    distance = np.linalg.norm(direction)
+                
+                if distance > 0:
+                    direction = direction / distance
+                    speed = 0.8 if obstacle.obstacle_type == "person" else 1.5
+                    obstacle.velocity[:2] = direction * speed
+            
+            # 更新位置
+            obstacle.position += obstacle.velocity * delta_time
+            
+            # 边界检查，碰到边界反弹
+            if obstacle.position[0] < self.scene_bounds[0] or obstacle.position[0] > self.scene_bounds[2]:
+                obstacle.velocity[0] *= -1
+            if obstacle.position[1] < self.scene_bounds[1] or obstacle.position[1] > self.scene_bounds[3]:
+                obstacle.velocity[1] *= -1
+
+    def get_all_obstacles(self) -> List[Dict[str, Any]]:
+        """获取所有障碍物信息"""
+        return [
+            {
+                'id': obs.obstacle_id,
+                'type': obs.obstacle_type,
+                'position': obs.position.tolist(),
+                'velocity': obs.velocity.tolist(),
+                'size': obs.size,
+                'moving': obs.moving
+            }
+            for obs in self.obstacles.values()
+        ]
+
+    def check_collision(self, agv_position: np.ndarray, agv_size: Tuple[float, float, float]) -> List[str]:
+        """检查AGV是否与障碍物碰撞"""
+        collisions = []
+        agv_half_size = np.array(agv_size) / 2
+        agv_min = agv_position - agv_half_size
+        agv_max = agv_position + agv_half_size
+        
+        for obs in self.obstacles.values():
+            obs_half_size = np.array(obs.size) / 2
+            obs_min = obs.position - obs_half_size
+            obs_max = obs.position + obs_half_size
+            
+            # AABB碰撞检测
+            if (agv_min[0] < obs_max[0] and agv_max[0] > obs_min[0] and
+                agv_min[1] < obs_max[1] and agv_max[1] > obs_min[1] and
+                agv_min[2] < obs_max[2] and agv_max[2] > obs_min[2]):
+                collisions.append(obs.obstacle_id)
+        
+        return collisions
+
+
+# ============================================================================
+# 环境条件模拟器
+# ============================================================================
+
+
+class EnvironmentalConditionSimulator:
+    """
+    环境条件模拟器 - 模拟影响传感器性能的环境变化
+    
+    支持模拟:
+    - 光照变化 (影响视觉传感器)
+    - 粉尘/烟雾 (降低视觉清晰度)
+    - 雨水/潮湿 (影响触觉/力觉传感器精度)
+    - 电磁干扰 (影响IMU/无线通信)
+    - 温度变化 (影响电机/传感器性能)
+    """
+
+    def __init__(self):
+        self.lighting_intensity: float = 1000.0  # 光照强度 (lux), 正常室内500-2000
+        self.dust_density: float = 0.0  # 粉尘密度 0-1
+        self.rain_intensity: float = 0.0  # 降雨强度 0-1
+        self.emi_level: float = 0.0  # 电磁干扰等级 0-1
+        self.temperature: float = 25.0  # 温度 (°C)
+        self.humidity: float = 50.0  # 湿度 (%)
+
+    def set_normal_conditions(self) -> None:
+        """设置正常室内环境条件"""
+        self.lighting_intensity = 1000.0
+        self.dust_density = 0.0
+        self.rain_intensity = 0.0
+        self.emi_level = 0.0
+        self.temperature = 25.0
+        self.humidity = 50.0
+
+    def set_low_light(self) -> None:
+        """设置低光照条件"""
+        self.lighting_intensity = random.uniform(50.0, 200.0)
+
+    def set_dusty_environment(self) -> None:
+        """设置多粉尘环境 (工厂/仓库场景)"""
+        self.dust_density = random.uniform(0.3, 0.7)
+
+    def set_rainy_outdoor(self) -> None:
+        """设置室外雨天条件"""
+        self.rain_intensity = random.uniform(0.2, 0.8)
+        self.humidity = random.uniform(80.0, 95.0)
+
+    def set_high_emi(self) -> None:
+        """设置高电磁干扰环境 (靠近电机/高压设备)"""
+        self.emi_level = random.uniform(0.4, 0.9)
+
+    def set_extreme_temperature(self, hot: bool = True) -> None:
+        """设置极端温度条件"""
+        if hot:
+            self.temperature = random.uniform(40.0, 55.0)
+        else:
+            self.temperature = random.uniform(-10.0, 10.0)
+
+    def get_camera_performance_factor(self) -> float:
+        """获取摄像头性能系数 (0-1, 1=最佳性能)"""
+        # 光照影响：过暗或过亮都会降低性能
+        light_factor = 1.0
+        if self.lighting_intensity < 100.0:
+            light_factor = max(0.2, self.lighting_intensity / 100.0)
+        elif self.lighting_intensity > 10000.0:
+            light_factor = max(0.3, 10000.0 / self.lighting_intensity)
+        
+        # 粉尘影响：降低清晰度
+        dust_factor = 1.0 - (self.dust_density * 0.6)
+        
+        # 雨水影响：镜头起雾/水滴
+        rain_factor = 1.0 - (self.rain_intensity * 0.7)
+        
+        return min(light_factor, dust_factor, rain_factor)
+
+    def get_tactile_sensor_performance_factor(self) -> float:
+        """获取触觉传感器性能系数"""
+        # 湿度影响：潮湿会降低触觉精度
+        humidity_factor = 1.0
+        if self.humidity > 70.0:
+            humidity_factor = 1.0 - ((self.humidity - 70.0) / 30.0 * 0.4)
+        
+        # 温度影响：极端温度降低精度
+        temp_factor = 1.0
+        if abs(self.temperature - 25.0) > 20.0:
+            temp_factor = 1.0 - (abs(self.temperature - 25.0) - 20.0) / 30.0 * 0.5
+            temp_factor = max(0.5, temp_factor)
+        
+        return min(humidity_factor, temp_factor)
+
+    def get_imu_performance_factor(self) -> float:
+        """获取IMU性能系数"""
+        # 电磁干扰影响
+        emi_factor = 1.0 - (self.emi_level * 0.7)
+        
+        # 温度影响
+        temp_factor = 1.0
+        if abs(self.temperature - 25.0) > 15.0:
+            temp_factor = 1.0 - (abs(self.temperature - 25.0) - 15.0) / 35.0 * 0.4
+            temp_factor = max(0.6, temp_factor)
+        
+        return min(emi_factor, temp_factor)
+
+    def get_communication_reliability(self) -> float:
+        """获取通信可靠性系数 (0-1, 1=完全可靠)"""
+        # 电磁干扰影响通信
+        emi_factor = 1.0 - (self.emi_level * 0.8)
+        
+        # 雨水影响无线信号
+        rain_factor = 1.0 - (self.rain_intensity * 0.3)
+        
+        return min(emi_factor, rain_factor)
+
+    def step(self, delta_time: float = 1.0) -> None:
+        """模拟环境条件的缓慢变化"""
+        # 光照缓慢波动
+        self.lighting_intensity += random.uniform(-50.0, 50.0) * delta_time
+        self.lighting_intensity = max(50.0, min(20000.0, self.lighting_intensity))
+        
+        # 粉尘缓慢变化
+        self.dust_density += random.uniform(-0.01, 0.01) * delta_time
+        self.dust_density = max(0.0, min(1.0, self.dust_density))
+        
+        # 温度缓慢波动
+        self.temperature += random.uniform(-0.1, 0.1) * delta_time
+        self.temperature = max(-20.0, min(60.0, self.temperature))
+
+    def get_environmental_status(self) -> Dict[str, Any]:
+        """获取当前环境状态"""
+        return {
+            'lighting_intensity_lux': self.lighting_intensity,
+            'dust_density': self.dust_density,
+            'rain_intensity': self.rain_intensity,
+            'emi_level': self.emi_level,
+            'temperature_celsius': self.temperature,
+            'humidity_percent': self.humidity,
+            'camera_performance': self.get_camera_performance_factor(),
+            'tactile_performance': self.get_tactile_sensor_performance_factor(),
+            'imu_performance': self.get_imu_performance_factor(),
+            'communication_reliability': self.get_communication_reliability(),
+        }
+
+
 __all__ += [
     'MultiAGVSimulationEnhancer',
     'SimulationMetricsCollector',
+    'DynamicObstacleGenerator',
+    'EnvironmentalConditionSimulator',
 ]

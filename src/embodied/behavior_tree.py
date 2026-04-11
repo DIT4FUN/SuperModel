@@ -1451,3 +1451,254 @@ def load_behavior_tree_from_json(json_path: str) -> BTNode:
     return create_behavior_tree_from_dict(config)
 
 
+# ============================================================================
+# 多AGV协同行为树管理器
+# ============================================================================
+
+
+class MultiAGVBehaviorTreeManager:
+    """
+    多AGV协同行为树管理器 - 支持多AGV任务分配和协同执行
+    
+    功能:
+    - 全局任务分解
+    - AGV任务分配 (基于能力/负载/位置)
+    - 协同行为树执行
+    - 跨AGV任务同步
+    - 冲突检测与解决
+    """
+
+    def __init__(self, agv_registry: Dict[str, Dict[str, Any]]):
+        """
+        初始化多AGV管理器
+        
+        Args:
+            agv_registry: AGV注册信息，包含每个AGV的能力、位置、负载等
+        """
+        self.agv_registry = agv_registry
+        self.agv_bt_instances: Dict[str, BehaviorTree] = {}
+        self.global_task_queue: List[Dict[str, Any]] = []
+        self.running_tasks: Dict[str, Dict[str, Any]] = {}
+        self.completed_tasks: List[Dict[str, Any]] = []
+        self.collision_avoidance_enabled = True
+        self.task_sync_points: Dict[str, Set[str]] = {}
+
+    def register_agv(self, agv_id: str, capabilities: List[str], position: np.ndarray, load_level: float = 0.0) -> None:
+        """注册AGV到管理器"""
+        self.agv_registry[agv_id] = {
+            'capabilities': capabilities,
+            'position': position,
+            'load_level': load_level,
+            'available': True,
+            'current_task': None,
+        }
+
+    def add_global_task(self, task_config: Dict[str, Any]) -> str:
+        """添加全局任务到队列"""
+        import uuid
+        task_id = str(uuid.uuid4())
+        task_config['task_id'] = task_id
+        self.global_task_queue.append(task_config)
+        return task_id
+
+    def allocate_tasks(self) -> List[Tuple[str, str, Dict[str, Any]]]:
+        """
+        任务分配算法 - 将全局任务分配给最合适的AGV
+        
+        分配优先级:
+        1. AGV是否具备任务所需能力
+        2. 距离任务起点的距离
+        3. 当前负载水平
+        4. 历史任务成功率
+        
+        Returns:
+            列表 of (agv_id, task_id, task_config)
+        """
+        allocations = []
+        available_agvs = [agv_id for agv_id, info in self.agv_registry.items() if info['available']]
+        
+        for task in self.global_task_queue[:]:
+            required_capabilities = task.get('required_capabilities', [])
+            task_position = task.get('start_position', np.zeros(3))
+            
+            # 筛选具备所需能力的AGV
+            eligible_agvs = []
+            for agv_id in available_agvs:
+                agv_info = self.agv_registry[agv_id]
+                if all(cap in agv_info['capabilities'] for cap in required_capabilities):
+                    # 计算分配得分
+                    distance = np.linalg.norm(agv_info['position'] - task_position)
+                    score = (1.0 / (distance + 0.1)) * (1.0 - agv_info['load_level'] * 0.5)
+                    eligible_agvs.append((score, agv_id))
+            
+            if eligible_agvs:
+                # 选择得分最高的AGV
+                eligible_agvs.sort(reverse=True, key=lambda x: x[0])
+                best_agv_id = eligible_agvs[0][1]
+                
+                allocations.append((best_agv_id, task['task_id'], task))
+                self.global_task_queue.remove(task)
+                self.agv_registry[best_agv_id]['available'] = False
+                self.agv_registry[best_agv_id]['current_task'] = task['task_id']
+                self.running_tasks[task['task_id']] = {
+                    'agv_id': best_agv_id,
+                    'task_config': task,
+                    'start_time': time.time(),
+                    'status': 'RUNNING',
+                }
+        
+        return allocations
+
+    def create_agv_behavior_tree(self, agv_id: str, task_config: Dict[str, Any]) -> BehaviorTree:
+        """为指定AGV创建任务行为树"""
+        bt = create_task_bt_from_config(task_config)
+        bt.set_blackboard_value('agv_id', agv_id)
+        bt.set_blackboard_value('task_id', task_config['task_id'])
+        self.agv_bt_instances[agv_id] = bt
+        return bt
+
+    def step_all(self, delta_time: float = 0.01) -> Dict[str, Any]:
+        """执行所有AGV的行为树单步更新"""
+        results = {}
+        completed_task_ids = []
+        
+        # 先执行任务分配
+        new_allocations = self.allocate_tasks()
+        for agv_id, task_id, task_config in new_allocations:
+            self.create_agv_behavior_tree(agv_id, task_config)
+            logger.info(f"Allocated task {task_id} to AGV {agv_id}")
+        
+        # 执行所有AGV的行为树
+        for agv_id, bt in self.agv_bt_instances.items():
+            if not self.agv_registry[agv_id]['available']:
+                status = bt.tick()
+                results[agv_id] = {
+                    'task_id': self.agv_registry[agv_id]['current_task'],
+                    'status': status.name,
+                    'blackboard': bt.get_blackboard_copy(),
+                }
+                
+                # 检查任务是否完成
+                if status in [NodeStatus.SUCCESS, NodeStatus.FAILURE]:
+                    task_id = self.agv_registry[agv_id]['current_task']
+                    if task_id in self.running_tasks:
+                        self.running_tasks[task_id]['status'] = 'COMPLETED' if status == NodeStatus.SUCCESS else 'FAILED'
+                        self.running_tasks[task_id]['end_time'] = time.time()
+                        self.running_tasks[task_id]['duration'] = self.running_tasks[task_id]['end_time'] - self.running_tasks[task_id]['start_time']
+                        self.completed_tasks.append(self.running_tasks[task_id])
+                        completed_task_ids.append(task_id)
+                    
+                    # 标记AGV为可用
+                    self.agv_registry[agv_id]['available'] = True
+                    self.agv_registry[agv_id]['current_task'] = None
+        
+        # 清理已完成的任务
+        for task_id in completed_task_ids:
+            del self.running_tasks[task_id]
+        
+        # 碰撞检测与避免
+        if self.collision_avoidance_enabled:
+            self._run_collision_avoidance()
+        
+        return {
+            'agv_results': results,
+            'new_allocations': len(new_allocations),
+            'running_tasks': len(self.running_tasks),
+            'completed_tasks_total': len(self.completed_tasks),
+            'queued_tasks': len(self.global_task_queue),
+        }
+
+    def _run_collision_avoidance(self) -> None:
+        """运行AGV之间的碰撞避免算法"""
+        # 收集所有AGV的位置和速度
+        agv_states = []
+        for agv_id, info in self.agv_registry.items():
+            if not info['available'] and 'position' in info:
+                bt = self.agv_bt_instances.get(agv_id)
+                if bt:
+                    velocity = bt.get_blackboard_value('current_velocity', np.zeros(2))
+                    agv_states.append({
+                        'agv_id': agv_id,
+                        'position': info['position'],
+                        'velocity': velocity,
+                    })
+        
+        # 检查两两之间的距离
+        for i in range(len(agv_states)):
+            for j in range(i + 1, len(agv_states)):
+                a = agv_states[i]
+                b = agv_states[j]
+                distance = np.linalg.norm(a['position'][:2] - b['position'][:2])
+                
+                if distance < 1.0:  # 安全距离阈值
+                    # 距离过近，触发减速/停止
+                    logger.warning(f"AGV {a['agv_id']} and AGV {b['agv_id']} are too close ({distance:.2f}m), triggering collision avoidance")
+                    
+                    for agv_state in [a, b]:
+                        bt = self.agv_bt_instances.get(agv_state['agv_id'])
+                        if bt:
+                            # 降低目标速度
+                            current_target_speed = bt.get_blackboard_value('target_speed', 1.0)
+                            bt.set_blackboard_value('target_speed', current_target_speed * 0.5)
+                            
+                            if distance < 0.5:
+                                # 紧急停止
+                                bt.set_blackboard_value('emergency_stop', True)
+
+    def get_global_status(self) -> Dict[str, Any]:
+        """获取全局多AGV系统状态"""
+        total_agvs = len(self.agv_registry)
+        available_agvs = sum(1 for info in self.agv_registry.values() if info['available'])
+        busy_agvs = total_agvs - available_agvs
+        
+        success_count = sum(1 for task in self.completed_tasks if task['status'] == 'COMPLETED')
+        failure_count = len(self.completed_tasks) - success_count
+        success_rate = success_count / len(self.completed_tasks) if self.completed_tasks else 0.0
+        
+        return {
+            'total_agvs': total_agvs,
+            'available_agvs': available_agvs,
+            'busy_agvs': busy_agvs,
+            'queued_tasks': len(self.global_task_queue),
+            'running_tasks': len(self.running_tasks),
+            'completed_tasks': len(self.completed_tasks),
+            'task_success_rate': success_rate,
+            'running_task_details': self.running_tasks.copy(),
+        }
+
+    def cancel_task(self, task_id: str) -> bool:
+        """取消指定任务"""
+        if task_id in self.running_tasks:
+            task_info = self.running_tasks[task_id]
+            agv_id = task_info['agv_id']
+            
+            # 停止AGV的行为树
+            if agv_id in self.agv_bt_instances:
+                bt = self.agv_bt_instances[agv_id]
+                bt.reset()
+                bt.set_blackboard_value('emergency_stop', True)
+            
+            # 标记AGV为可用
+            self.agv_registry[agv_id]['available'] = True
+            self.agv_registry[agv_id]['current_task'] = None
+            
+            # 从运行任务中移除
+            del self.running_tasks[task_id]
+            logger.info(f"Cancelled task {task_id} on AGV {agv_id}")
+            return True
+        
+        # 检查是否在队列中
+        for i, task in enumerate(self.global_task_queue):
+            if task['task_id'] == task_id:
+                self.global_task_queue.pop(i)
+                logger.info(f"Removed task {task_id} from queue")
+                return True
+        
+        return False
+
+
+__all__ += [
+    'MultiAGVBehaviorTreeManager',
+]
+
+

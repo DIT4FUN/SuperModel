@@ -847,3 +847,207 @@ class RealAGVController:
 
     def get_config(self) -> AGVHardwareConfig:
         return self.config
+
+    def emergency_stop(self, reason: str = "UNKNOWN") -> None:
+        """
+        紧急停止AGV
+        
+        Args:
+            reason: 紧急停止原因
+        """
+        logger.critical(f"EMERGENCY STOP TRIGGERED: {reason}")
+        self.emergency_stop_active = True
+        
+        # 立即停止电机
+        if self.motor_controller:
+            try:
+                self.motor_controller.set_speed(0, 0)
+                self.motor_controller.enable_torque(False)
+            except Exception as e:
+                logger.error(f"Failed to stop motors during emergency stop: {e}")
+        
+        # 停止所有传感器读取
+        if self.sensor_reader:
+            self.sensor_reader.stop()
+        
+        # 记录紧急停止事件
+        self.health_monitor.record_error("emergency_stop", reason)
+
+    def reset_emergency_stop(self) -> bool:
+        """重置紧急停止状态"""
+        if not self.emergency_stop_active:
+            return True
+        
+        # 检查系统是否健康
+        health_status = self.health_monitor.get_health_status()
+        if health_status['overall_health'] < 0.7:
+            logger.error(f"Cannot reset emergency stop: system health too low ({health_status['overall_health']:.2f})")
+            return False
+        
+        # 重新启用电机
+        if self.motor_controller:
+            try:
+                self.motor_controller.enable_torque(True)
+            except Exception as e:
+                logger.error(f"Failed to re-enable motors: {e}")
+                return False
+        
+        # 重启传感器读取
+        if self.sensor_reader:
+            self.sensor_reader.start()
+        
+        self.emergency_stop_active = False
+        logger.info("Emergency stop reset successfully")
+        return True
+
+    def set_emergency_stop_callback(self, callback: Callable[[str], None]) -> None:
+        """设置紧急停止回调函数"""
+        self.emergency_stop_callback = callback
+
+
+# ============================================================================
+# AGV健康监控器
+# ============================================================================
+
+
+class AGVHealthMonitor:
+    """
+    AGV健康监控器 - 实时监控硬件状态和健康度
+    
+    监控指标:
+    - 电机温度/电流/电压
+    - 传感器连接状态
+    - 电池电压/电流/温度
+    - CAN总线通信状态
+    - CPU/NPU使用率
+    - 磁盘/内存使用率
+    """
+
+    def __init__(self, agv_id: str):
+        self.agv_id = agv_id
+        self.errors: List[Dict[str, Any]] = []
+        self.warnings: List[Dict[str, Any]] = []
+        self.metrics: Dict[str, List[float]] = {
+            'motor_temperature_left': [],
+            'motor_temperature_right': [],
+            'motor_current_left': [],
+            'motor_current_right': [],
+            'battery_voltage': [],
+            'battery_current': [],
+            'battery_temperature': [],
+            'can_bus_error_rate': [],
+            'cpu_usage': [],
+            'memory_usage': [],
+            'npu_usage': [],
+        }
+        self.max_metric_history = 1000
+
+    def record_error(self, error_type: str, message: str) -> None:
+        """记录错误事件"""
+        import time
+        self.errors.append({
+            'timestamp': time.time(),
+            'type': error_type,
+            'message': message,
+        })
+        logger.error(f"AGV {self.agv_id} ERROR [{error_type}]: {message}")
+
+    def record_warning(self, warning_type: str, message: str) -> None:
+        """记录警告事件"""
+        import time
+        self.warnings.append({
+            'timestamp': time.time(),
+            'type': warning_type,
+            'message': message,
+        })
+        logger.warning(f"AGV {self.agv_id} WARNING [{warning_type}]: {message}")
+
+    def record_metric(self, metric_name: str, value: float) -> None:
+        """记录性能指标"""
+        if metric_name not in self.metrics:
+            self.metrics[metric_name] = []
+        
+        self.metrics[metric_name].append(value)
+        
+        # 保持历史长度
+        if len(self.metrics[metric_name]) > self.max_metric_history:
+            self.metrics[metric_name].pop(0)
+
+    def get_health_status(self) -> Dict[str, Any]:
+        """获取整体健康状态"""
+        health_score = 1.0
+        issues = []
+        
+        # 检查电机温度
+        for motor_side in ['left', 'right']:
+            temp_key = f'motor_temperature_{motor_side}'
+            if self.metrics[temp_key]:
+                avg_temp = np.mean(self.metrics[temp_key][-10:])
+                if avg_temp > 80.0:
+                    health_score -= 0.3
+                    issues.append(f"{motor_side} motor over temperature ({avg_temp:.1f}°C)")
+                elif avg_temp > 60.0:
+                    health_score -= 0.1
+                    issues.append(f"{motor_side} motor high temperature ({avg_temp:.1f}°C)")
+        
+        # 检查电池电压
+        if self.metrics['battery_voltage']:
+            avg_voltage = np.mean(self.metrics['battery_voltage'][-10:])
+            if avg_voltage < 22.0:  # 24V电池低电
+                health_score -= 0.4
+                issues.append(f"Battery critically low ({avg_voltage:.1f}V)")
+            elif avg_voltage < 23.5:
+                health_score -= 0.2
+                issues.append(f"Battery low ({avg_voltage:.1f}V)")
+        
+        # 检查CAN总线错误率
+        if self.metrics['can_bus_error_rate']:
+            avg_error_rate = np.mean(self.metrics['can_bus_error_rate'][-10:])
+            if avg_error_rate > 0.1:
+                health_score -= 0.3
+                issues.append(f"High CAN bus error rate ({avg_error_rate:.1%})")
+        
+        # 检查CPU使用率
+        if self.metrics['cpu_usage']:
+            avg_cpu = np.mean(self.metrics['cpu_usage'][-10:])
+            if avg_cpu > 90.0:
+                health_score -= 0.2
+                issues.append(f"High CPU usage ({avg_cpu:.1f}%)")
+        
+        health_score = max(0.0, health_score)
+        
+        return {
+            'overall_health': health_score,
+            'health_level': 'EXCELLENT' if health_score >= 0.9 else 'GOOD' if health_score >= 0.7 else 'WARNING' if health_score >= 0.4 else 'CRITICAL',
+            'issues': issues,
+            'error_count': len(self.errors),
+            'warning_count': len(self.warnings),
+            'latest_errors': self.errors[-5:],
+            'latest_warnings': self.warnings[-5:],
+        }
+
+    def get_metric_statistics(self, metric_name: str) -> Optional[Dict[str, float]]:
+        """获取指定指标的统计信息"""
+        if metric_name not in self.metrics or len(self.metrics[metric_name]) == 0:
+            return None
+        
+        values = np.array(self.metrics[metric_name])
+        return {
+            'min': np.min(values),
+            'max': np.max(values),
+            'mean': np.mean(values),
+            'std': np.std(values),
+            'latest': values[-1],
+        }
+
+    def reset(self) -> None:
+        """重置所有监控数据"""
+        self.errors.clear()
+        self.warnings.clear()
+        for key in self.metrics:
+            self.metrics[key].clear()
+
+
+__all__ += [
+    'AGVHealthMonitor',
+]
