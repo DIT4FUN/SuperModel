@@ -1,7 +1,55 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-10 14:33 (v2.51.0)
+> Last Updated: 2026-04-11 15:00 (v2.74.0)
+
+---
+
+## v2.74.0 (2026-04-11 15:00) - 行为树具身任务规划完善 + 多AGV蜂群协同测试 + 文档更新
+
+### 本次更新
+
+1. **行为树具身任务规划模块 (`src/embodied/behavior_tree.py`) 完善**
+   - 完整行为树节点体系: 序列节点/选择节点/并行节点/各种装饰器/条件节点/动作节点
+   - `EmbodiedTaskPlanner`: 层级化具身任务规划器支持多任务优先级调度
+   - `AGVTaskPlanner`: AGV专用任务规划器，适配五级规格(S/M/L/XL/XXL)
+   - `MultiAGVSwarmBehaviorTree`: 多AGV蜂群协同行为树支持
+   - 内置AGV专用节点: 电池检测/安全检查/位置到达检测/移动/抓取/释放
+   - 完整生命周期管理: 规划/运行/暂停/完成/失败/中止
+
+2. **多AGV蜂群协同测试扩展**
+   - `tests/behavior_tree_tests.py`: 新增 40 项行为树基础功能测试
+   - 多AGV蜂群协同测试累计: 62 项全部通过
+   - 所有具身模块测试累计: 406 项全部通过
+
+3. **部署文档完善 (`docs/DEPLOYMENT.md`)**
+   - 完整部署流程指南
+   - 五级规格硬件对照表
+   - CAN总线配置说明
+   - 启动验证/健康监控/应急处理/故障排查
+
+4. **模块接口规范补充完成**
+   - `docs/MODULE_INDEX.md`: 完整模块索引 49KB
+   - 所有核心模块接口文档齐全
+
+### 测试结果
+```
+python3 -m pytest tests/behavior_tree_tests.py -v
+============================== 40 passed in 0.13s ==============================
+python3 -m pytest tests/embodied* -v
+============================== 406 passed, 6 warnings in 34.39s =======================
+python3 -m pytest tests -k "swarm" -v
+===================== 62 passed, 2604 deselected in 0.64s =======================
+python3 -m pytest tests --tb=short -q
+=========== 2628 passed, 38 skipped, 17 warnings in 81.36s ===========
+```
+**累计测试: 2628 项全部通过 ✅**
+
+### 当前进度
+- 整体完成度: **~94%**
+- 已完成: 基础架构/视觉/听觉/触觉/力觉/IMU/跨模态融合/核心目标/自主学习
+  控制模块/五级AGV规格/仿真环境/具身行为树规划/多AGV蜂群协同/部署文档
+- 待推进: 具身智能场景化应用/多机协同深度优化/长期记忆系统
 
 ---
 
