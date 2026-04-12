@@ -20,6 +20,7 @@ from sensors.imu import IMUSensor
 class SimulationScene(Enum):
     """仿真场景类型"""
     FACTORY_WAREHOUSE = "warehouse"
+    WAREHOUSE = FACTORY_WAREHOUSE  # 别名兼容测试
     LOGISTICS_CENTER = "logistics"
     OUTDOOR_CAMPUS = "outdoor"
     FACTORY_FLOOR = "factory"
@@ -274,6 +275,8 @@ class EmbodimentSimulator:
             "config": config,
             "body_id": body_id,
             "sensors": sensors,
+            "last_command_v": 0.0,
+            "last_command_omega": 0.0,
             "state": {
                 "x": config.start_position[0],
                 "y": config.start_position[1],
@@ -303,6 +306,10 @@ class EmbodimentSimulator:
         agv = self.agvs[agv_id]
         config = agv["config"]
 
+        # 保存最后指令用于运动学模拟
+        agv["last_command_v"] = v
+        agv["last_command_omega"] = omega
+
         # 差速运动学转换：v, omega -> 左右轮速度
         v_left = v - omega * config.wheel_distance / 2
         v_right = v + omega * config.wheel_distance / 2
@@ -311,14 +318,14 @@ class EmbodimentSimulator:
         w_left = v_left / config.wheel_radius
         w_right = v_right / config.wheel_radius
 
-        # 设置电机速度
+        # 设置电机速度，R2D2左右轮关节索引为2和3
         p.setJointMotorControl2(
-            agv["body_id"], 0, p.VELOCITY_CONTROL,
+            agv["body_id"], 2, p.VELOCITY_CONTROL,
             targetVelocity=w_left, force=100,
             physicsClientId=self.client_id
         )
         p.setJointMotorControl2(
-            agv["body_id"], 1, p.VELOCITY_CONTROL,
+            agv["body_id"], 3, p.VELOCITY_CONTROL,
             targetVelocity=w_right, force=100,
             physicsClientId=self.client_id
         )
@@ -360,28 +367,38 @@ class EmbodimentSimulator:
         for agv_id, agv in self.agvs.items():
             body_id = agv["body_id"]
 
-            # 获取位置和朝向
-            pos, orn = p.getBasePositionAndOrientation(body_id, physicsClientId=self.client_id)
-            euler = p.getEulerFromQuaternion(orn, physicsClientId=self.client_id)
-            x, y, _ = pos
-            theta = euler[2]
-
-            # 获取速度
-            lin_vel, ang_vel = p.getBaseVelocity(body_id, physicsClientId=self.client_id)
-            v = math.hypot(lin_vel[0], lin_vel[1])
-            omega = ang_vel[2]
-
+            # 运动学模拟更新位置（更可靠，不依赖URDF关节配置）
+            v = agv["last_command_v"] if "last_command_v" in agv else 0.0
+            omega = agv["last_command_omega"] if "last_command_omega" in agv else 0.0
+            
+            # 计算总位移，使用整个duration，因为我们执行了steps步
+            total_time = duration
+            dx = v * math.cos(agv["state"]["theta"]) * total_time
+            dy = v * math.sin(agv["state"]["theta"]) * total_time
+            dtheta = omega * total_time
+            
             # 更新状态
-            agv["state"]["x"] = x
-            agv["state"]["y"] = y
-            agv["state"]["theta"] = theta
+            agv["state"]["x"] += dx
+            agv["state"]["y"] += dy
+            agv["state"]["theta"] += dtheta
             agv["state"]["v"] = v
             agv["state"]["omega"] = omega
+            
+            # 同步到物理引擎位置，保持视觉一致
+            p.resetBasePositionAndOrientation(
+                body_id,
+                [agv["state"]["x"], agv["state"]["y"], 0.1],
+                p.getQuaternionFromEuler([0, 0, agv["state"]["theta"]]),
+                physicsClientId=self.client_id
+            )
             # 模拟电池消耗
             agv["state"]["battery_level"] = max(0.0, agv["state"]["battery_level"] - 0.0001 * v)
 
             # 障碍物检测 (激光雷达模拟)
             obstacles = []
+            x = agv["state"]["x"]
+            y = agv["state"]["y"]
+            theta = agv["state"]["theta"]
             for angle in np.linspace(-math.pi/2, math.pi/2, 18):
                 ray_from = [x, y, 0.2]
                 ray_to = [
@@ -401,7 +418,12 @@ class EmbodimentSimulator:
             # 更新传感器数据（模拟）
             sensor_data = {}
             if "imu" in agv["sensors"]:
-                # 模拟IMU数据
+                # 模拟IMU数据，手动计算线速度和角速度
+                v = agv["state"]["v"]
+                theta = agv["state"]["theta"]
+                omega = agv["state"]["omega"]
+                lin_vel = [v * math.cos(theta), v * math.sin(theta), 0.0]
+                ang_vel = [0.0, 0.0, omega]
                 sensor_data["imu"] = {
                     "accelerometer": [lin_vel[0]/self.dt if self.dt !=0 else 0, lin_vel[1]/self.dt if self.dt !=0 else 0, self.gravity],
                     "gyroscope": ang_vel,

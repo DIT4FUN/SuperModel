@@ -35,8 +35,13 @@ except ImportError:
     # 定义占位符类型
     class Odometry:
         pass
+    class Vector3:
+            x: float = 0.0
+            y: float = 0.0
+            z: float = 0.0
     class Twist:
-        pass
+        linear: Vector3 = Vector3()
+        angular: Vector3 = Vector3()
     class Node:
         pass
 
@@ -209,6 +214,12 @@ class AGVHardwareInterface:
             return False
 
         try:
+            # 仿真模式下直接发送指令到仿真器
+            if self.sim_instance is not None:
+                self.sim_instance.set_agv_command(self.sim_agv_id, command.v, command.omega)
+                self.sim_instance.set_gripper_command(self.sim_agv_id, command.gripper_command)
+                return True
+
             # 速度限幅
             v = max(-self.config.max_velocity, min(self.config.max_velocity, command.v))
             omega = max(-self.config.max_omega, min(self.config.max_omega, command.omega))
