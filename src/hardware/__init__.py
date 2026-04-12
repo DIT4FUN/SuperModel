@@ -27,10 +27,18 @@ from .real_agv_interface import (
     HardwareMonitor,
     AGV_HARDWARE_SPECS,
 )
+from .agv_interface import (
+    AGVType,
+    AGVStatus,
+    AGVInterfaceFactory,
+    AGVInterface,
+)
 
 __all__ = [
     # 枚举
     'AGVHardwareStatus',
+    'AGVType',
+    'AGVStatus',
     # 数据结构
     'MotorState',
     'WheelEncoder',
@@ -45,6 +53,8 @@ __all__ = [
     'AGVTactileBridge',
     'AGVForceBridge',
     'HardwareMonitor',
+    'AGVInterfaceFactory',
+    'AGVInterface',
     # 规格表
     'AGV_HARDWARE_SPECS',
 ]

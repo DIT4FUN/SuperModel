@@ -1,4 +1,5 @@
 # SuperModel 模块索引 / Module Index
+- **v2.87.0** (2026-04-12): 完成长期记忆系统全模块开发; 实现记忆存储/检索/巩固/遗忘四大核心机制; 32项记忆模块测试全通过; 2735项全量测试100%通过; 符合正式发布要求
 - **v2.68.0** (2026-04-11): 新增具身智能部署管理模块(deployment.py, 420行); DeploymentValidator+HealthMonitor+EmergencyProcedure+DeploymentManager; 30项测试; 2679项测试全通过; 标定噪声密度Bug修复
 - **v2.67.0** (2026-04-11): 传感器模块Bug修复(estimate_payload/abs/WrenchProcessor/VirtualSensor上下文管理器); 2625项测试全通过
 - **v2.55.0** (2026-04-10): SPEC.md第27章传感器-控制闭环集成规格; 完整闭环数据流/延迟预算/采样率映射/接口契约/异常降级策略; 2671项测试全通过
@@ -15,8 +16,8 @@
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.68.0
-> **更新**: 2026-04-10
+> **版本**: v2.87.0
+> **更新**: 2026-04-12
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 本文档是 SuperModel 项目的完整模块索引，提供所有源代码模块、设计文档和测试用例的快速导航。
@@ -106,6 +107,17 @@ src/
 │   ├── gpio.py          # GPIO控制
 │   └── digu_robot.py    # 谛沽机器人接口
 │
+├── memory/           # 长期记忆系统
+│   ├── __init__.py
+│   ├── long_term_memory.py # 统一记忆接口
+│   ├── episodic_memory.py  # 情景记忆 (经历/交互/事件)
+│   ├── semantic_memory.py  # 语义记忆 (知识/概念/事实/规则)
+│   ├── procedural_memory.py # 程序记忆 (技能/动作序列/策略)
+│   ├── working_memory.py   # 工作记忆 (短期焦点/激活状态)
+│   ├── memory_store.py     # 持久化存储层 (向量+结构化存储)
+│   ├── memory_retrieval.py # 统一检索引擎 (向量+关键词+语义)
+│   └── memory_consolidation.py # 记忆巩固 (从经验中提取知识/技能)
+│
 ├── simulation/       # 仿真层
 │   ├── __init__.py
 │   ├── pybullet_sim.py  # PyBullet仿真环境
@@ -113,6 +125,16 @@ src/
 │   ├── environment.py   # 物理仿真环境
 │   └── gym_env.py      # Gymnasium RL环境
 │
+├── memory/           # 长期记忆系统
+│   ├── __init__.py
+│   ├── long_term_memory.py # 统一记忆接口
+│   ├── episodic_memory.py  # 情景记忆 (经历/交互/事件)
+│   ├── semantic_memory.py  # 语义记忆 (知识/概念/事实/规则)
+│   ├── procedural_memory.py # 程序记忆 (技能/动作序列/策略)
+│   ├── working_memory.py   # 工作记忆 (短期焦点/激活状态)
+│   ├── memory_store.py     # 持久化存储层 (向量+结构化存储)
+│   ├── memory_retrieval.py # 统一检索引擎 (向量+关键词+语义)
+│   └── memory_consolidation.py # 记忆巩固 (从经验中提取知识/技能)
 └── config_loader.py   # 配置加载器
 ```
 
@@ -247,6 +269,7 @@ docs/
 ├── SPEC.md                   # 技术规格文档
 ├── MODULE_INDEX.md           # 模块索引
 ├── DESIGN.md                # 架构设计文档
+├── LONG_TERM_MEMORY_DESIGN.md # 长期记忆系统设计文档
 ├── PRACTICAL_DEPLOYMENT.md   # AGV五级部署实战指南 (选型→配置→仿真→实机)
 ├── AGV_CONTROL_PARAMS.md     # AGV五级控制参数完整指南 (PID/阻抗/MPC/安全监控)
 └── architecture/

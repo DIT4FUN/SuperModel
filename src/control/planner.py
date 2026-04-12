@@ -42,6 +42,27 @@ class BehaviorNode(ABC):
         self.status = NodeStatus.SUCCESS
 
 
+class IsAtTarget(BehaviorNode):
+    """条件节点：判断是否到达目标位置"""
+    def __init__(self, target_key: str = "target_pose", tolerance: float = 0.1, name: str = ""):
+        super().__init__(name)
+        self.target_key = target_key
+        self.tolerance = tolerance
+
+    def tick(self) -> NodeStatus:
+        current_pose = self.blackboard.get("current_pose")
+        target_pose = self.blackboard.get(self.target_key)
+        
+        if current_pose is None or target_pose is None:
+            return NodeStatus.FAILURE
+            
+        # 计算距离
+        distance = np.linalg.norm(np.array(current_pose[:2]) - np.array(target_pose[:2]))
+        if distance <= self.tolerance:
+            return NodeStatus.SUCCESS
+        return NodeStatus.FAILURE
+
+
 class TaskStatus(Enum):
     """任务状态"""
     PENDING = "pending"
