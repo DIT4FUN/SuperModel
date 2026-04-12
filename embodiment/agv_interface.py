@@ -5,6 +5,7 @@ AGV Hardware Interface - 真实AGV硬件抽象层接口
 
 import time
 import math
+import numpy as np
 from typing import Dict, Optional, Tuple
 from dataclasses import dataclass
 from enum import Enum
@@ -23,6 +24,15 @@ class AGVCommunicationType(Enum):
     ROS = "ros"
     TCP = "tcp"
     UDP = "udp"
+
+
+class AGVStatus(Enum):
+    """AGV运行状态"""
+    IDLE = "idle"
+    MOVING = "moving"
+    PAUSED = "paused"
+    ERROR = "error"
+    EMERGENCY_STOP = "emergency_stop"
 
 
 @dataclass
@@ -264,3 +274,104 @@ class AGVHardwareInterface:
     def is_connected(self) -> bool:
         """返回AGV是否在线"""
         return self.connected
+
+
+class AGVInterface:
+    """
+    高层AGV接口，封装硬件通信、路径规划、任务执行等功能
+    对外提供统一的AGV控制接口
+    """
+
+    def __init__(self, agv_id: str, agv_type: str = "AUTO_GUIDED_VEHICLE_LEVEL_5"):
+        self.agv_id = agv_id
+        self.agv_type = agv_type
+        self.status = AGVStatus.IDLE
+        # 解析AGV等级
+        self.level = int(agv_type.split("_")[-1]) if "LEVEL_" in agv_type else 1
+        # 初始化硬件配置
+        self.config = AGVConfig(
+            agv_id=int(agv_id.split("_")[-1]) if "_" in agv_id else 1,
+            max_velocity=1.0 + 0.1 * self.level
+        )
+        # 硬件接口
+        self.hw_interface = AGVHardwareInterface(self.config)
+        # 当前位置
+        self.current_pos = (0.0, 0.0, 0.0)
+        # 目标位置
+        self.target_pos = None
+        # 传感器数据缓存
+        self.sensor_cache = {}
+
+    def connect(self) -> bool:
+        """连接AGV硬件"""
+        return self.hw_interface.connect()
+
+    def disconnect(self):
+        """断开AGV连接"""
+        self.hw_interface.disconnect()
+
+    def move_to(self, x: float, y: float, theta: float = 0.0, speed: float = None) -> Dict:
+        """
+        移动AGV到目标位置
+        返回执行结果
+        """
+        if self.status == AGVStatus.EMERGENCY_STOP:
+            return {"success": False, "error": "AGV is in emergency stop state"}
+        
+        self.target_pos = (x, y, theta)
+        self.status = AGVStatus.MOVING
+        
+        # 速度设置
+        if speed is None:
+            speed = self.config.max_velocity
+        speed = min(speed, self.config.max_velocity)
+
+        # 简化实现：直接更新位置，实际应该路径规划+逐步移动
+        self.current_pos = (x, y, theta)
+        
+        # 发送运动指令到底层硬件
+        cmd = AGVCommand(v=speed, omega=0.0)
+        self.hw_interface.send_command(cmd)
+        
+        return {"success": True, "target_pos": self.target_pos, "speed": speed}
+
+    def stop(self) -> Dict:
+        """停止AGV运动"""
+        self.status = AGVStatus.IDLE
+        self.target_pos = None
+        # 发送停止指令
+        self.hw_interface.send_command(AGVCommand(v=0.0, omega=0.0))
+        return {"success": True}
+
+    def emergency_stop(self) -> Dict:
+        """紧急停止"""
+        self.status = AGVStatus.EMERGENCY_STOP
+        self.hw_interface.emergency_stop()
+        return {"success": True}
+
+    def get_sensor_data(self) -> Dict:
+        """获取所有传感器数据"""
+        # 读取硬件状态
+        hw_state = self.hw_interface.get_state()
+        if hw_state:
+            self.current_pos = (hw_state.x, hw_state.y, hw_state.theta)
+        
+        # 组装传感器数据
+        self.sensor_cache = {
+            "position": self.current_pos,
+            "status": self.status.value,
+            "battery_level": hw_state.battery_level if hw_state else 1.0,
+            "tactile": [],  # 后续接入触觉传感器数据
+            "force": [],    # 后续接入力觉传感器数据
+            "imu": {}       # 后续接入IMU传感器数据
+        }
+        
+        return self.sensor_cache
+
+    def is_connected(self) -> bool:
+        """返回AGV是否连接"""
+        return self.hw_interface.is_connected()
+
+    def get_current_state(self) -> AGVState:
+        """返回AGV当前状态"""
+        return self.hw_interface.get_state() or AGVState()
