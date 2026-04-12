@@ -68,9 +68,26 @@ class MultiAGVCoordinator:
         self.swarm_id = swarm_id
         self.safety_distance = safety_distance  # AGV之间安全距离，单位米
         self.agv_list: List[Dict] = []  # 测试兼容的AGV列表
+        self.registered_agvs: List[Dict] = self.agv_list  # 别名，兼容测试
         self.agvs: Dict[int, AGVInfo] = {}
         self.tasks: Dict[str, AGVTask] = {}
         self.global_obstacles: List[Tuple[float, float, float]] = []  # 全局障碍物列表 (x, y, radius)
+
+    def split_swarm_task(self, task: AGVTask, num_agvs: int) -> List[AGVTask]:
+        """拆分大型任务为多个子任务分配给多AGV执行"""
+        subtasks = []
+        for i in range(num_agvs):
+            subtask = AGVTask(
+                task_id=f"{task.task_id}_sub_{i}",
+                task_type=task.task_type,
+                priority=task.priority,
+                pick_location=task.pick_location,
+                place_location=task.place_location,
+                patrol_points=task.patrol_points[i::num_agvs] if task.patrol_points else None,
+                deadline=task.deadline
+            )
+            subtasks.append(subtask)
+        return subtasks
 
     def add_agv(self, *args, **kwargs):
         """
@@ -91,10 +108,14 @@ class MultiAGVCoordinator:
         if isinstance(agv_id, (str, int)):
             # 兼容字符串和int类型的agv_id
             agv_id_str = str(agv_id)
-            if isinstance(agv_id, str) and "_" in agv_id:
-                int_id = int(agv_id.split("_")[-1])
+            # 提取末尾数字作为int_id，支持agv1/AGV_1/1等格式
+            import re
+            match = re.search(r'\d+$', agv_id_str)
+            if match:
+                int_id = int(match.group())
             else:
-                int_id = int(agv_id)
+                # 如果没有数字，使用hash取模
+                int_id = hash(agv_id_str) % 1000000
             # 保存到兼容列表
             self.agv_list.append({
                 "agv_id": agv_id_str,
