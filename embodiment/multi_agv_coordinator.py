@@ -10,7 +10,7 @@ from dataclasses import dataclass
 from enum import Enum
 import numpy as np
 
-from control.planner import RRTStarPlanner, Waypoint, TrajectoryPlanner
+from control import RRTStarPlanner, Waypoint, TrajectoryPlanner
 
 
 class AGVStatus(Enum):
