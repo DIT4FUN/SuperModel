@@ -28,13 +28,16 @@ class NodeStatus(Enum):
 
 class Node:
     """行为树节点基类"""
-    def __init__(self, name: str):
+    def __init__(self, name: str, tick_func: Optional[Callable[[Dict], NodeStatus]] = None):
         self.name = name
         self.parent = None
         self.children = []
+        self.tick_func = tick_func
     
     def tick(self, context: Dict) -> NodeStatus:
         """执行节点逻辑，返回状态"""
+        if self.tick_func is not None:
+            return self.tick_func(context)
         raise NotImplementedError
     
     def add_child(self, child: "Node"):
@@ -42,9 +45,8 @@ class Node:
         child.parent = self
         self.children.append(child)
 
-# 测试兼容：如果没有导入BehaviorNode，使用本地Node类作为别名
-if BehaviorNode is None:
-    BehaviorNode = Node
+# 总是使用本地Node类作为BehaviorNode别名，兼容测试和抽象类导入
+BehaviorNode = Node
 
 
 class ConditionNode(Node):

@@ -248,7 +248,17 @@ class EmbodimentSimulator:
         if initial_pos is not None:
             config.start_position = initial_pos
         if agv_type is not None:
-            level = int(agv_type.split("_")[-1]) if "_" in agv_type else 1
+            # 支持多种格式：AGV_5_GRADE / AGV_FIVE_GRADE / LEVEL_5 / level_3
+            number_map = {"one":1, "two":2, "three":3, "four":4, "five":5, "six":6, "seven":7, "eight":8, "nine":9, "ten":10}
+            parts = agv_type.lower().split("_")
+            level = 1
+            for part in parts:
+                if part.isdigit():
+                    level = int(part)
+                    break
+                if part in number_map:
+                    level = number_map[part]
+                    break
             config.max_velocity = 1.0 + 0.1 * level
         agv_id = self.next_agv_id
         self.next_agv_id += 1

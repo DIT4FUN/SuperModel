@@ -3,9 +3,9 @@ import numpy as np
 from embodiment.simulation import EmbodiedSimulation
 from embodiment.agv_interface import AGVHardwareInterface
 from embodiment.behavior_tree_engine import BehaviorTreeEngine, NodeStatus, BehaviorNode
-from sensors.tactile import TactileSensor
-from sensors.force import ForceSensor
-from sensors.imu import IMUSensor
+from sensors.tactile import TaxelArray as TactileSensor
+from sensors.force import SixAxisFTSensor as ForceSensor
+from sensors.imu import BMI088 as IMUSensor
 
 def test_embodied_sensor_integration():
     """Test integration of embodiment modules with sensor stack"""
@@ -13,9 +13,9 @@ def test_embodied_sensor_integration():
     agv = sim.spawn_agv(position=(0, 0, 0), model="AGV_FIVE_GRADE")
     
     # Attach sensors to simulated AGV
-    tactile_sensor = TactileSensor(num_pixels=(16,16), sampling_rate=100)
-    force_sensor = ForceSensor(sampling_rate=1000)
-    imu_sensor = IMUSensor(sampling_rate=200)
+    tactile_sensor = TactileSensor(name="tactile_01", rows=16, cols=16, sampling_rate=100)
+    force_sensor = ForceSensor(name="ft_01", sampling_rate=1000)
+    imu_sensor = IMUSensor(name="imu_01", sampling_rate=200)
     
     agv.attach_sensor("tactile", tactile_sensor)
     agv.attach_sensor("force", force_sensor)
@@ -114,9 +114,9 @@ def test_full_embodied_pipeline():
     agv = sim.spawn_agv(position=(0,0,0))
     
     # Attach sensors
-    tactile = TactileSensor()
-    force = ForceSensor()
-    imu = IMUSensor()
+    tactile = TactileSensor(name="tactile_02")
+    force = ForceSensor(name="ft_02")
+    imu = IMUSensor(name="imu_02")
     agv.attach_sensor("tactile", tactile)
     agv.attach_sensor("force", force)
     agv.attach_sensor("imu", imu)

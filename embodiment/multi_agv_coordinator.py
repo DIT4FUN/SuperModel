@@ -149,6 +149,51 @@ class MultiAGVCoordinator:
         # 调用add_agv
         return self.add_agv(agv_id, position=pos_2d, *args, **kwargs)
 
+    def get_agv(self, agv_id: str | int) -> Optional[Dict]:
+        """测试兼容接口：获取AGV信息"""
+        for agv in self.agv_list:
+            if agv["agv_id"] == str(agv_id) or agv["agv_id"] == agv_id:
+                return agv
+        return None
+
+    def allocate_task(self, task: AGVTask | Dict) -> AGVAssignment:
+        """分配任务给最优AGV，测试兼容"""
+        if isinstance(task, dict):
+            task = AGVTask(**task)
+        # 简单分配策略：找第一个空闲AGV
+        for agv_id, agv_info in self.agvs.items():
+            if agv_info.status == AGVStatus.IDLE:
+                task.assigned_agv_id = agv_id
+                task.status = "assigned"
+                agv_info.status = AGVStatus.BUSY
+                agv_info.current_task_id = task.task_id
+                return AGVAssignment(
+                    task_id=task.task_id,
+                    agv_id=agv_id,
+                    estimated_time=10.0,
+                    success=True
+                )
+        # 没有空闲AGV
+        return AGVAssignment(
+            task_id=task.task_id,
+            agv_id=-1,
+            estimated_time=0.0,
+            success=False,
+            reason="No idle AGV available"
+        )
+
+    def check_collision_risk(self, agv_id1: int | str, agv_id2: int | str) -> bool:
+        """检查两个AGV之间是否有碰撞风险"""
+        agv1 = self.get_agv(agv_id1)
+        agv2 = self.get_agv(agv_id2)
+        if not agv1 or not agv2:
+            return False
+        # 计算距离
+        dx = agv1["position"][0] - agv2["position"][0]
+        dy = agv1["position"][1] - agv2["position"][1]
+        distance = (dx**2 + dy**2)**0.5
+        return distance < self.safety_distance
+
     def assign_tasks(self, tasks: Optional[List[Dict]] = None) -> Dict[str, str]:
         """
         分配任务（测试兼容接口）

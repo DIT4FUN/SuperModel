@@ -135,8 +135,28 @@ class AGVHardwareInterface:
         if interface_type == "simulation" and sim_instance is not None:
             self.connected = True
 
-    def connect(self) -> bool:
-        """连接AGV硬件，返回是否成功"""
+    def connect(self, agv_id: Optional[str | int] = None) -> bool:
+        """连接AGV硬件，返回是否成功，支持测试参数agv_id"""
+        if agv_id is not None:
+            if isinstance(agv_id, str):
+                # 处理字符串ID如sim_agv_01，提取数字部分
+                import re
+                match = re.search(r'\d+', agv_id)
+                if match:
+                    agv_id = int(match.group())
+                else:
+                    agv_id = 0
+            self.config.agv_id = agv_id
+            self.sim_agv_id = agv_id
+
+    def set_velocity(self, linear: float, angular: float) -> Dict:
+        """测试兼容接口：设置AGV线速度和角速度"""
+        if not self.connected:
+            return {"success": False, "error": "AGV not connected"}
+        if self.sim_instance is not None:
+            self.sim_instance.set_agv_command(self.sim_agv_id, linear, angular)
+            return {"success": True}
+        return {"success": False, "error": "Not supported for non-simulation interface"}
         try:
             if self.config.communication_type == AGVCommunicationType.CAN:
                 if not CAN_AVAILABLE:
