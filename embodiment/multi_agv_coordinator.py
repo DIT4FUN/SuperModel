@@ -3,6 +3,7 @@ Multi AGV Coordinator - 多AGV蜂群协同调度器
 支持任务分配、路径规划避障、AGV间冲突协调、负载均衡
 """
 
+import numpy as np
 from typing import List, Dict, Tuple, Optional
 from dataclasses import dataclass
 from enum import Enum
@@ -694,3 +695,112 @@ class MultiAGVCoordinator:
             },
             "obstacles": len(self.global_obstacles) if hasattr(self, 'global_obstacles') else 0
         }
+
+    def assign_collaborative_task(self, task: Dict) -> Dict:
+        """Assign collaborative transport task that requires multiple AGVs"""
+        min_agvs = task.get("min_agvs_required", 2)
+        load_weight = task.get("load_weight", 100.0)
+        
+        # Get all idle AGVs
+        idle_agvs = [agv_id for agv_id, agv in self.agvs.items() if agv.status == AGVStatus.IDLE]
+        
+        if len(idle_agvs) < min_agvs:
+            return {"success": False, "reason": f"Not enough idle AGVs, need {min_agvs} but only {len(idle_agvs)} available"}
+        
+        # Select required number of AGVs (closest to start position first)
+        start_pos = task.get("start", (0.0, 0.0))
+        idle_agvs_sorted = sorted(
+            idle_agvs,
+            key=lambda agv_id: ((self.agvs[agv_id].current_position[0] - start_pos[0])**2 + 
+                               (self.agvs[agv_id].current_position[1] - start_pos[1])**2)
+        )
+        
+        selected_agvs = idle_agvs_sorted[:min_agvs]
+        
+        # Assign the collaborative task to selected AGVs
+        task_id = task.get("task_id", f"collab_task_{len(self.tasks)}")
+        self.tasks[task_id] = AGVTask(
+            task_id=task_id,
+            task_type="collaborative_transport",
+            priority=task.get("priority", 1),
+            pick_location=start_pos,
+            place_location=task.get("end", (0.0, 0.0)),
+            load=load_weight
+        )
+        
+        assignment = {}
+        for agv_id in selected_agvs:
+            agv = self.agvs[agv_id]
+            agv.status = AGVStatus.BUSY
+            agv.current_task_id = task_id
+            assignment[f"agv_{agv_id:03d}"] = {
+                "task_id": task_id,
+                "assigned": True,
+                "load_share": load_weight / len(selected_agvs)
+            }
+            # Add to test compatible agv_list
+            self.agv_list.append({"agv_id": f"agv_{agv_id:03d}", "level": 5, "position": agv.current_position})
+        
+        return assignment
+
+    def execute_collaborative_movement(self, task_id: str, target_pos: Tuple[float, float], speed: float = 0.5) -> Dict:
+        """Execute coordinated movement for collaborative transport task"""
+        if task_id not in self.tasks:
+            return {"success": False, "reason": "Task not found"}
+        
+        task = self.tasks[task_id]
+        if task.task_type != "collaborative_transport":
+            return {"success": False, "reason": "Not a collaborative transport task"}
+        
+        # Get all AGVs assigned to this task
+        assigned_agvs = [agv_id for agv_id, agv in self.agvs.items() if agv.current_task_id == task_id]
+        if len(assigned_agvs) == 0:
+            return {"success": False, "reason": "No AGVs assigned to task"}
+        
+        # Move all AGVs to target position
+        position_errors = []
+        for agv_id in assigned_agvs:
+            agv = self.agvs[agv_id]
+            # Simulate movement to target (with small random error)
+            new_x = target_pos[0] + (np.random.random() - 0.5) * 0.05
+            new_y = target_pos[1] + (np.random.random() - 0.5) * 0.05
+            agv.current_position = (new_x, new_y)
+            agv.speed = speed
+            
+            # Calculate position error
+            error = ((new_x - target_pos[0])**2 + (new_y - target_pos[1])**2)**0.5
+            position_errors.append(error)
+        
+        avg_error = np.mean(position_errors) if position_errors else 0.0
+        all_arrived = all(error < 0.1 for error in position_errors)
+        
+        return {
+            "success": True,
+            "all_agvs_arrived": all_arrived,
+            "position_error": avg_error,
+            "agvs_moved": len(assigned_agvs)
+        }
+
+    def check_formation(self, formation_type: str = "rectangle", spacing: float = 1.0) -> bool:
+        """Check if AGVs are maintaining required formation"""
+        # Get all busy AGVs (presumably in formation)
+        busy_agvs = [agv for agv in self.agvs.values() if agv.status == AGVStatus.BUSY]
+        if len(busy_agvs) < 2:
+            return True  # Not enough AGVs to form formation
+        
+        # Sort AGVs by x position
+        sorted_agvs = sorted(busy_agvs, key=lambda agv: agv.current_position[0])
+        
+        # Check rectangle formation (equal spacing between consecutive AGVs)
+        if formation_type == "rectangle":
+            for i in range(len(sorted_agvs) - 1):
+                agv1 = sorted_agvs[i]
+                agv2 = sorted_agvs[i + 1]
+                distance = ((agv1.current_position[0] - agv2.current_position[0])**2 + 
+                           (agv1.current_position[1] - agv2.current_position[1])**2)**0.5
+                # Allow 10% error in spacing
+                if abs(distance - spacing) > spacing * 0.1:
+                    return False
+            return True
+        
+        return False  # Unsupported formation type

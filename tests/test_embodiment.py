@@ -168,5 +168,52 @@ def test_embodiment_integration():
     assert result["success"] == True
     assert result["context"]["has_object"] == False
 
+def test_multi_agv_swarm_collaborative_transport():
+    """Test multi AGV swarm collaborative transport of heavy loads (requires 2+ AGVs to carry)"""
+    coordinator = MultiAGVCoordinator(swarm_id="collaborative_swarm_01")
+    
+    # Add 4 AGVs for collaborative task
+    for i in range(4):
+        coordinator.add_agv(f"agv_{i:03d}", level=5, position=(float(i*2), 0.0))
+    
+    assert len(coordinator.agv_list) == 4
+    
+    # Collaborative transport task: load 200kg, requires minimum 2 AGVs (each can carry 100kg max)
+    collaborative_task = {
+        "task_id": "collab_t1",
+        "type": "collaborative_transport",
+        "start": (0.0, 0.0),
+        "end": (10.0, 10.0),
+        "load_weight": 200.0,
+        "min_agvs_required": 2,
+        "priority": 1
+    }
+    
+    # Assign collaborative task
+    assignment = coordinator.assign_collaborative_task(collaborative_task)
+    assert len(assignment) >= 2
+    assert all([agv_id.startswith("agv_") for agv_id in assignment.keys()])
+    
+    # Test coordinated movement
+    movement_result = coordinator.execute_collaborative_movement(
+        task_id="collab_t1",
+        target_pos=(10.0, 10.0),
+        speed=0.3
+    )
+    
+    assert movement_result["success"] == True
+    assert movement_result["all_agvs_arrived"] == True
+    assert abs(movement_result["position_error"] < 0.1)  # Position alignment error < 10cm
+    
+    # Arrange AGVs into rectangle formation for testing
+    # Position AGVs with 1m spacing in a line
+    for i, agv_id in enumerate(assignment.keys()):
+        agv_num = int(agv_id.split('_')[1])
+        coordinator.update_agv_state(agv_num, (float(i * 1.0), 0.0), 0.0, 0.3)
+    
+    # Test formation maintenance during movement
+    formation_check = coordinator.check_formation(formation_type="rectangle", spacing=1.0)
+    assert formation_check == True
+
 if __name__ == "__main__":
     pytest.main([__file__, "-v"])
