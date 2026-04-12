@@ -84,6 +84,21 @@ def test_multi_agv_coordinator():
     # Test collision avoidance
     path_conflict = coordinator.check_path_conflicts()
     assert path_conflict == False
+    
+    # Test new collision detection feature
+    # Update AGV positions to be very close (less than safety distance 0.5m)
+    coordinator.update_agv_state(1, (0.0, 0.0), 0.0, 1.0)
+    coordinator.update_agv_state(2, (0.3, 0.0), 0.0, 1.0)
+    
+    conflicts = coordinator.check_conflicts()
+    assert len(conflicts) == 1
+    assert conflicts[0][2] == "collision"
+    
+    # Test obstacle collision detection
+    coordinator.update_global_obstacles([(0.2, 0.0, 0.2)])  # 障碍物在(0.2, 0.0)，半径0.2m
+    conflicts = coordinator.check_conflicts()
+    assert len(conflicts) >= 2  # AGV1和AGV2碰撞 + AGV1/AGV2和障碍物碰撞
+    assert any(c[2] == "obstacle_collision" for c in conflicts)
 
 def test_embodied_simulation():
     """Test embodied simulation environment"""

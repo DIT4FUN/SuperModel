@@ -64,11 +64,13 @@ class MultiAGVCoordinator:
     4. 异常处理：AGV故障时任务重分配
     """
 
-    def __init__(self, swarm_id=None, *args, **kwargs):
+    def __init__(self, swarm_id=None, safety_distance: float = 0.5, *args, **kwargs):
         self.swarm_id = swarm_id
+        self.safety_distance = safety_distance  # AGV之间安全距离，单位米
         self.agv_list: List[Dict] = []  # 测试兼容的AGV列表
         self.agvs: Dict[int, AGVInfo] = {}
         self.tasks: Dict[str, AGVTask] = {}
+        self.global_obstacles: List[Tuple[float, float, float]] = []  # 全局障碍物列表 (x, y, radius)
 
     def add_agv(self, *args, **kwargs):
         """
@@ -101,14 +103,16 @@ class MultiAGVCoordinator:
             })
             # 添加到原生AGV列表
             self.agvs[int_id] = AGVInfo(
-                agv_id=int_id
+                agv_id=int_id,
+                current_position=position
             )
             return agv_id_str
         
         # 原生模式
         start_position = kwargs.get("start_position", (0.0, 0.0)) if len(args) < 2 else args[1]
         self.agvs[agv_id] = AGVInfo(
-            agv_id=agv_id
+            agv_id=agv_id,
+            current_position=start_position
         )
         return agv_id
 
@@ -195,7 +199,50 @@ class MultiAGVCoordinator:
         返回冲突列表：(agv_id1, agv_id2, conflict_type)
         conflict_type: collision, deadlock, priority
         """
-        return []
+        conflicts = []
+        agv_ids = list(self.agvs.keys())
+        
+        # 检查两两AGV之间的碰撞风险
+        for i in range(len(agv_ids)):
+            agv1 = self.agvs[agv_ids[i]]
+            for j in range(i + 1, len(agv_ids)):
+                agv2 = self.agvs[agv_ids[j]]
+                
+                # 计算欧氏距离
+                dx = agv1.current_position[0] - agv2.current_position[0]
+                dy = agv1.current_position[1] - agv2.current_position[1]
+                distance = (dx**2 + dy**2)**0.5
+                
+                # 距离小于安全距离，判定为碰撞冲突
+                if distance < self.safety_distance:
+                    conflicts.append((agv1.agv_id, agv2.agv_id, "collision"))
+                    
+                # 检查死锁：两个AGV都处于忙碌状态，且互相在对方的前进路径上
+                if agv1.status == AGVStatus.BUSY and agv2.status == AGVStatus.BUSY:
+                    if agv1.current_trajectory and agv2.current_trajectory:
+                        # 简化死锁检测：未来3个路径点是否有重叠
+                        path1_points = agv1.current_trajectory[:3]
+                        path2_points = agv2.current_trajectory[:3]
+                        for p1 in path1_points:
+                            for p2 in path2_points:
+                                p_dist = ((p1[0]-p2[0])**2 + (p1[1]-p2[1])**2)**0.5
+                                if p_dist < self.safety_distance * 0.8:
+                                    conflicts.append((agv1.agv_id, agv2.agv_id, "deadlock"))
+                                    break
+                            else:
+                                continue
+                            break
+        
+        # 检查AGV与全局障碍物的冲突
+        for agv_id, agv in self.agvs.items():
+            for (ox, oy, radius) in self.global_obstacles:
+                dx = agv.current_position[0] - ox
+                dy = agv.current_position[1] - oy
+                distance = (dx**2 + dy**2)**0.5
+                if distance < (self.safety_distance + radius):
+                    conflicts.append((agv_id, -1, "obstacle_collision"))  # -1代表障碍物
+        
+        return conflicts
 
     def resolve_conflicts(self, conflicts: List[Tuple[int, int, str]]):
         """解决AGV冲突"""

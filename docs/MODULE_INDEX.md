@@ -1,4 +1,5 @@
 # SuperModel 模块索引 / Module Index
+- **v2.91.0** (2026-04-12): 完善多AGV蜂群协同调度器，新增实时碰撞检测、障碍物碰撞预警、死锁检测三大功能; 所有5项具身测试用例100%通过; 整体项目进度提升至95%
 - **v2.87.0** (2026-04-12): 完成长期记忆系统全模块开发; 实现记忆存储/检索/巩固/遗忘四大核心机制; 32项记忆模块测试全通过; 2735项全量测试100%通过; 符合正式发布要求
 - **v2.68.0** (2026-04-11): 新增具身智能部署管理模块(deployment.py, 420行); DeploymentValidator+HealthMonitor+EmergencyProcedure+DeploymentManager; 30项测试; 2679项测试全通过; 标定噪声密度Bug修复
 - **v2.67.0** (2026-04-11): 传感器模块Bug修复(estimate_payload/abs/WrenchProcessor/VirtualSensor上下文管理器); 2625项测试全通过
