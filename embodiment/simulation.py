@@ -12,7 +12,7 @@ from dataclasses import dataclass
 import time
 
 from sensors.tactile import TactileArray as TactileSensor
-from sensors.force import ForceTorqueSensor
+from sensors.force import SixAxisFTSensor as ForceTorqueSensor
 from sensors.imu import IMUSensor
 
 

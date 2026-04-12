@@ -65,6 +65,13 @@ from control.velocity_control import (
     get_velocity_control_spec,
     list_velocity_capabilities,
 )
+from control.planner import (
+    RRTStarPlanner,
+    Waypoint,
+    Trajectory,
+    BehaviorNode,
+    NodeStatus
+)
 
 __all__ = [
     # motor
@@ -90,4 +97,6 @@ __all__ = [
     'WheelVelocityCommand', 'WheelVelocityState', 'VelocityControllerState',
     'FrictionCompensator', 'VelocityPIDController', 'AGVVelocityController',
     'get_velocity_control_spec', 'list_velocity_capabilities',
+    # planner
+    'RRTStarPlanner', 'Waypoint', 'Trajectory', 'BehaviorNode', 'NodeStatus'
 ]
