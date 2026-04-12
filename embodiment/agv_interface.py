@@ -16,6 +16,30 @@ except ImportError:
     CAN_AVAILABLE = False
     can = None
 
+try:
+    from pymodbus.client import ModbusTcpClient
+    MODBUS_AVAILABLE = True
+except ImportError:
+    MODBUS_AVAILABLE = False
+    ModbusTcpClient = None
+
+try:
+    import rclpy
+    from rclpy.node import Node
+    from geometry_msgs.msg import Twist
+    from nav_msgs.msg import Odometry
+    ROS_AVAILABLE = True
+except ImportError:
+    ROS_AVAILABLE = False
+    rclpy = None
+    # 定义占位符类型
+    class Odometry:
+        pass
+    class Twist:
+        pass
+    class Node:
+        pass
+
 
 class AGVCommunicationType(Enum):
     """AGV通信类型"""
@@ -127,6 +151,31 @@ class AGVHardwareInterface:
                 self.tcp_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
                 self.tcp_socket.connect((self.config.tcp_host, self.config.tcp_port))
                 self.connected = True
+            elif self.config.communication_type == AGVCommunicationType.MODBUS:
+                if not MODBUS_AVAILABLE:
+                    print(f"Modbus module not available, cannot connect AGV {self.config.agv_id}")
+                    self.connected = False
+                    return False
+                # 初始化Modbus TCP客户端
+                self.modbus_client = ModbusTcpClient(host=self.config.tcp_host, port=self.config.tcp_port)
+                self.modbus_client.connect()
+                self.connected = True
+            elif self.config.communication_type == AGVCommunicationType.ROS:
+                if not ROS_AVAILABLE:
+                    print(f"ROS2 module not available, cannot connect AGV {self.config.agv_id}")
+                    self.connected = False
+                    return False
+                # 初始化ROS2节点
+                rclpy.init()
+                self.ros_node = Node(f"agv_interface_{self.config.agv_id}")
+                self.ros_pub = self.ros_node.create_publisher(Twist, f"/agv_{self.config.agv_id}/cmd_vel", 10)
+                self.ros_sub = self.ros_node.create_subscription(
+                    Odometry,
+                    f"/agv_{self.config.agv_id}/odom",
+                    self._ros_odom_callback,
+                    10
+                )
+                self.connected = True
             # 其他通信类型实现类似逻辑
 
             # 发送心跳包验证连接
@@ -145,6 +194,13 @@ class AGVHardwareInterface:
         if self.tcp_socket:
             self.tcp_socket.close()
             self.tcp_socket = None
+        if hasattr(self, 'modbus_client') and self.modbus_client:
+            self.modbus_client.close()
+            self.modbus_client = None
+        if hasattr(self, 'ros_node') and self.ros_node:
+            self.ros_node.destroy_node()
+            rclpy.shutdown()
+            self.ros_node = None
         self.connected = False
 
     def send_command(self, command: AGVCommand) -> bool:
@@ -199,6 +255,24 @@ class AGVHardwareInterface:
                 # 构建TCP数据包
                 packet = f"CMD,{v:.2f},{omega:.2f},{command.gripper_command}\n".encode()
                 self.tcp_socket.send(packet)
+            elif self.config.communication_type == AGVCommunicationType.MODBUS:
+                # 写入速度寄存器：地址0 左轮速度，地址1 右轮速度（单位: 0.01 rad/s）
+                w_left_int = int(np.clip(w_left * 100, -32767, 32767))
+                w_right_int = int(np.clip(w_right * 100, -32767, 32767))
+                self.modbus_client.write_registers(0, [w_left_int, w_right_int], slave=1)
+                # 写入夹爪指令：地址2
+                gripper_code = 0
+                if command.gripper_command == "open":
+                    gripper_code = 1
+                elif command.gripper_command == "close":
+                    gripper_code = 2
+                self.modbus_client.write_register(2, gripper_code, slave=1)
+            elif self.config.communication_type == AGVCommunicationType.ROS:
+                # 发布ROS Twist消息
+                msg = Twist()
+                msg.linear.x = v
+                msg.angular.z = omega
+                self.ros_pub.publish(msg)
 
             return True
         except Exception as e:
@@ -274,6 +348,31 @@ class AGVHardwareInterface:
                         self.last_state.omega = float(parts[5])
                         self.last_state.battery_level = float(parts[6])
                         self.last_state.timestamp = time.time()
+            elif self.config.communication_type == AGVCommunicationType.MODBUS:
+                # 读取状态寄存器：地址0-3 位置(x,y,theta,v)
+                registers = self.modbus_client.read_input_registers(0, 6, slave=1).registers
+                if len(registers) >= 6:
+                    x = int.from_bytes(registers[0].to_bytes(2, byteorder='big'), byteorder='big', signed=True) / 100.0
+                    y = int.from_bytes(registers[1].to_bytes(2, byteorder='big'), byteorder='big', signed=True) / 100.0
+                    theta = int.from_bytes(registers[2].to_bytes(2, byteorder='big'), byteorder='big', signed=True) / 100.0
+                    v = int.from_bytes(registers[3].to_bytes(2, byteorder='big'), byteorder='big', signed=True) / 10.0
+                    omega = int.from_bytes(registers[4].to_bytes(2, byteorder='big'), byteorder='big', signed=True) / 10.0
+                    battery_voltage = registers[5] / 100.0
+                    battery_level = max(0.0, min(1.0,
+                        (battery_voltage - self.config.battery_voltage_empty) /
+                        (self.config.battery_voltage_full - self.config.battery_voltage_empty)
+                    ))
+                    self.last_state.x = x
+                    self.last_state.y = y
+                    self.last_state.theta = theta
+                    self.last_state.v = v
+                    self.last_state.omega = omega
+                    self.last_state.battery_voltage = battery_voltage
+                    self.last_state.battery_level = battery_level
+                    self.last_state.timestamp = time.time()
+            elif self.config.communication_type == AGVCommunicationType.ROS:
+                # 处理ROS消息队列
+                rclpy.spin_once(self.ros_node, timeout_sec=0.01)
 
             return self.last_state
         except Exception as e:
@@ -299,6 +398,31 @@ class AGVHardwareInterface:
             self.can_bus.send(msg)
         elif self.config.communication_type == AGVCommunicationType.TCP:
             self.tcp_socket.send(b"HEARTBEAT\n")
+        elif self.config.communication_type == AGVCommunicationType.MODBUS:
+            # 读取心跳寄存器
+            self.modbus_client.read_input_registers(100, 1, slave=1)
+
+    def _ros_odom_callback(self, msg: Odometry):
+        """ROS里程计消息回调"""
+        if not ROS_AVAILABLE:
+            return
+        x = msg.pose.pose.position.x
+        y = msg.pose.pose.position.y
+        # 四元数转欧拉角
+        q = msg.pose.pose.orientation
+        siny_cosp = 2 * (q.w * q.z + q.x * q.y)
+        cosy_cosp = 1 - 2 * (q.y * q.y + q.z * q.z)
+        theta = math.atan2(siny_cosp, cosy_cosp)
+        
+        v = msg.twist.twist.linear.x
+        omega = msg.twist.twist.angular.z
+        
+        self.last_state.x = x
+        self.last_state.y = y
+        self.last_state.theta = theta
+        self.last_state.v = v
+        self.last_state.omega = omega
+        self.last_state.timestamp = time.time()
 
     def is_connected(self) -> bool:
         """返回AGV是否在线"""

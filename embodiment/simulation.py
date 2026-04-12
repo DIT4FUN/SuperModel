@@ -164,6 +164,42 @@ class EmbodimentSimulator:
                 pos = [(x1+x2)/2, (y1+y2)/2, h/2]
                 orn = p.getQuaternionFromEuler([0, 0, angle], physicsClientId=self.client_id)
                 p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=pos, baseOrientation=orn, physicsClientId=self.client_id)
+        # 加载户外校园场景
+        elif self.scene_config.scene_type == "outdoor":
+            # 道路
+            for i in range(5):
+                x = -5.0 + i * 2.5
+                for j in range(4):
+                    y = -4.0 + j * 2.5
+                    if (i + j) % 2 == 0:
+                        # 人行道石板
+                        col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[1.2, 1.2, 0.02], physicsClientId=self.client_id)
+                        p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 0.02], physicsClientId=self.client_id)
+            # 路灯
+            for i in range(4):
+                x = -4.0 + i * 3.0
+                for y in [3.0, -3.0]:
+                    # 灯杆
+                    col_shape = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.05, height=2.0, physicsClientId=self.client_id)
+                    p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 1.0], physicsClientId=self.client_id)
+            # 树木
+            trees = [(1.0, 2.0), (-2.0, -1.0), (3.0, -2.0), (-1.0, 1.5), (0.5, -0.5)]
+            for (x, y) in trees:
+                # 树干
+                col_shape = p.createCollisionShape(p.GEOM_CYLINDER, radius=0.15, height=1.8, physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 0.9], physicsClientId=self.client_id)
+                # 树冠
+                col_shape = p.createCollisionShape(p.GEOM_SPHERE, radius=0.6, physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 1.8 + 0.6], physicsClientId=self.client_id)
+            # 台阶
+            steps = [
+                (2.0, 0.0, 0.1),
+                (2.0, 0.0, 0.2),
+                (2.0, 0.0, 0.3)
+            ]
+            for i, (x, y, h) in enumerate(steps):
+                col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[1.0, 1.0, h/2], physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x + i * 0.5, y, h/2], physicsClientId=self.client_id)
 
         # 加载障碍物
         if self.scene_config.obstacles:
