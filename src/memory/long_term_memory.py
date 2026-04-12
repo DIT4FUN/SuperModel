@@ -1,686 +1,321 @@
 """
-Long-Term Memory - 统一长期记忆接口
-====================================
+Long Term Memory System - 长期记忆系统
+支持三种记忆类型：
+1. 情景记忆 (Episodic Memory)：存储过往经历、事件、场景
+2. 语义记忆 (Semantic Memory)：存储知识、事实、概念
+3. 程序记忆 (Procedural Memory)：存储技能、操作流程、行为模式
 
-整合所有记忆模块的统一接口。
-
-使用方式:
-  ltm = LongTermMemory()
-  
-  # 存储记忆
-  ltm.store_episode(summary="完成抓取任务", context={'object': 'box'})
-  ltm.store_knowledge(name="物体", category="物理实体")
-  ltm.store_skill(name="抓取", steps=[...])
-  
-  # 检索记忆
-  results = ltm.retrieve("抓取经验")
-  
-  # 获取状态
-  status = ltm.get_status()
+特性：
+- 向量存储 + 相似度检索
+- 自动记忆重要性评分
+- 记忆遗忘机制（低重要性记忆自动过期）
+- 持久化到磁盘
+- 多模态支持（文本/图像/传感器数据）
 """
 
-from __future__ import annotations
-
-import os
-from pathlib import Path
-from typing import Dict, List, Optional, Any, Set
+from typing import List, Dict, Tuple, Optional, Any
 from dataclasses import dataclass, field
-import time
-import threading
+from enum import Enum
 import json
+import time
+import os
+import numpy as np
+from pathlib import Path
 
-from .episodic_memory import EpisodicMemory, Episode, EmotionalTag, ImportanceLevel
-from .semantic_memory import SemanticMemory, Concept, Fact, Rule, KnowledgeSource
-from .procedural_memory import ProceduralMemory, Skill, SkillLevel
-from .working_memory import WorkingMemory, WorkingMemoryConfig
-from .memory_store import MemoryStore
-from .memory_retrieval import MemoryRetrieval, RetrievalQuery, RetrievalResult, RetrievalStrategy
-from .memory_consolidation import MemoryConsolidation, ConsolidationConfig, ConsolidationResult
+
+class MemoryType(Enum):
+    """记忆类型"""
+    EPISODIC = "episodic"    # 情景记忆
+    SEMANTIC = "semantic"    # 语义记忆
+    PROCEDURAL = "procedural"  # 程序记忆
 
 
 @dataclass
 class MemoryConfig:
     """记忆系统配置"""
-    # 存储路径
-    store_path: str = "./memory_data"
-    
-    # 容量限制
-    max_episodes: int = 10000
-    max_concepts: int = 5000
-    max_skills: int = 1000
-    
-    # 整合设置
-    consolidation_interval_s: float = 3600.0
-    min_importance_threshold: float = 5.0
-    
-    # 工作记忆
-    working_memory_config: WorkingMemoryConfig = None
-    
-    # 自动保存
-    auto_save: bool = True
-    save_interval_s: float = 60.0
+    storage_path: str = "memory_data/long_term"
+    vector_dim: int = 1536
+    forget_threshold_days: int = 30
+    default_importance: float = 0.5
+
+
+@dataclass
+class MemoryEntry:
+    """记忆条目"""
+    memory_id: str
+    memory_type: MemoryType
+    content: Any  # 记忆内容，可以是文本、图像、结构化数据等
+    embedding: Optional[np.ndarray] = None  # 向量嵌入
+    timestamp: float = field(default_factory=time.time)
+    importance: float = 0.5  # 重要性评分 0-1，越高越不容易被遗忘
+    access_count: int = 0  # 访问次数，访问越多越重要
+    last_access_time: float = field(default_factory=time.time)
+    tags: List[str] = field(default_factory=list)  # 标签，用于分类检索
+    metadata: Dict[str, Any] = field(default_factory=dict)  # 元数据
+
+    def to_dict(self) -> Dict:
+        """转换为字典用于序列化"""
+        return {
+            "memory_id": self.memory_id,
+            "memory_type": self.memory_type.value,
+            "content": self.content,
+            "embedding": self.embedding.tolist() if self.embedding is not None else None,
+            "timestamp": self.timestamp,
+            "importance": self.importance,
+            "access_count": self.access_count,
+            "last_access_time": self.last_access_time,
+            "tags": self.tags,
+            "metadata": self.metadata
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict) -> 'MemoryEntry':
+        """从字典反序列化"""
+        embedding = np.array(data["embedding"]) if data["embedding"] is not None else None
+        return cls(
+            memory_id=data["memory_id"],
+            memory_type=MemoryType(data["memory_type"]),
+            content=data["content"],
+            embedding=embedding,
+            timestamp=data["timestamp"],
+            importance=data["importance"],
+            access_count=data["access_count"],
+            last_access_time=data["last_access_time"],
+            tags=data["tags"],
+            metadata=data["metadata"]
+        )
 
 
 class LongTermMemory:
     """
-    统一长期记忆系统
-    
-    整合:
-    - 情景记忆 (Episodic)
-    - 语义记忆 (Semantic)
-    - 程序记忆 (Procedural)
-    - 工作记忆 (Working)
-    - 记忆整合 (Consolidation)
-    - 统一检索 (Retrieval)
+    长期记忆系统
     """
-    
-    def __init__(
-        self,
-        config: Optional[MemoryConfig] = None,
-    ):
-        """
-        Args:
-            config: 记忆系统配置
-        """
-        self.config = config or MemoryConfig()
-        
+
+    def __init__(self, storage_path: str = "memory_data/long_term", vector_dim: int = 1536, forget_threshold_days: int = 30):
+        self.storage_path = Path(storage_path)
+        self.vector_dim = vector_dim
+        self.forget_threshold_days = forget_threshold_days  # 记忆过期时间，超过这个时间且重要性<0.3的记忆会被遗忘
+
         # 确保存储目录存在
-        store_path = Path(self.config.store_path)
-        store_path.mkdir(parents=True, exist_ok=True)
-        
-        self._lock = threading.RLock()
-        
-        # 初始化各模块
-        # 1. 情景记忆
-        self.episodic = EpisodicMemory(
-            store_path=self.config.store_path,
-            max_episodes=self.config.max_episodes,
-        )
-        
-        # 2. 语义记忆
-        self.semantic = SemanticMemory(
-            store_path=self.config.store_path,
-        )
-        
-        # 3. 程序记忆
-        self.procedural = ProceduralMemory(
-            store_path=self.config.store_path,
-        )
-        
-        # 4. 工作记忆
-        working_config = self.config.working_memory_config or WorkingMemoryConfig()
-        self.working = WorkingMemory(config=working_config)
-        
-        # 5. 存储层
-        self.store = MemoryStore(
-            base_path=self.config.store_path,
-            auto_save=self.config.auto_save,
-            save_interval_s=self.config.save_interval_s,
-        )
-        
-        # 6. 检索系统
-        self.retrieval = MemoryRetrieval(
-            episodic_memory=self.episodic,
-            semantic_memory=self.semantic,
-            procedural_memory=self.procedural,
-            memory_store=self.store,
-            # 嵌入配置 (可通过config调整)
-            embedding_model=getattr(self.config, 'embedding_model', 'all-MiniLM-L6-v2'),
-            embedding_provider=getattr(self.config, 'embedding_provider', 'local'),
-            openai_api_key=getattr(self.config, 'openai_api_key', None),
-            embedding_dim=getattr(self.config, 'embedding_dim', 1536),
-        )
-        
-        # 7. 整合系统
-        consolidation_config = ConsolidationConfig(
-            min_importance_threshold=self.config.min_importance_threshold,
-            consolidation_interval_s=self.config.consolidation_interval_s,
-        )
-        self.consolidation = MemoryConsolidation(
-            episodic_memory=self.episodic,
-            semantic_memory=self.semantic,
-            procedural_memory=self.procedural,
-            config=consolidation_config,
-        )
-        
-        # 状态
-        self._initialized = True
-        self._start_time = time.time()
-        
-        # 加载元数据
-        self._load_metadata()
-    
-    def _load_metadata(self) -> None:
-        """加载元数据"""
-        metadata_file = Path(self.config.store_path) / "memory_metadata.json"
-        if metadata_file.exists():
+        self.storage_path.mkdir(parents=True, exist_ok=True)
+
+        # 内存中的记忆索引
+        self.memories: Dict[str, MemoryEntry] = {}
+        self.vector_index: Dict[str, np.ndarray] = {}  # memory_id -> embedding
+
+        # 加载已有的记忆
+        self._load_memories()
+
+    def _load_memories(self):
+        """从磁盘加载记忆"""
+        for file_path in self.storage_path.glob("*.json"):
             try:
-                with open(metadata_file, 'r') as f:
-                    metadata = json.load(f)
-                    self._start_time = metadata.get('start_time', time.time())
-            except Exception:
-                pass
-    
-    # ==================== 情景记忆操作 ====================
-    
-    def store_episode(
-        self,
-        summary: str,
-        context: Optional[Dict[str, Any]] = None,
-        actions: Optional[List[Dict[str, Any]]] = None,
-        outcomes: Optional[Dict[str, Any]] = None,
-        emotional_tag: str = "neutral",
-        importance_score: float = 5.0,
-        duration_s: float = 0.0,
-        entities: Optional[List[str]] = None,
-        locations: Optional[List[str]] = None,
-        tags: Optional[List[str]] = None,
-        lessons_learned: Optional[List[str]] = None,
-    ) -> Episode:
-        """
-        存储情景记忆
-        
-        Args:
-            summary: 记忆摘要
-            context: 场景上下文
-            actions: 执行的动作
-            outcomes: 结果
-            emotional_tag: 情感标签
-            importance_score: 重要性 [0, 10]
-            duration_s: 持续时间
-            entities: 涉及的实体
-            locations: 涉及的位置
-            tags: 标签
-            lessons_learned: 经验教训
-            
-        Returns:
-            创建的Episode对象
-        """
-        with self._lock:
-            ep = self.episodic.store(
-                summary=summary,
-                context=context or {},
-                actions=actions,
-                outcomes=outcomes,
-                emotional_tag=EmotionalTag(emotional_tag),
-                importance_score=importance_score,
-                duration_s=duration_s,
-                entities=entities,
-                locations=locations,
-                tags=tags,
-                lessons_learned=lessons_learned,
-            )
-            
-            # 更新工作记忆中的激活模式
-            if entities:
-                for entity in entities:
-                    self.working.activate(entity)
-            
-            # 生成向量嵌入
-            if hasattr(self.retrieval, '_get_embedding') and hasattr(self.store, 'add_vector'):
-                embedding_text = f"{ep.summary} {' '.join(ep.entities)} {' '.join(ep.tags)} {ep.lessons_learned}"
-                vector = self.retrieval._get_embedding(embedding_text)
-                if vector is not None:
-                    self.store.add_vector(
-                        memory_id=ep.id,
-                        vector=vector,
-                        metadata={
-                            'type': 'episodic',
-                            'summary': ep.summary,
-                            'importance': ep.importance_score,
-                            'tags': ep.tags,
-                            'entities': ep.entities,
-                        }
-                    )
-            
-            return ep
-    
-    def retrieve_episodes(
-        self,
-        content: Optional[str] = None,
-        entities: Optional[List[str]] = None,
-        time_range: Optional[tuple] = None,
-        tags: Optional[List[str]] = None,
-        limit: int = 20,
-    ) -> List[Episode]:
-        """
-        检索情景记忆
-        """
-        with self._lock:
-            results = []
-            
-            if content:
-                # 内容检索
-                hits = self.episodic.retrieve_by_context(
-                    context={'content': content},
-                    limit=limit,
-                )
-                results.extend([ep for ep, _ in hits])
-            
-            if entities:
-                entity_eps = self.episodic.retrieve_by_entities(entities, limit=limit)
-                results.extend(entity_eps)
-            
-            if time_range:
-                time_eps = self.episodic.retrieve_by_time(
-                    time_range[0],
-                    time_range[1],
-                    limit=limit,
-                )
-                results.extend(time_eps)
-            
-            if tags:
-                tag_eps = self.episodic.retrieve_by_tags(tags, limit=limit)
-                results.extend(tag_eps)
-            
-            if not results:
-                results = self.episodic.retrieve_recent(limit=limit)
-            
-            # 去重
-            seen = {}
-            for ep in results:
-                if ep.id not in seen:
-                    seen[ep.id] = ep
-            
-            return list(seen.values())[:limit]
-    
-    # ==================== 语义记忆操作 ====================
-    
-    def store_knowledge(
-        self,
-        name: str,
-        category: str = "general",
-        properties: Optional[Dict[str, Any]] = None,
-        description: str = "",
-        confidence: float = 0.8,
-        source: str = "direct",
-        tags: Optional[List[str]] = None,
-    ) -> Concept:
-        """
-        存储知识/概念
-        """
-        with self._lock:
-            concept = self.semantic.add_concept(
-                name=name,
-                category=category,
-                properties=properties,
-                description=description,
-                confidence=confidence,
-                source=KnowledgeSource(source),
-                tags=tags,
-            )
-            
-            # 生成向量嵌入
-            if hasattr(self.retrieval, '_get_embedding') and hasattr(self.store, 'add_vector'):
-                embedding_text = f"{name} {category} {description} {' '.join(tags or [])}"
-                vector = self.retrieval._get_embedding(embedding_text)
-                if vector is not None:
-                    self.store.add_vector(
-                        memory_id=concept.id,
-                        vector=vector,
-                        metadata={
-                            'type': 'semantic',
-                            'name': name,
-                            'category': category,
-                            'description': description,
-                            'confidence': confidence,
-                            'tags': tags,
-                        }
-                    )
-            
-            return concept
-    
-    def add_fact(
-        self,
-        subject: str,
-        predicate: str,
-        object_value: Optional[Any] = None,
-        object_concept_id: Optional[str] = None,
-        confidence: float = 0.8,
-        context: str = "",
-    ) -> Optional[Fact]:
-        """
-        添加事实
-        """
-        with self._lock:
-            # 查找subject概念
-            subject_concept = self.semantic.find_concept_by_name(subject)
-            if not subject_concept:
-                # 创建subject概念
-                subject_concept = self.semantic.add_concept(name=subject, category="entity")
-            
-            return self.semantic.add_fact(
-                subject_id=subject_concept.id,
-                predicate=predicate,
-                object_id=object_concept_id,
-                object_value=object_value,
-                confidence=confidence,
-                context=context,
-            )
-    
-    def add_rule(
-        self,
-        if_conditions: List[str],
-        then_conclusion: str,
-        confidence: float = 0.7,
-    ) -> Rule:
-        """
-        添加规则
-        """
-        with self._lock:
-            return self.semantic.add_rule(
-                if_conditions=if_conditions,
-                then_conclusion=then_conclusion,
-                confidence=confidence,
-            )
-    
-    def search_knowledge(
-        self,
-        query: str,
-        category: Optional[str] = None,
-        limit: int = 20,
-    ) -> List[Concept]:
-        """
-        搜索知识
-        """
-        with self._lock:
-            return self.semantic.search_concepts(
-                query=query,
-                category=category,
-                limit=limit,
-            )
-    
-    # ==================== 程序记忆操作 ====================
-    
-    def store_skill(
-        self,
-        name: str,
-        description: str = "",
-        category: str = "general",
-        steps: Optional[List[Dict[str, Any]]] = None,
-        code_reference: Optional[str] = None,
-        conditions: Optional[List[str]] = None,
-        contexts: Optional[List[str]] = None,
-        tags: Optional[List[str]] = None,
-    ) -> Skill:
-        """
-        存储技能
-        """
-        with self._lock:
-            skill = self.procedural.add_skill(
-                name=name,
-                description=description,
-                category=category,
-                steps=steps,
-                code_reference=code_reference,
-                conditions=conditions,
-                applicable_contexts=contexts,
-                tags=tags,
-            )
-            
-            # 生成向量嵌入
-            if hasattr(self.retrieval, '_get_embedding') and hasattr(self.store, 'add_vector'):
-                embedding_text = f"{name} {description} {category} {' '.join(tags or [])} {' '.join(contexts or [])}"
-                vector = self.retrieval._get_embedding(embedding_text)
-                if vector is not None:
-                    self.store.add_vector(
-                        memory_id=skill.id,
-                        vector=vector,
-                        metadata={
-                            'type': 'procedural',
-                            'name': name,
-                            'category': category,
-                            'description': description,
-                            'tags': tags,
-                        }
-                    )
-            
-            return skill
-    
-    def update_skill(
-        self,
-        skill_name: str,
-        success: bool,
-        duration_s: float,
-        feedback: Optional[str] = None,
-    ) -> Optional[Skill]:
-        """
-        更新技能熟练度
-        """
-        with self._lock:
-            skill = self.procedural.find_skill_by_name(skill_name)
-            if not skill:
-                return None
-            
-            return self.procedural.update_skill(
-                skill_id=skill.id,
-                success=success,
-                duration_s=duration_s,
-                feedback=feedback,
-            )
-    
-    def find_skill(
-        self,
-        task: str,
-        context: Optional[str] = None,
-    ) -> Optional[Skill]:
-        """
-        查找适合任务的技能
-        """
-        with self._lock:
-            return self.procedural.get_best_skill_for_task(
-                task_description=task,
-                context=context,
-            )
-    
-    # ==================== 统一检索 ====================
-    
-    def retrieve(
-        self,
-        query: str,
-        memory_type: Optional[str] = None,
-        limit: int = 20,
-    ) -> List[RetrievalResult]:
-        """
-        统一检索接口
-        
-        Args:
-            query: 查询内容
-            memory_type: 限定记忆类型 ('episodic'/'semantic'/'procedural')
-            limit: 返回数量
-            
-        Returns:
-            检索结果列表
-        """
-        with self._lock:
-            retrieval_query = RetrievalQuery(
-                content=query,
-                memory_type=memory_type,
-                limit=limit,
-            )
-            
-            return self.retrieval.retrieve(retrieval_query)
-    
-    # ==================== 工作记忆操作 ====================
-    
-    def focus(self, key: str, content: Any, importance: float = 5.0) -> None:
-        """将信息放入焦点"""
-        self.working.focus(key, content, importance=importance)
-    
-    def get_focused(self, key: str) -> Optional[Any]:
-        """获取焦点信息"""
-        return self.working.get_focused(key)
-    
-    def get_working_summary(self) -> Dict[str, Any]:
-        """获取工作记忆摘要"""
-        return self.working.get_focus_summary()
-    
-    # ==================== 整合操作 ====================
-    
-    def consolidate(self) -> ConsolidationResult:
-        """执行记忆整合"""
-        return self.consolidation.consolidate()
-    
-    def get_consolidation_status(self) -> Dict[str, Any]:
-        """获取整合状态"""
-        return self.consolidation.get_consolidation_status()
-    
-    # ==================== 状态和统计 ====================
-    
-    def get_status(self) -> Dict[str, Any]:
-        """获取记忆系统完整状态"""
-        with self._lock:
-            return {
-                'uptime_s': time.time() - self._start_time,
-                'episodic': {
-                    'count': len(self.episodic),
-                    'stats': self.episodic.get_statistics(),
-                },
-                'semantic': {
-                    'count': len(self.semantic),
-                    'stats': self.semantic.get_statistics(),
-                },
-                'procedural': {
-                    'count': len(self.procedural),
-                    'stats': self.procedural.get_statistics(),
-                },
-                'working': self.working.get_status(),
-                'retrieval': self.retrieval.get_statistics(),
-                'consolidation': self.get_consolidation_status(),
-                'storage': self.store.get_storage_info(),
-            }
-    
-    def get_memory_summary(self) -> str:
-        """获取可读的记忆摘要"""
-        status = self.get_status()
-        
-        lines = [
-            "=== SuperModel 长期记忆系统 ===",
-            f"运行时长: {status['uptime_s']/3600:.1f} 小时",
-            "",
-            f"情景记忆: {status['episodic']['count']} 条",
-            f"  - 总记忆数: {status['episodic']['stats'].get('total_episodes', 0)}",
-            f"  - 已整合: {status['episodic']['stats'].get('consolidated_count', 0)}",
-            "",
-            f"语义记忆: {status['semantic']['count']} 个概念",
-            f"  - 事实数: {status['semantic']['stats'].get('total_facts', 0)}",
-            f"  - 规则数: {status['semantic']['stats'].get('total_rules', 0)}",
-            "",
-            f"程序记忆: {status['procedural']['count']} 个技能",
-            f"  - 总执行次数: {status['procedural']['stats'].get('total_executions', 0)}",
-            f"  - 平均成功率: {status['procedural']['stats'].get('avg_success_rate', 0):.1%}",
-            "",
-            f"工作记忆: {status['working']['focus_count']} 项焦点",
-            "",
-            f"整合状态: {status['consolidation']['total_consolidated']} 条已整合",
-        ]
-        
-        return "\n".join(lines)
-    
-    # ==================== 持久化 ====================
-    
-    def save(self) -> bool:
-        """保存所有记忆"""
-        with self._lock:
-            try:
-                self.episodic._save()
-                self.semantic._save()
-                self.procedural._save()
-                self.store.save_all()
-                return True
+                with open(file_path, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    memory = MemoryEntry.from_dict(data)
+                    self.memories[memory.memory_id] = memory
+                    if memory.embedding is not None:
+                        self.vector_index[memory.memory_id] = memory.embedding
             except Exception as e:
-                print(f"Save failed: {e}")
-                return False
-    
-    def create_backup(self, name: Optional[str] = None) -> str:
-        """创建备份"""
-        return self.store.create_backup(name)
-    
-    def close(self) -> None:
-        """关闭记忆系统"""
-        self.save()
-        self.consolidation.stop_auto_consolidation()
-        self.store.close()
-    
-    # ==================== 便捷方法 ====================
-    
-    def learn_from_interaction(
+                print(f"加载记忆失败 {file_path}: {e}")
+
+        # 执行遗忘机制
+        self._forget_old_memories()
+
+    def _save_memory(self, memory: MemoryEntry):
+        """保存记忆到磁盘"""
+        file_path = self.storage_path / f"{memory.memory_id}.json"
+        with open(file_path, 'w', encoding='utf-8') as f:
+            json.dump(memory.to_dict(), f, ensure_ascii=False, indent=2)
+
+    def _delete_memory(self, memory_id: str):
+        """删除记忆"""
+        if memory_id in self.memories:
+            del self.memories[memory_id]
+        if memory_id in self.vector_index:
+            del self.vector_index[memory_id]
+        file_path = self.storage_path / f"{memory_id}.json"
+        if file_path.exists():
+            file_path.unlink()
+
+    def _forget_old_memories(self):
+        """遗忘机制：删除过期且低重要性的记忆"""
+        current_time = time.time()
+        threshold_time = current_time - self.forget_threshold_days * 86400
+
+        to_delete = []
+        for memory_id, memory in self.memories.items():
+            if memory.timestamp < threshold_time and memory.importance < 0.3:
+                to_delete.append(memory_id)
+
+        for memory_id in to_delete:
+            self._delete_memory(memory_id)
+
+    def add_memory(
         self,
-        interaction_type: str,
-        summary: str,
-        context: Dict[str, Any],
-        actions: List[Dict[str, Any]],
-        outcome: Dict[str, Any],
-        success: bool,
-        entities: Optional[List[str]] = None,
-        tags: Optional[List[str]] = None,
-    ) -> Episode:
+        memory_type: MemoryType,
+        content: Any,
+        embedding: Optional[np.ndarray] = None,
+        importance: float = 0.5,
+        tags: List[str] = None,
+        metadata: Dict[str, Any] = None
+    ) -> str:
         """
-        从交互中学习的便捷方法
-        
-        Args:
-            interaction_type: 交互类型 (抓取/导航/对话/...)
-            summary: 总结
-            context: 上下文
-            actions: 执行的动作
-            outcome: 结果
-            success: 是否成功
-            entities: 涉及的实体
-            tags: 标签
-            
-        Returns:
-            创建的情景记忆
+        添加记忆
+        返回记忆ID
         """
-        # 计算重要性
-        importance = 5.0
-        if success:
-            importance = 7.0
-        if not success and outcome.get('critical_failure'):
-            importance = 9.0
-        
-        # 确定情感标签
-        emotional = "neutral"
-        if success and outcome.get('exceeded_expectations'):
-            emotional = "very_positive"
-        elif success:
-            emotional = "positive"
-        elif not success:
-            emotional = "negative"
-        
-        # 添加标签
-        all_tags = [interaction_type]
-        if tags:
-            all_tags.extend(tags)
-        if success:
-            all_tags.append("成功")
-        else:
-            all_tags.append("失败")
-        
-        # 存储记忆
-        episode = self.store_episode(
-            summary=summary,
-            context=context,
-            actions=actions,
-            outcomes=outcome,
-            emotional_tag=emotional,
-            importance_score=importance,
-            entities=entities,
-            tags=all_tags,
-            lessons_learned=outcome.get('lessons', []),
+        memory_id = f"mem_{int(time.time() * 1000)}_{np.random.randint(0, 1000)}"
+
+        # 验证embedding维度
+        if embedding is not None:
+            if embedding.shape[0] != self.vector_dim:
+                raise ValueError(f"Embedding维度错误，期望{self.vector_dim}，实际{embedding.shape[0]}")
+
+        memory = MemoryEntry(
+            memory_id=memory_id,
+            memory_type=memory_type,
+            content=content,
+            embedding=embedding,
+            importance=max(0.0, min(1.0, importance)),  # 限制在0-1之间
+            tags=tags or [],
+            metadata=metadata or {}
         )
-        
-        # 如果成功，提取技能
-        if success and len(actions) >= 3:
-            self.store_skill(
-                name=f"{interaction_type}_模式",
-                description=summary,
-                category=interaction_type,
-                steps=actions[:5],  # 最多5步
-                contexts=all_tags,
-                tags=["extracted_from_experience"],
-            )
-        
-        return episode
-    
-    def __repr__(self) -> str:
-        return f"LongTermMemory(episodes={len(self.episodic)}, concepts={len(self.semantic)}, skills={len(self.procedural)})"
+
+        self.memories[memory_id] = memory
+        if embedding is not None:
+            self.vector_index[memory_id] = embedding
+
+        # 保存到磁盘
+        self._save_memory(memory)
+
+        return memory_id
+
+    def get_memory(self, memory_id: str) -> Optional[MemoryEntry]:
+        """根据ID获取记忆"""
+        memory = self.memories.get(memory_id)
+        if memory:
+            # 更新访问统计
+            memory.access_count += 1
+            memory.last_access_time = time.time()
+            self._save_memory(memory)
+        return memory
+
+    def search_by_similarity(
+        self,
+        query_embedding: np.ndarray,
+        top_k: int = 10,
+        memory_type: Optional[MemoryType] = None,
+        tags: Optional[List[str]] = None,
+        threshold: float = 0.7
+    ) -> List[Tuple[MemoryEntry, float]]:
+        """
+        按向量相似度检索记忆
+        返回 (记忆条目, 相似度得分) 的列表，按得分降序排列
+        """
+        if not self.vector_index:
+            return []
+
+        # 验证查询向量维度
+        if query_embedding.shape[0] != self.vector_dim:
+            raise ValueError(f"查询向量维度错误，期望{self.vector_dim}，实际{query_embedding.shape[0]}")
+
+        # 计算余弦相似度
+        similarities = []
+        for memory_id, embedding in self.vector_index.items():
+            memory = self.memories[memory_id]
+
+            # 过滤记忆类型
+            if memory_type is not None and memory.memory_type != memory_type:
+                continue
+
+            # 过滤标签
+            if tags is not None and not all(tag in memory.tags for tag in tags):
+                continue
+
+            # 计算余弦相似度
+            dot_product = np.dot(query_embedding, embedding)
+            norm_product = np.linalg.norm(query_embedding) * np.linalg.norm(embedding)
+            if norm_product == 0:
+                similarity = 0.0
+            else:
+                similarity = dot_product / norm_product
+
+            if similarity >= threshold:
+                similarities.append((memory, similarity))
+
+        # 按相似度降序排列，取top_k
+        similarities.sort(key=lambda x: x[1], reverse=True)
+        results = similarities[:top_k]
+
+        # 更新访问统计
+        for memory, _ in results:
+            memory.access_count += 1
+            memory.last_access_time = time.time()
+            self._save_memory(memory)
+
+        return results
+
+    def search_by_tags(self, tags: List[str], memory_type: Optional[MemoryType] = None, top_k: int = 100) -> List[MemoryEntry]:
+        """按标签检索记忆"""
+        results = []
+        for memory in self.memories.values():
+            if memory_type is not None and memory.memory_type != memory_type:
+                continue
+            if all(tag in memory.tags for tag in tags):
+                results.append(memory)
+
+        # 按重要性和访问次数排序
+        results.sort(key=lambda x: (x.importance, x.access_count), reverse=True)
+        return results[:top_k]
+
+    def search_by_time_range(self, start_time: float, end_time: float, memory_type: Optional[MemoryType] = None) -> List[MemoryEntry]:
+        """按时间范围检索记忆"""
+        results = []
+        for memory in self.memories.values():
+            if memory_type is not None and memory.memory_type != memory_type:
+                continue
+            if start_time <= memory.timestamp <= end_time:
+                results.append(memory)
+
+        # 按时间降序排列
+        results.sort(key=lambda x: x.timestamp, reverse=True)
+        return results
+
+    def update_memory_importance(self, memory_id: str, new_importance: float):
+        """更新记忆的重要性评分"""
+        if memory_id not in self.memories:
+            return
+        memory = self.memories[memory_id]
+        memory.importance = max(0.0, min(1.0, new_importance))
+        self._save_memory(memory)
+
+    def delete_memory(self, memory_id: str) -> bool:
+        """删除记忆"""
+        if memory_id in self.memories:
+            self._delete_memory(memory_id)
+            return True
+        return False
+
+    def get_memory_stats(self) -> Dict:
+        """获取记忆统计信息"""
+        total = len(self.memories)
+        episodic = sum(1 for m in self.memories.values() if m.memory_type == MemoryType.EPISODIC)
+        semantic = sum(1 for m in self.memories.values() if m.memory_type == MemoryType.SEMANTIC)
+        procedural = sum(1 for m in self.memories.values() if m.memory_type == MemoryType.PROCEDURAL)
+        has_embedding = len(self.vector_index)
+
+        return {
+            "total_memories": total,
+            "by_type": {
+                "episodic": episodic,
+                "semantic": semantic,
+                "procedural": procedural
+            },
+            "has_embedding": has_embedding,
+            "storage_path": str(self.storage_path.absolute())
+        }
+
+    def clear_all_memories(self):
+        """清空所有记忆（谨慎使用）"""
+        for memory_id in list(self.memories.keys()):
+            self._delete_memory(memory_id)

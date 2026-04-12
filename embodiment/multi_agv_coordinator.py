@@ -137,10 +137,41 @@ class MultiAGVCoordinator:
             return {}
         
         result = {}
-        # 测试兼容：按顺序分配任务给AGV，每个AGV一个任务
-        for i, task in enumerate(tasks):
-            if i < len(self.agv_list):
-                result[self.agv_list[i]["agv_id"]] = task["task_id"]
+        
+        # 优先分配高优先级任务
+        sorted_tasks = sorted(tasks, key=lambda x: x.get("priority", 5), reverse=True)
+        idle_agvs = [agv for agv in self.agv_list if self.agvs[int(agv["agv_id"].split("_")[-1]) if "_" in agv["agv_id"] else int(agv["agv_id"])].status == AGVStatus.IDLE]
+        
+        for task in sorted_tasks:
+            if not idle_agvs:
+                break
+            
+            # 找到距离任务起点最近的AGV
+            best_agv = None
+            min_distance = float('inf')
+            
+            pick_loc = task.get("pick_location", task.get("start_location", (0.0, 0.0)))
+            if isinstance(pick_loc, (list, tuple)) and len(pick_loc) >= 2:
+                tx, ty = pick_loc[0], pick_loc[1]
+            else:
+                tx, ty = 0.0, 0.0
+            
+            for agv in idle_agvs:
+                ax, ay = agv["position"]
+                distance = ((ax - tx)**2 + (ay - ty)**2)**0.5
+                if distance < min_distance:
+                    min_distance = distance
+                    best_agv = agv
+            
+            if best_agv:
+                result[best_agv["agv_id"]] = task["task_id"]
+                idle_agvs.remove(best_agv)
+                # 更新AGV状态为忙碌
+                agv_id_int = int(best_agv["agv_id"].split("_")[-1]) if "_" in best_agv["agv_id"] else int(best_agv["agv_id"])
+                if agv_id_int in self.agvs:
+                    self.agvs[agv_id_int].status = AGVStatus.BUSY
+                    self.agvs[agv_id_int].current_task_id = task["task_id"]
+        
         return result
 
     def check_path_conflicts(self) -> bool:
@@ -246,7 +277,58 @@ class MultiAGVCoordinator:
 
     def resolve_conflicts(self, conflicts: List[Tuple[int, int, str]]):
         """解决AGV冲突"""
-        pass
+        for conflict in conflicts:
+            agv1_id, agv2_id, conflict_type = conflict
+            
+            if conflict_type == "collision":
+                # 碰撞冲突：优先级低的AGV停车等待
+                if agv1_id in self.agvs and agv2_id in self.agvs:
+                    agv1 = self.agvs[agv1_id]
+                    agv2 = self.agvs[agv2_id]
+                    
+                    # 比较任务优先级，优先级低的停车
+                    task1 = self.get_agv_task(agv1_id)
+                    task2 = self.get_agv_task(agv2_id)
+                    priority1 = task1.priority if task1 else 0
+                    priority2 = task2.priority if task2 else 0
+                    
+                    if priority1 >= priority2:
+                        # AGV2优先级低，停车
+                        agv2.speed = 0.0
+                    else:
+                        # AGV1优先级低，停车
+                        agv1.speed = 0.0
+            
+            elif conflict_type == "deadlock":
+                # 死锁冲突：调整路径，优先级低的AGV绕行
+                if agv1_id in self.agvs and agv2_id in self.agvs:
+                    agv1 = self.agvs[agv1_id]
+                    agv2 = self.agvs[agv2_id]
+                    
+                    task1 = self.get_agv_task(agv1_id)
+                    task2 = self.get_agv_task(agv2_id)
+                    priority1 = task1.priority if task1 else 0
+                    priority2 = task2.priority if task2 else 0
+                    
+                    if priority1 >= priority2:
+                        # AGV2重新规划路径
+                        if agv2.current_trajectory:
+                            # 偏移路径0.5米
+                            offset_trajectory = [(p[0] + 0.5, p[1]) for p in agv2.current_trajectory]
+                            agv2.current_trajectory = offset_trajectory
+                    else:
+                        # AGV1重新规划路径
+                        if agv1.current_trajectory:
+                            offset_trajectory = [(p[0] - 0.5, p[1]) for p in agv1.current_trajectory]
+                            agv1.current_trajectory = offset_trajectory
+            
+            elif conflict_type == "obstacle_collision":
+                # 与障碍物冲突：AGV停车等待或绕行
+                agv_id = agv1_id if agv1_id != -1 else agv2_id
+                if agv_id in self.agvs:
+                    agv = self.agvs[agv_id]
+                    # 暂时停车，等待障碍物移除或重新规划路径
+                    agv.speed = 0.0
 
     def get_agv_task(self, agv_id: int) -> Optional[AGVTask]:
         """获取AGV当前分配的任务"""
