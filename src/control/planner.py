@@ -10,10 +10,36 @@
 """
 
 import numpy as np
+from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Any, Callable
 from enum import Enum
 import time
+
+
+class NodeStatus(Enum):
+    """行为树节点状态"""
+    SUCCESS = "success"   # 执行成功
+    FAILURE = "failure"   # 执行失败
+    RUNNING = "running"   # 正在执行
+
+
+class BehaviorNode(ABC):
+    """行为树节点基类"""
+    def __init__(self, name: str = ""):
+        self.name = name or self.__class__.__name__
+        self.parent: Optional[BehaviorNode] = None
+        self.status = NodeStatus.SUCCESS
+        self.blackboard: Dict = {}  # 全局状态黑板
+
+    @abstractmethod
+    def tick(self) -> NodeStatus:
+        """执行节点逻辑，返回状态"""
+        pass
+
+    def reset(self):
+        """重置节点状态"""
+        self.status = NodeStatus.SUCCESS
 
 
 class TaskStatus(Enum):
