@@ -78,8 +78,13 @@ class MultiAGVCoordinator:
                     或者 add_agv(agv_id_str: str, level=X, position=Y)
         """
         agv_id = args[0] if len(args) > 0 else kwargs.get("agv_id", None)
+        # 处理位置参数：add_agv(agv_id, level, position)
         level = kwargs.get("level", 1)
+        if len(args) >= 2:
+            level = args[1]
         position = kwargs.get("position", (0.0, 0.0))
+        if len(args) >= 3:
+            position = args[2]
         
         if isinstance(agv_id, (str, int)):
             # 兼容字符串和int类型的agv_id

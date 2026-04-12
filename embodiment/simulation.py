@@ -156,9 +156,6 @@ class EmbodimentSimulator:
         if model is not None:
             agv_type = model
 
-    def spawn_agv(self, *args, **kwargs) -> int:
-        """测试兼容接口：生成AGV，等同于add_agv"""
-        return self.add_agv(*args, **kwargs)
         # 处理位置参数调用
         if len(args) >= 1 and isinstance(args[0], str) and "LEVEL" in args[0]:
             agv_type = args[0]
@@ -216,6 +213,10 @@ class EmbodimentSimulator:
             p.enableJointForceTorqueSensor(body_id, joint, enableSensor=True, physicsClientId=self.client_id)
 
         return agv_id
+
+    def spawn_agv(self, *args, **kwargs) -> int:
+        """测试兼容接口：生成AGV，等同于add_agv"""
+        return self.add_agv(*args, **kwargs)
 
     def set_agv_command(self, agv_id: int, v: float, omega: float):
         """设置AGV的运动指令：线速度v (m/s)，角速度omega (rad/s)"""
