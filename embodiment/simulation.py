@@ -60,10 +60,13 @@ class EmbodimentSimulator:
         self,
         scene_config: SimSceneConfig = None,
         scene: Optional[SimulationScene] = None,
+        environment: Optional[str] = None,
         gui: bool = False,
         dt: float = 0.01
     ):
-        # 兼容测试模式：通过scene参数初始化
+        # 兼容测试模式：通过scene或environment参数初始化
+        if environment is not None:
+            scene = SimulationScene(environment)
         if scene is not None:
             scene_config = SimSceneConfig(scene_type=scene.value)
             gui = False  # 测试默认关闭GUI
@@ -138,14 +141,24 @@ class EmbodimentSimulator:
                 orn = p.getQuaternionFromEuler([0, 0, angle], physicsClientId=self.client_id)
                 p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=pos, baseOrientation=orn, physicsClientId=self.client_id)
 
-    def add_agv(self, *args, config: SimAGVConfig = None, agv_type: Optional[str] = None, initial_pos: Optional[Tuple[float, float, float]] = None) -> int:
+    def add_agv(self, *args, config: SimAGVConfig = None, agv_type: Optional[str] = None, initial_pos: Optional[Tuple[float, float, float]] = None, position: Optional[Tuple[float, float, float]] = None, model: Optional[str] = None) -> int:
         """
         添加AGV到仿真环境，返回AGV ID
         支持调用方式：
         1. 原生：add_agv(config: SimAGVConfig)
         2. 测试：add_agv(agv_type: str, initial_pos: Tuple[float, float, float])
         3. 测试：add_agv(agv_type="LEVEL_X", initial_pos=(x,y,z))
+        4. 测试兼容：spawn_agv(position=(x,y,z), model="AGV_FIVE_GRADE")
         """
+        # 兼容spawn_agv参数
+        if position is not None:
+            initial_pos = position
+        if model is not None:
+            agv_type = model
+
+    def spawn_agv(self, *args, **kwargs) -> int:
+        """测试兼容接口：生成AGV，等同于add_agv"""
+        return self.add_agv(*args, **kwargs)
         # 处理位置参数调用
         if len(args) >= 1 and isinstance(args[0], str) and "LEVEL" in args[0]:
             agv_type = args[0]

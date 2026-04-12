@@ -14,6 +14,7 @@ class AGVStatus(Enum):
     BUSY = "busy"
     ERROR = "error"
     CHARGING = "charging"
+    ACTIVE = "idle"  # 测试兼容：ACTIVE等同于IDLE
 
 
 @dataclass
@@ -97,13 +98,26 @@ class MultiAGVCoordinator:
             self.agvs[int_id] = AGVInfo(
                 agv_id=int_id
             )
-            return
+            return agv_id_str
         
         # 原生模式
         start_position = kwargs.get("start_position", (0.0, 0.0)) if len(args) < 2 else args[1]
         self.agvs[agv_id] = AGVInfo(
             agv_id=agv_id
         )
+        return agv_id
+
+    def register_agv(self, agv_id: str, *args, **kwargs):
+        """
+        测试兼容接口：注册AGV，等同于add_agv
+        支持参数：position, type, max_load, capabilities, status等
+        """
+        # 提取并移除position参数避免重复
+        position = kwargs.pop("position", (0.0, 0.0, 0.0))
+        # 转换为2D坐标
+        pos_2d = (position[0], position[1]) if len(position) >=2 else (0.0, 0.0)
+        # 调用add_agv
+        return self.add_agv(agv_id, position=pos_2d, *args, **kwargs)
 
     def assign_tasks(self, tasks: Optional[List[Dict]] = None) -> Dict[str, str]:
         """

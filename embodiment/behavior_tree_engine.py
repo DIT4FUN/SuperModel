@@ -5,7 +5,7 @@ Behavior Tree Engine - 行为树运行时执行引擎
 
 import time
 from enum import Enum
-from typing import Dict, Optional, Callable, Tuple
+from typing import Dict, Optional, Callable, Tuple, List
 from threading import Thread, Lock
 import numpy as np
 
@@ -14,6 +14,10 @@ try:
 except ImportError:
     BehaviorNode = None
     ControlNodeStatus = None
+
+# 测试兼容：如果没有导入BehaviorNode，使用本地Node类作为别名
+if BehaviorNode is None:
+    BehaviorNode = Node
 
 
 class NodeStatus(Enum):
@@ -142,7 +146,8 @@ class BehaviorTreeEngine:
             "task_completed": False,
             "held_object": None
         }
-        self.behavior_tree.blackboard = self.blackboard
+        if self.behavior_tree is not None:
+            self.behavior_tree.blackboard = self.blackboard
 
         # 回调函数
         self.on_control_output: Optional[Callable[[float, float, str], None]] = None
@@ -294,6 +299,42 @@ class BehaviorTreeEngine:
                 if name in self.nodes:
                     self.root.add_child(self.nodes[name])
     
+    def add_sequence(self, name: str, node_names: List[str]):
+        """添加顺序节点（测试兼容接口）"""
+        if not hasattr(self, "nodes"):
+            self.nodes = {}
+        seq_node = SequenceNode(name)
+        for node_name in node_names:
+            if node_name in self.nodes:
+                seq_node.add_child(self.nodes[node_name])
+        self.nodes[name] = seq_node
+        # 如果没有根节点，设置为根
+        if not hasattr(self, "root") or self.root is None:
+            self.root = seq_node
+
+    def add_fallback(self, name: str, node_names: List[str]):
+        """添加fallback/选择节点（测试兼容接口）"""
+        if not hasattr(self, "nodes"):
+            self.nodes = {}
+        # 先创建Fallback节点类（如果不存在）
+        if not hasattr(self, "_fallback_class"):
+            class FallbackNode(Node):
+                def tick(self, context: Dict) -> NodeStatus:
+                    for child in self.children:
+                        status = child.tick(context)
+                        if status != NodeStatus.FAILURE:
+                            return status
+                    return NodeStatus.FAILURE
+            self._fallback_class = FallbackNode
+        fb_node = self._fallback_class(name)
+        for node_name in node_names:
+            if node_name in self.nodes:
+                fb_node.add_child(self.nodes[node_name])
+        self.nodes[name] = fb_node
+        # 如果没有根节点，设置为根
+        if not hasattr(self, "root") or self.root is None:
+            self.root = fb_node
+
     def execute(self, context: Dict) -> Dict:
         """执行行为树，返回结果（测试兼容接口）"""
         if not hasattr(self, "root") or not self.root:

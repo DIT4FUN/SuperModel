@@ -88,12 +88,23 @@ class AGVHardwareInterface:
     统一不同品牌AGV的控制接口，支持多种通信协议
     """
 
-    def __init__(self, config: AGVConfig):
+    def __init__(self, config: AGVConfig = None, interface_type: str = None, sim_instance=None, *args, **kwargs):
+        # 测试兼容：支持直接传入interface_type和sim_instance
+        self.sim_instance = sim_instance
+        self.sim_agv_id = kwargs.get("agv_id", 0)
+        
+        if config is None:
+            config = AGVConfig(agv_id=0)
+        
         self.config = config
         self.connected = False
         self.last_state = AGVState()
         self.can_bus: Optional[can.Bus] = None
         self.tcp_socket = None
+        
+        # 如果是仿真模式，自动连接
+        if interface_type == "simulation" and sim_instance is not None:
+            self.connected = True
 
     def connect(self) -> bool:
         """连接AGV硬件，返回是否成功"""
