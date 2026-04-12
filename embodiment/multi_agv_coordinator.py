@@ -178,13 +178,24 @@ class MultiAGVCoordinator:
         添加AGV到调度器，支持两种调用方式：
         1. 原生：add_agv(agv_id: int, start_position: Tuple[float, float] = (0.0, 0.0))
         2. 测试兼容：add_agv(agv_id_str: str, position: Tuple[float, float])
+        3. 测试兼容：add_agv(agv_id: int, level: int, position: Tuple[float, float])
         """
         # 如果第一个参数是字符串，使用register_agv处理
         if len(args) > 0 and isinstance(args[0], str):
             return self.register_agv(args[0], *args[1:], **kwargs)
         
         agv_id = args[0] if len(args) > 0 else kwargs.get("agv_id", None)
+        if agv_id is None:
+            return None
+        
+        # 处理位置参数：level和position
+        level = kwargs.get("level", 1)
+        if len(args) >= 2:
+            level = args[1]
         position = kwargs.get("start_position", kwargs.get("position", (0.0, 0.0)))
+        if len(args) >= 3:
+            position = args[2]
+        
         # 原生添加方式
         if isinstance(agv_id, int):
             if agv_id not in self.agvs:
@@ -195,49 +206,34 @@ class MultiAGVCoordinator:
                 # 添加到测试兼容的agv_list
                 self.agv_list.append({
                     "agv_id": str(agv_id),
+                    "level": level,
                     "position": position,
                     "type": "default"
                 })
             return self.agvs[agv_id]
-        return None
-        level = kwargs.get("level", 1)
-        if len(args) >= 2:
-            level = args[1]
-        position = kwargs.get("position", (0.0, 0.0))
-        if len(args) >= 3:
-            position = args[2]
         
-        if isinstance(agv_id, (str, int)):
-            # 兼容字符串和int类型的agv_id
-            agv_id_str = str(agv_id)
-            # 提取末尾数字作为int_id，支持agv1/AGV_1/1等格式
-            import re
-            match = re.search(r'\d+$', agv_id_str)
-            if match:
-                int_id = int(match.group())
-            else:
-                # 如果没有数字，使用hash取模
-                int_id = hash(agv_id_str) % 1000000
-            # 保存到兼容列表
-            self.agv_list.append({
-                "agv_id": agv_id_str,
-                "level": level,
-                "position": position
-            })
-            # 添加到原生AGV列表
-            self.agvs[int_id] = AGVInfo(
-                agv_id=int_id,
-                current_position=position
-            )
-            return agv_id_str
-        
-        # 原生模式
-        start_position = kwargs.get("start_position", (0.0, 0.0)) if len(args) < 2 else args[1]
-        self.agvs[agv_id] = AGVInfo(
-            agv_id=agv_id,
-            current_position=start_position
+        # 兼容字符串和int类型的agv_id
+        agv_id_str = str(agv_id)
+        # 提取末尾数字作为int_id，支持agv1/AGV_1/1等格式
+        import re
+        match = re.search(r'\d+$', agv_id_str)
+        if match:
+            int_id = int(match.group())
+        else:
+            # 如果没有数字，使用hash取模
+            int_id = hash(agv_id_str) % 1000000
+        # 保存到兼容列表
+        self.agv_list.append({
+            "agv_id": agv_id_str,
+            "level": level,
+            "position": position
+        })
+        # 添加到原生AGV列表
+        self.agvs[int_id] = AGVInfo(
+            agv_id=int_id,
+            current_position=position
         )
-        return agv_id
+        return agv_id_str
 
     def register_agv(self, agv_id: str, *args, **kwargs) -> Dict:
         """

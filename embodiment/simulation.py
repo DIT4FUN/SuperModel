@@ -393,12 +393,12 @@ class EmbodimentSimulator:
         for joint in range(p.getNumJoints(body_id, physicsClientId=self.client_id)):
             p.enableJointForceTorqueSensor(body_id, joint, enableSensor=True, physicsClientId=self.client_id)
 
-        # 返回SimAGV对象代替id，兼容测试接口
-        return SimAGV(agv_id, self)
+        return agv_id
 
     def spawn_agv(self, *args, **kwargs) -> SimAGV:
         """测试兼容接口：生成AGV，等同于add_agv"""
-        return self.add_agv(*args, **kwargs)
+        agv_id = self.add_agv(*args, **kwargs)
+        return SimAGV(agv_id, self)
 
     def set_agv_command(self, agv_id: int, v: float, omega: float):
         """设置AGV的运动指令：线速度v (m/s)，角速度omega (rad/s)"""
