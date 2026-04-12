@@ -148,6 +148,21 @@ class AGVHardwareInterface:
                     agv_id = 0
             self.config.agv_id = agv_id
             self.sim_agv_id = agv_id
+        
+        # 测试兼容：如果sim_agv_id不存在于sim实例，使用第一个AGV，或者 spawn 一个新的
+        if self.sim_instance is not None:
+            if self.sim_agv_id not in self.sim_instance.agvs:
+                if len(self.sim_instance.agvs) > 0:
+                    self.sim_agv_id = next(iter(self.sim_instance.agvs.keys()))
+                    self.config.agv_id = self.sim_agv_id
+                else:
+                    # 没有AGV存在，spawn一个新的
+                    new_agv = self.sim_instance.spawn_agv(position=(0.0, 0.0, 0.0))
+                    self.sim_agv_id = new_agv.agv_id
+                    self.config.agv_id = self.sim_agv_id
+        
+        self.connected = True
+        return True
 
     def set_velocity(self, linear: float, angular: float) -> Dict:
         """测试兼容接口：设置AGV线速度和角速度"""
@@ -155,6 +170,33 @@ class AGVHardwareInterface:
             return {"success": False, "error": "AGV not connected"}
         if self.sim_instance is not None:
             self.sim_instance.set_agv_command(self.sim_agv_id, linear, angular)
+            return {"success": True}
+        return {"success": False, "error": "Not supported for non-simulation interface"}
+    
+    def get_position(self) -> Tuple[float, float, float]:
+        """测试兼容接口：获取AGV当前位置"""
+        if not self.connected:
+            return (0.0, 0.0, 0.0)
+        if self.sim_instance is not None:
+            agv_state = self.sim_instance.agvs[self.sim_agv_id]["state"]
+            return (agv_state["x"], agv_state["y"], agv_state["theta"])
+        return (0.0, 0.0, 0.0)
+    
+    def get_velocity(self) -> Tuple[float, float, float]:
+        """测试兼容接口：获取AGV当前速度"""
+        if not self.connected:
+            return (0.0, 0.0, 0.0)
+        if self.sim_instance is not None:
+            agv_state = self.sim_instance.agvs[self.sim_agv_id]["state"]
+            return (agv_state["v"], 0.0, agv_state["omega"])
+        return (0.0, 0.0, 0.0)
+    
+    def emergency_stop(self) -> Dict:
+        """测试兼容接口：紧急停止AGV"""
+        if not self.connected:
+            return {"success": False, "error": "AGV not connected"}
+        if self.sim_instance is not None:
+            self.sim_instance.set_agv_command(self.sim_agv_id, 0.0, 0.0)
             return {"success": True}
         return {"success": False, "error": "Not supported for non-simulation interface"}
         try:

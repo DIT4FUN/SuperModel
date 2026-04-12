@@ -170,13 +170,18 @@ class SixAxisFTSensor(ForceSensor):
 
     def __init__(
         self,
-        sensor_id: str,
+        sensor_id: str = None,
         name: str = "SixAxisFTSensor",
         model: str = "mini40",
+        sampling_rate: float = 1000,
         # 量程 (可根据型号调整)
         force_range: Tuple[float, float, float] = (120, 120, 120),  # N
         torque_range: Tuple[float, float, float] = (2, 2, 2)  # Nm
     ):
+        # 如果没有提供sensor_id，使用name作为sensor_id（兼容测试）
+        if sensor_id is None:
+            sensor_id = name
+        self.sampling_rate = sampling_rate
         super().__init__(sensor_id, name)
         self.model = model
 

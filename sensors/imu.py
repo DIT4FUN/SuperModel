@@ -314,8 +314,9 @@ class BMI088(IMUSensor):
 
     def __init__(
         self,
-        sensor_id: str,
+        sensor_id: str = None,
         name: str = "BMI088",
+        sampling_rate: float = 1000,
         # 加速度计配置
         accel_range: str = "24g",  # ±24g, ±12g, ±6g, ±3g
         accel_bw: int = 3,  # 滤波带宽 0-7
@@ -323,6 +324,10 @@ class BMI088(IMUSensor):
         gyro_range: str = "2000dps",  # °/s
         gyro_bw: int = 3  # 滤波带宽 0-7
     ):
+        # 如果没有提供sensor_id，使用name作为sensor_id（兼容测试）
+        if sensor_id is None:
+            sensor_id = name
+        self._sampling_rate = sampling_rate
         super().__init__(sensor_id, name)
 
         # BMI088 规格
