@@ -12,9 +12,9 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 import time
 
-# from sensors.tactile import TactileArray as TactileSensor
-# from sensors.force import SixAxisFTSensor as ForceTorqueSensor
-# from sensors.imu import IMUSensor
+from sensors.tactile import TaxelArray as TactileSensor
+from sensors.force import SixAxisFTSensor as ForceTorqueSensor
+from sensors.imu import IMUSensor
 
 
 class SimulationScene(Enum):
@@ -122,6 +122,48 @@ class EmbodimentSimulator:
                 for (x, y) in self.scene_config.cargo_locations:
                     col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.2, 0.2, 0.2], physicsClientId=self.client_id)
                     p.createMultiBody(baseMass=1, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 0.2], physicsClientId=self.client_id)
+        # 加载物流分拣中心场景
+        elif self.scene_config.scene_type == "logistics":
+            # 分拣台
+            for i in range(4):
+                x = -2.0
+                y = -4.0 + i * 2.0
+                col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.8, 0.8, 0.7], physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 0.7], physicsClientId=self.client_id)
+            # 传送带
+            for i in range(8):
+                x = 0.0 + i * 1.0
+                y = 0.0
+                col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.5, 2.0, 0.3], physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 0.3], physicsClientId=self.client_id)
+            # 货物投放点
+            for (x, y) in self.scene_config.cargo_locations or [(3.0, 1.0), (3.0, -1.0), (5.0, 1.0), (5.0, -1.0)]:
+                col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[0.2, 0.2, 0.2], physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=1, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 0.2], physicsClientId=self.client_id)
+        # 加载工厂车间场景
+        elif self.scene_config.scene_type == "factory":
+            # 生产设备
+            for i in range(3):
+                x = 1.0 + i * 3.0
+                y = -2.0
+                col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[1.0, 0.8, 1.2], physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=[x, y, 1.2], physicsClientId=self.client_id)
+            # 安全围栏
+            walls = [
+                (-3, -3, 10, -3, 1.2),
+                (-3, 3, 10, 3, 1.2),
+                (-3, -3, -3, 3, 1.2),
+                (10, -3, 10, 3, 1.2)
+            ]
+            for (x1, y1, x2, y2, h) in walls:
+                dx = x2 - x1
+                dy = y2 - y1
+                length = math.hypot(dx, dy)
+                angle = math.atan2(dy, dx)
+                col_shape = p.createCollisionShape(p.GEOM_BOX, halfExtents=[length/2, 0.05, h/2], physicsClientId=self.client_id)
+                pos = [(x1+x2)/2, (y1+y2)/2, h/2]
+                orn = p.getQuaternionFromEuler([0, 0, angle], physicsClientId=self.client_id)
+                p.createMultiBody(baseMass=0, baseCollisionShapeIndex=col_shape, basePosition=pos, baseOrientation=orn, physicsClientId=self.client_id)
 
         # 加载障碍物
         if self.scene_config.obstacles:

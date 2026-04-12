@@ -9,15 +9,14 @@ from typing import Dict, Optional, Callable, Tuple, List
 from threading import Thread, Lock
 import numpy as np
 
+import math
 try:
     from control.planner import BehaviorNode, NodeStatus as ControlNodeStatus
+    from .agv_interface import AGVCommand
 except ImportError:
     BehaviorNode = None
     ControlNodeStatus = None
-
-# 测试兼容：如果没有导入BehaviorNode，使用本地Node类作为别名
-if BehaviorNode is None:
-    BehaviorNode = Node
+    AGVCommand = None
 
 
 class NodeStatus(Enum):
@@ -42,6 +41,10 @@ class Node:
         """添加子节点"""
         child.parent = self
         self.children.append(child)
+
+# 测试兼容：如果没有导入BehaviorNode，使用本地Node类作为别名
+if BehaviorNode is None:
+    BehaviorNode = Node
 
 
 class ConditionNode(Node):
@@ -352,3 +355,84 @@ class BehaviorTreeEngine:
             "context": ctx,
             "status": status.value
         }
+
+
+# 常用预定义节点
+class MoveToNode(TaskNode):
+    """移动到目标位置节点"""
+    def __init__(self, name: str = "MoveTo", target_key: str = "target_pos"):
+        def move_task(context: Dict) -> Dict:
+            agv = context.get("agv_interface")
+            target = context.get(target_key)
+            if not agv or not target:
+                return {"success": False, "error": "Missing AGV interface or target position"}
+            
+            result = agv.move_to(*target)
+            return result
+        
+        super().__init__(name, move_task)
+
+
+class GripperOpenNode(TaskNode):
+    """打开夹爪节点"""
+    def __init__(self, name: str = "GripperOpen"):
+        def open_task(context: Dict) -> Dict:
+            agv = context.get("agv_interface")
+            if not agv:
+                return {"success": False, "error": "Missing AGV interface"}
+            
+            cmd = AGVCommand(gripper_command="open")
+            agv.hw_interface.send_command(cmd)
+            time.sleep(0.5)
+            return {"success": True}
+        
+        super().__init__(name, open_task)
+
+
+class GripperCloseNode(TaskNode):
+    """关闭夹爪节点"""
+    def __init__(self, name: str = "GripperClose"):
+        def close_task(context: Dict) -> Dict:
+            agv = context.get("agv_interface")
+            if not agv:
+                return {"success": False, "error": "Missing AGV interface"}
+            
+            cmd = AGVCommand(gripper_command="close")
+            agv.hw_interface.send_command(cmd)
+            time.sleep(0.5)
+            
+            # 检查是否抓取到物体（通过力传感器）
+            sensor_data = agv.get_sensor_data()
+            force = sensor_data.get("force_torque", [0]*6)
+            if abs(force[2]) > 5.0: # Z轴力大于5N，说明抓取到物体
+                return {"success": True, "held_object": "detected"}
+            return {"success": False, "error": "No object detected"}
+        
+        super().__init__(name, close_task)
+
+
+class ObstacleAvoidanceNode(ConditionNode):
+    """避障条件节点：没有障碍物返回成功，有障碍物返回失败"""
+    def __init__(self, name: str = "ObstacleAvoidance", safe_distance: float = 0.5):
+        def check_obstacle(context: Dict) -> bool:
+            sensor_data = context.get("sensor_data", {})
+            obstacles = sensor_data.get("obstacles", [])
+            
+            for (x, y, _) in obstacles:
+                dist = math.hypot(x, y)
+                if dist < safe_distance:
+                    return False # 有障碍物，避障触发
+            return True # 安全
+        
+        super().__init__(name, check_obstacle)
+
+
+class BatteryCheckNode(ConditionNode):
+    """电池检查节点：电量高于阈值返回成功"""
+    def __init__(self, name: str = "BatteryCheck", min_level: float = 0.2):
+        def check_battery(context: Dict) -> bool:
+            sensor_data = context.get("sensor_data", {})
+            battery = sensor_data.get("battery_level", 1.0)
+            return battery >= min_level
+        
+        super().__init__(name, check_battery)

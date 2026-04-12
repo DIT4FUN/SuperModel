@@ -212,6 +212,24 @@ class AGVHardwareInterface:
             return None
 
         try:
+            # 仿真模式下从sim_instance获取状态
+            if self.sim_instance is not None:
+                sim_state = self.sim_instance.step()
+                agv_state = sim_state["agvs"][self.sim_agv_id]["state"]
+                sensors = sim_state["agvs"][self.sim_agv_id]["sensors"]
+                self.last_state = AGVState(
+                    x=agv_state["x"],
+                    y=agv_state["y"],
+                    theta=agv_state["theta"],
+                    v=agv_state["v"],
+                    omega=agv_state["omega"],
+                    battery_level=agv_state["battery_level"],
+                    gripper_state=agv_state["gripper_state"],
+                    timestamp=sim_state["time"]
+                )
+                # 保存传感器数据到缓存
+                self.last_sensor_data = sensors
+                return self.last_state
             if self.config.communication_type == AGVCommunicationType.CAN:
                 # 读取CAN总线上的状态报文
                 msg = self.can_bus.recv(timeout=0.01)
@@ -312,6 +330,10 @@ class AGVInterface:
         self.target_pos = None
         # 传感器数据缓存
         self.sensor_cache = {}
+        # 初始化传感器（模拟）
+        self.tactile_data = []
+        self.force_data = []
+        self.imu_data = {}
 
     def connect(self) -> bool:
         """连接AGV硬件"""
@@ -367,14 +389,18 @@ class AGVInterface:
         if hw_state:
             self.current_pos = (hw_state.x, hw_state.y, hw_state.theta)
         
+        # 获取传感器数据（优先从硬件接口缓存）
+        sensor_data = getattr(self.hw_interface, "last_sensor_data", {})
+        
         # 组装传感器数据
         self.sensor_cache = {
             "position": self.current_pos,
             "status": self.status.value,
             "battery_level": hw_state.battery_level if hw_state else 1.0,
-            "tactile": [],  # 后续接入触觉传感器数据
-            "force": [],    # 后续接入力觉传感器数据
-            "imu": {}       # 后续接入IMU传感器数据
+            "tactile": sensor_data.get("tactile", self.tactile_data),
+            "force": sensor_data.get("force_torque", self.force_data),
+            "force_torque": sensor_data.get("force_torque", self.force_data),
+            "imu": sensor_data.get("imu", self.imu_data)
         }
         
         return self.sensor_cache
