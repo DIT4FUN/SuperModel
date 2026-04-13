@@ -60,9 +60,11 @@ class ConditionNode(Node):
         self.condition_func = condition_func
     
     def tick(self, context: Dict) -> NodeStatus:
-        if self.condition_func(context):
-            return NodeStatus.SUCCESS
-        return NodeStatus.FAILURE
+        result = self.condition_func(context)
+        # 兼容：如果返回NodeStatus枚举，直接返回；否则按布尔值处理
+        if isinstance(result, NodeStatus):
+            return result
+        return NodeStatus.SUCCESS if result else NodeStatus.FAILURE
 
 
 class TaskNode(Node):
@@ -250,7 +252,8 @@ class BehaviorTreeEngine:
     def reset(self):
         """重置行为树和引擎状态"""
         with self.lock:
-            self.behavior_tree.reset()
+            if hasattr(self, 'behavior_tree') and self.behavior_tree:
+                self.behavior_tree.reset()
             self.blackboard["task_completed"] = False
             self.blackboard["held_object"] = None
             self.blackboard["desired_velocity"] = 0.0
@@ -436,7 +439,7 @@ class BehaviorTreeEngine:
 
     def run(self, root_name: Optional[str] = None, context: Optional[Dict] = None) -> NodeStatus:
         """运行行为树（测试兼容接口）"""
-        ctx = context or {}
+        ctx = context if context is not None else {}
         # 如果指定了根节点名称，使用该节点作为根
         if root_name and hasattr(self, "nodes") and root_name in self.nodes:
             root = self.nodes[root_name]
