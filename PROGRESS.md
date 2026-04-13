@@ -4,6 +4,34 @@
 
 ---
 
+## v3.8.3 (2026-04-14 01:30) - 部署模块测试 + pytest覆盖率完整化 + 96项新测试
+
+### 本次更新
+
+✅ **部署模块测试** (`tests/embodiment/test_deployment.py`, ~1050行, 96项):
+   - `TestDeploymentConfig`: 配置类 (所有AGV等级, 传感器开关, 健康参数)
+   - `TestHealthCheckResult`: 健康检查结果 (状态判定, 延迟记录, 时间戳)
+   - `TestDeploymentValidator`: 部署验证器 (无效等级, 紧急停车, 健康间隔, 五级规格)
+   - `TestHealthMonitor`: 健康监控器 (并发报告, 回调系统, 错误计数, 历史限制)
+   - `TestEmergencyProcedure`: 紧急停车程序 (IMU倾角+力觉碰撞+触觉压力安全检查)
+   - `TestDeploymentManager`: 部署管理器 (完整生命周期, 降级模式, 紧急停车集成)
+   - `TestDeploymentFiveGradeIntegration`: 五级AGV集成测试 (S/M/L/XL/XXL参数化)
+   - `TestEmergencyStopIntegration`: 紧急停车集成测试 (状态变化, 信息记录)
+   - `TestConcurrentDeployment`: 并发部署测试 (多管理器并发, 并发状态变化)
+   - `TestDeploymentEdgeCases`: 边缘情况测试 (极端配置, 零间隔, 超长消息)
+   - 96项全部通过 ✅
+
+✅ **覆盖补全**:
+   - `src/embodied/deployment.py` 此前无任何测试，现100%覆盖
+   - DeploymentValidator / HealthMonitor / EmergencyProcedure 全方法覆盖
+   - 所有AGV五级等级 (S/M/L/XL/XXL) 参数化验证
+
+📊 **整体pytest测试数**: 971项 (新增96项) 全部通过
+
+📊 整体研发进度: ~96%
+
+---
+
 ## v3.7.0 (2026-04-13 21:43) - 场景任务规划器测试 + 具身记忆系统测试 + 87项新测试
 
 ### 本次更新
