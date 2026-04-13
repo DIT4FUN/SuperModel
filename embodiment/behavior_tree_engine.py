@@ -557,3 +557,272 @@ class BatteryCheckNode(ConditionNode):
             return battery >= min_level
         
         super().__init__(name, check_battery)
+
+
+# =============================================================================
+# Extended Node Types: Parallel, StateMachine, Wait, Retry, Timeout
+# =============================================================================
+
+class ParallelNode(Node):
+    """并行节点：同时执行所有子节点，支持成功/失败策略"""
+    class Policy(Enum):
+        REQUIRE_ALL = "require_all"       # 全部成功才成功
+        REQUIRE_ONE = "require_one"        # 一个成功即成功
+        REQUIRE_MAJORITY = "require_majority"  # 多数成功才成功
+    
+    def __init__(self, name: str, policy: Policy = Policy.REQUIRE_ALL):
+        super().__init__(name)
+        self.policy = policy
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        if not self.children:
+            return NodeStatus.SUCCESS
+        
+        results = []
+        for child in self.children:
+            status = child.tick(context)
+            results.append(status)
+        
+        success_count = sum(1 for r in results if r == NodeStatus.SUCCESS)
+        failure_count = sum(1 for r in results if r == NodeStatus.FAILURE)
+        running_count = sum(1 for r in results if r == NodeStatus.RUNNING)
+        
+        if self.policy == ParallelNode.Policy.REQUIRE_ALL:
+            if failure_count > 0:
+                return NodeStatus.FAILURE
+            if running_count > 0:
+                return NodeStatus.RUNNING
+            return NodeStatus.SUCCESS
+        elif self.policy == ParallelNode.Policy.REQUIRE_ONE:
+            if success_count > 0:
+                return NodeStatus.SUCCESS
+            if running_count > 0:
+                return NodeStatus.RUNNING
+            return NodeStatus.FAILURE
+        elif self.policy == ParallelNode.Policy.REQUIRE_MAJORITY:
+            if success_count > len(results) / 2:
+                return NodeStatus.SUCCESS
+            if running_count > 0:
+                return NodeStatus.RUNNING
+            return NodeStatus.FAILURE
+        return NodeStatus.FAILURE
+
+
+class StateMachineNode(Node):
+    """状态机节点：管理一组互斥状态，每个状态关联一个子行为树"""
+    
+    def __init__(self, name: str):
+        super().__init__(name)
+        self.current_state: Optional[str] = None
+        self.states: Dict[str, Node] = {}
+        self.transitions: Dict[Tuple[str, str], Callable[[Dict], bool]] = {}
+    
+    def add_state(self, state_name: str, behavior: Node):
+        """添加状态及其关联的行为"""
+        self.states[state_name] = behavior
+        if self.current_state is None:
+            self.current_state = state_name
+    
+    def add_transition(self, from_state: str, to_state: str, condition: Callable[[Dict], bool]):
+        """添加状态转换规则"""
+        self.transitions[(from_state, to_state)] = condition
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        if self.current_state is None or self.current_state not in self.states:
+            return NodeStatus.FAILURE
+        
+        # 检查是否有可用的转换
+        for (from_s, to_s), condition in self.transitions.items():
+            if from_s == self.current_state and condition(context):
+                self.current_state = to_s
+                break
+        
+        # 执行当前状态的行为
+        current_behavior = self.states[self.current_state]
+        return current_behavior.tick(context)
+    
+    def get_current_state(self) -> Optional[str]:
+        """获取当前状态名称"""
+        return self.current_state
+    
+    def set_state(self, state_name: str):
+        """强制切换到指定状态"""
+        if state_name in self.states:
+            self.current_state = state_name
+
+
+class WaitNode(TaskNode):
+    """等待节点：等待指定条件满足或超时"""
+    def __init__(self, name: str, duration: float = 1.0):
+        self.duration = duration
+        self.elapsed = 0.0
+        super().__init__(name, lambda ctx: {"success": True})
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        self.elapsed += context.get("_dt", 0.1)
+        if self.elapsed >= self.duration:
+            self.elapsed = 0.0
+            return NodeStatus.SUCCESS
+        return NodeStatus.RUNNING
+
+
+class RetryNode(Node):
+    """重试节点：失败时最多重试N次"""
+    def __init__(self, name: str, child: Node, max_retries: int = 3):
+        super().__init__(name)
+        self.child = child
+        self.max_retries = max_retries
+        self.retry_count = 0
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        status = self.child.tick(context)
+        if status == NodeStatus.SUCCESS:
+            self.retry_count = 0
+            return NodeStatus.SUCCESS
+        self.retry_count += 1
+        if self.retry_count >= self.max_retries:
+            self.retry_count = 0
+            return NodeStatus.FAILURE
+        return NodeStatus.RUNNING
+
+
+class TimeoutNode(Node):
+    """超时节点：超过指定时间强制失败"""
+    def __init__(self, name: str, child: Node, timeout: float = 10.0):
+        super().__init__(name)
+        self.child = child
+        self.timeout = timeout
+        self.elapsed = 0.0
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        self.elapsed += context.get("_dt", 0.1)
+        if self.elapsed >= self.timeout:
+            self.elapsed = 0.0
+            return NodeStatus.FAILURE
+        return self.child.tick(context)
+
+
+class InverterNode(Node):
+    """反转节点：成功变失败，失败变成功"""
+    def __init__(self, name: str, child: Node):
+        super().__init__(name)
+        self.child = child
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        status = self.child.tick(context)
+        if status == NodeStatus.SUCCESS:
+            return NodeStatus.FAILURE
+        elif status == NodeStatus.FAILURE:
+            return NodeStatus.SUCCESS
+        return NodeStatus.RUNNING
+
+
+class AlwaysSuccessNode(Node):
+    """总是成功节点：无论子节点结果如何都返回成功"""
+    def __init__(self, name: str, child: Node):
+        super().__init__(name)
+        self.child = child
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        self.child.tick(context)
+        return NodeStatus.SUCCESS
+
+
+class AlwaysFailureNode(Node):
+    """总是失败节点：无论子节点结果如何都返回失败"""
+    def __init__(self, name: str, child: Node):
+        super().__init__(name)
+        self.child = child
+    
+    def tick(self, context: Dict) -> NodeStatus:
+        self.child.tick(context)
+        return NodeStatus.FAILURE
+
+
+# =============================================================================
+# Pre-built AGV Task Trees
+# =============================================================================
+
+class AGVTaskTrees:
+    """AGV常用任务行为树构建器"""
+    
+    @staticmethod
+    def build_patrol_tree() -> Node:
+        """巡逻任务行为树"""
+        # Root: Sequence (patrol loop)
+        patrol_loop = SequenceNode("PatrolLoop")
+        
+        # Check battery
+        battery_ok = ConditionNode("BatteryOK", lambda ctx: ctx.get("battery", 1.0) > 0.2)
+        
+        # Navigate to waypoint
+        navigate = TaskNode("Navigate", lambda ctx: {"success": True, "arrived": True})
+        
+        # Check sensors
+        safe = ConditionNode("Safe", lambda ctx: len(ctx.get("obstacles", [])) == 0)
+        
+        # Report
+        report = TaskNode("Report", lambda ctx: {"success": True})
+        
+        patrol_loop.add_child(battery_ok)
+        patrol_loop.add_child(navigate)
+        patrol_loop.add_child(safe)
+        patrol_loop.add_child(report)
+        
+        return patrol_loop
+    
+    @staticmethod
+    def build_transport_tree() -> Node:
+        """物料运输行为树"""
+        # Root: Sequence
+        transport = SequenceNode("Transport")
+        
+        # Approach pickup
+        approach = TaskNode("ApproachPickup", lambda ctx: {"success": True})
+        
+        # Pickup with retry
+        pickup = RetryNode("PickupWithRetry", 
+                          TaskNode("Pickup", lambda ctx: {"success": True}), 
+                          max_retries=3)
+        
+        # Verify grasp
+        verify = ConditionNode("GraspVerified", lambda ctx: ctx.get("grasp_quality", 1.0) > 0.7)
+        
+        # Transport
+        transport_action = TaskNode("Transport", lambda ctx: {"success": True})
+        
+        # Deliver
+        deliver = TaskNode("Deliver", lambda ctx: {"success": True})
+        
+        transport.add_child(approach)
+        transport.add_child(pickup)
+        transport.add_child(verify)
+        transport.add_child(transport_action)
+        transport.add_child(deliver)
+        
+        return transport
+    
+    @staticmethod
+    def build_emergency_tree() -> Node:
+        """应急行为树"""
+        # Root: Fallback (try recovery, if fail then emergency stop)
+        emergency = Node("EmergencyRoot")
+        
+        # Recovery sequence
+        recovery_seq = SequenceNode("Recovery")
+        stop_motion = TaskNode("StopMotion", lambda ctx: {"success": True})
+        assess = TaskNode("Assess", lambda ctx: {"success": True})
+        recover = TaskNode("Recover", lambda ctx: {"success": False})  # Fails to trigger fallback
+        
+        recovery_seq.add_child(stop_motion)
+        recovery_seq.add_child(assess)
+        recovery_seq.add_child(recover)
+        
+        # Emergency stop (always succeeds to stop the robot)
+        estop = AlwaysSuccessNode("EmergencyStop", 
+                                  TaskNode("EStop", lambda ctx: {"success": True}))
+        
+        emergency.add_child(recovery_seq)
+        emergency.add_child(estop)
+        
+        return emergency

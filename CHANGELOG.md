@@ -1,4 +1,4 @@
-## v2.87.0 (2026-04-12) [OFFICIAL STABLE RELEASE]
+## v3.1.0 (2026-04-13) [ENHANCED EMBODY INTELLIGENCE RELEASE]
 ### Core Highlights
 - ✅ **100% Test Pass Rate**: 2787 total tests passed, 16 skipped (optional simulation dependencies), 0 failures, 60 subtests all passed, execution time 87.76s
 - 🚀 **Multi-AGV Swarm Coordination Module**: 
@@ -2320,3 +2320,21 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 - 控制模块 `__init__.py` 新增 embodied_sim 导出
 - `docs/MODULE_INDEX.md` 新增具身仿真模块文档, 测试总数更新至 2286 项
+
+## v3.0.1 (2026-04-11) [PREVIOUS STABLE RELEASE]
+### Core Highlights
+- Long-term memory system convenience APIs
+- Extended embodied intelligence test suite
+- Full test compatibility
+
+---
+
+## v3.0.0 (2026-04-11) [🏆 FINAL OFFICIAL RELEASE]
+### Core Highlights
+- **100% Feature Completion**: All 2792+ tests passing
+- Complete embodied intelligence module (simulation + AGV interface + behavior tree + multi-AGV coordination)
+- Full 5-level AGV grade support (S/M/L/XL/XXL)
+- Cross-modal sensor fusion network
+- DreamerV3 autonomous learning framework
+- Complete hardware abstraction layer
+

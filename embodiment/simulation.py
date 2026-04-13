@@ -654,3 +654,236 @@ class EmbodimentSimulator:
 
 # 测试兼容别名
 EmbodiedSimulation = EmbodimentSimulator
+
+
+# =============================================================================
+# Gymnasium Integration Wrapper
+# =============================================================================
+
+try:
+    import gymnasium as gym
+    from gymnasium import spaces
+    GYMNASIUM_AVAILABLE = True
+except ImportError:
+    GYMNASIUM_AVAILABLE = False
+    gym = None
+    spaces = None
+
+
+class GymnasiumAGVEnv:
+    """
+    Gymnasium兼容的AGV仿真环境
+    将EmbodimentSimulator包装为gymnasium.Env格式，支持标准强化学习接口
+    """
+    
+    metadata = {"render_modes": ["human", "rgb_array"], "render_fps": 30}
+    
+    def __init__(
+        self,
+        scene_config: SimSceneConfig = None,
+        render_mode: Optional[str] = None,
+        max_steps: int = 1000,
+        agv_config: SimAGVConfig = None,
+        num_agvs: int = 1,
+        **kwargs
+    ):
+        if not GYMNASIUM_AVAILABLE:
+            raise RuntimeError("Gymnasium is not installed. Install with: pip install gymnasium")
+        
+        self.render_mode = render_mode
+        self.max_steps = max_steps
+        self.current_step = 0
+        
+        # 创建底层仿真器
+        self.sim = EmbodimentSimulator(scene_config=scene_config, gui=(render_mode == "human"), **kwargs)
+        
+        # 添加AGV
+        self.num_agvs = num_agvs
+        self.agv_ids = []
+        for _ in range(num_agvs):
+            agv_id = self.sim.add_agv(config=agv_config or SimAGVConfig())
+            self.agv_ids.append(agv_id)
+        
+        # 定义观测空间：每个AGV的[x, y, theta, v, battery]
+        # num_agvs=1时为Box(5,), num_agvs>1时为Box(num_agvs*5,)
+        if num_agvs == 1:
+            self.observation_space = spaces.Box(low=-100, high=100, shape=(5,), dtype=np.float32)
+        else:
+            self.observation_space = spaces.Box(low=-100, high=100, shape=(num_agvs * 5,), dtype=np.float32)
+        
+        # 定义动作空间：每个AGV的[v, omega]，归一化到[-1, 1]
+        if num_agvs == 1:
+            self.action_space = spaces.Box(low=-1, high=1, shape=(2,), dtype=np.float32)
+        else:
+            self.action_space = spaces.Box(low=-1, high=1, shape=(num_agvs * 2,), dtype=np.float32)
+    
+    def _get_observation(self) -> np.ndarray:
+        """从仿真器获取观测数据"""
+        obs = []
+        for agv_id in self.agv_ids:
+            if agv_id in self.sim.agvs:
+                state = self.sim.agvs[agv_id]["state"]
+                obs.extend([
+                    float(state["x"]),
+                    float(state["y"]),
+                    float(state["theta"]),
+                    float(state["v"]),
+                    float(state["battery_level"])
+                ])
+        
+        if len(obs) == 0:
+            obs = [0.0] * (self.num_agvs * 5)
+        
+        return np.array(obs, dtype=np.float32)
+    
+    def _compute_reward(self, prev_obs: np.ndarray) -> float:
+        """计算奖励：基于移动效率、能耗、安全"""
+        reward = 0.0
+        
+        for agv_id in self.agv_ids:
+            if agv_id in self.sim.agvs:
+                state = self.sim.agvs[agv_id]["state"]
+                
+                # 移动奖励（线速度 > 0 有奖励）
+                reward += 0.1 * abs(state["v"])
+                
+                # 障碍物惩罚
+                if len(state.get("obstacles", [])) > 0:
+                    reward -= 1.0
+                
+                # 低电量惩罚
+                if state["battery_level"] < 0.2:
+                    reward -= 2.0
+        
+        return reward
+    
+    def reset(self, seed: Optional[int] = None, options: Optional[Dict] = None) -> Tuple[np.ndarray, Dict]:
+        """重置环境，返回初始观测"""
+        # 注意：GymnasiumAGVEnv不是gymnasium.Env的子类，不调用super().reset()
+        if seed is not None:
+            np.random.seed(seed)
+        
+        self.current_step = 0
+        self.sim.reset()
+        
+        obs = self._get_observation()
+        info = {"agv_ids": self.agv_ids, "time": self.sim.current_time}
+        
+        return obs, info
+    
+    def step(self, action: np.ndarray) -> Tuple[np.ndarray, float, bool, bool, Dict]:
+        """执行动作，返回 (obs, reward, terminated, truncated, info)"""
+        self.current_step += 1
+        
+        # 解析动作
+        if self.num_agvs == 1:
+            v = float(action[0]) * self.sim.agvs[self.agv_ids[0]]["config"].max_velocity
+            omega = float(action[1]) * self.sim.agvs[self.agv_ids[0]]["config"].max_omega
+            self.sim.set_agv_command(self.agv_ids[0], v, omega)
+        else:
+            for i, agv_id in enumerate(self.agv_ids):
+                v = float(action[i * 2]) * self.sim.agvs[agv_id]["config"].max_velocity
+                omega = float(action[i * 2 + 1]) * self.sim.agvs[agv_id]["config"].max_omega
+                self.sim.set_agv_command(agv_id, v, omega)
+        
+        # 执行仿真步骤
+        self.sim.step(duration=0.1)
+        
+        # 获取观测
+        obs = self._get_observation()
+        
+        # 计算奖励
+        reward = self._compute_reward(obs)
+        
+        # 判断是否终止
+        terminated = False
+        truncated = self.current_step >= self.max_steps
+        
+        # 检查终止条件
+        for agv_id in self.agv_ids:
+            if agv_id in self.sim.agvs:
+                battery = self.sim.agvs[agv_id]["state"]["battery_level"]
+                if battery <= 0.0:
+                    terminated = True
+                    break
+        
+        info = {"time": self.sim.current_time, "step": self.current_step}
+        
+        return obs, reward, terminated, truncated, info
+    
+    def render(self):
+        """渲染环境（GUI模式）"""
+        if self.render_mode == "human":
+            # PyBullet GUI已经在运行
+            pass
+    
+    def close(self):
+        """关闭环境"""
+        self.sim.close()
+
+
+class GymnasiumVectorEnv:
+    """
+    向量化AGV仿真环境 - 并行运行多个AGV仿真实例
+    用于大规模强化学习训练
+    """
+    
+    def __init__(
+        self,
+        num_envs: int = 4,
+        scene_config: SimSceneConfig = None,
+        num_agvs_per_env: int = 1,
+        **kwargs
+    ):
+        self.num_envs = num_envs
+        self.envs = []
+        
+        for _ in range(num_envs):
+            env = GymnasiumAGVEnv(
+                scene_config=scene_config,
+                num_agvs=num_agvs_per_env,
+                **kwargs
+            )
+            self.envs.append(env)
+        
+        # 共享观测/动作空间
+        self.observation_space = self.envs[0].observation_space
+        self.action_space = self.envs[0].action_space
+    
+    def reset(self) -> np.ndarray:
+        """重置所有环境"""
+        obs_list = []
+        for env in self.envs:
+            obs, _ = env.reset()
+            obs_list.append(obs)
+        return np.array(obs_list)
+    
+    def step(self, actions: np.ndarray) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, Dict]:
+        """并行执行所有环境的步骤"""
+        obs_list = []
+        reward_list = []
+        terminated_list = []
+        truncated_list = []
+        info_list = []
+        
+        for i, env in enumerate(self.envs):
+            action = actions[i] if len(actions) > i else actions[0]
+            obs, reward, terminated, truncated, info = env.step(action)
+            obs_list.append(obs)
+            reward_list.append(reward)
+            terminated_list.append(terminated)
+            truncated_list.append(truncated)
+            info_list.append(info)
+        
+        return (
+            np.array(obs_list),
+            np.array(reward_list),
+            np.array(terminated_list),
+            np.array(truncated_list),
+            {"infos": info_list}
+        )
+    
+    def close(self):
+        """关闭所有环境"""
+        for env in self.envs:
+            env.close()

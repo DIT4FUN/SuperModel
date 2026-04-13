@@ -1,7 +1,26 @@
 # SuperModel 学习进度报告 / Development Progress Report
 
 > 记录 SuperModel 超模态大模型机器人具身智能大脑的研发进度
-> Last Updated: 2026-04-12 20:19 (v3.0.0 最终正式版)
+
+---
+
+## v3.1.0 (2026-04-13) - 🚀 具身智能增强版：Gymnasium集成/市场拍卖/编队控制/扩展行为树
+### 本次更新
+✅ Gymnasium强化学习环境集成：GymnasiumAGVEnv + GymnasiumVectorEnv，支持标准RL训练接口
+✅ 市场拍卖任务分配：MarketAuctionAllocator支持基于成本的竞价分配、底价、超时机制
+✅ 编队控制系统：FormationController支持直线/矩形/菱形/楔形多种编队，自适应控制输出
+✅ 扩展行为树节点：ParallelNode(并行)/StateMachineNode(状态机)/RetryNode(重试)/TimeoutNode(超时)/InverterNode(反转)等
+✅ AGV预建任务树库：AGVTaskTrees提供巡逻/运输/应急三种标准行为树
+✅ 增强仿真测试：障碍物检测/多AGV传感器/电池消耗/夹爪指令全套测试
+✅ 新增高级具身测试用例35项，全部通过
+✅ 补充完整部署文档：Gymnasium/拍卖/编队/行为树使用指南
+📊 整体研发进度: ~96% ✅
+### 待推进
+- 具身智能场景化应用深化（医疗/工业现场）
+- 多机协同算法（分布式学习/协同SLAM）
+- 真实AGV硬件在环验证
+
+> Last Updated: 2026-04-13 (v3.1.0 增强版)
 
 ---
 

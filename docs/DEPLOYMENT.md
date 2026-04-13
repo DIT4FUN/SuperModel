@@ -483,3 +483,180 @@ deployment_config.log_dir = "/home/agv/supermodel/logs"
 本文档对应 SuperModel v2.69.0+
 
 更新: 2026-04-11
+
+
+# =============================================================================
+# 高级功能部署 (v3.1.0+)
+# =============================================================================
+
+## Gymnasium强化学习环境集成
+
+SuperModel支持gymnasium格式的仿真环境，可用于强化学习训练。
+
+### 安装依赖
+
+```bash
+pip install gymnasium
+```
+
+### 使用仿真环境
+
+```python
+from embodiment.simulation import GymnasiumAGVEnv, SimSceneConfig
+
+# 创建单AGV环境
+env = GymnasiumAGVEnv(
+    scene_config=SimSceneConfig(scene_type="warehouse"),
+    num_agvs=1,
+    max_steps=1000
+)
+
+# 标准gymnasium接口
+obs, info = env.reset()
+done = False
+while not done:
+    action = env.action_space.sample()  # 随机动作
+    obs, reward, terminated, truncated, info = env.step(action)
+    done = terminated or truncated
+
+env.close()
+```
+
+### 向量化环境（多进程训练）
+
+```python
+from embodiment.simulation import GymnasiumVectorEnv
+
+vec_env = GymnasiumVectorEnv(
+    num_envs=8,
+    scene_config=SimSceneConfig(scene_type="warehouse"),
+    num_agvs_per_env=1
+)
+
+# 并行step
+actions = vec_env.action_space.sample()  # (8, 2)
+obs_batch, rewards, terms, truncs, infos = vec_env.step(actions)
+vec_env.close()
+```
+
+---
+
+## 市场拍卖任务分配
+
+多AGV蜂群支持基于市场机制的拍卖分配策略。
+
+### 启动拍卖
+
+```python
+from embodiment.multi_agv_coordinator import (
+    MultiAGVCoordinator, AGVTask, MarketAuctionAllocator, MarketAuctionConfig
+)
+
+coordinator = MultiAGVCoordinator()
+allocator = MarketAuctionAllocator(coordinator, MarketAuctionConfig(auction_timeout=5.0))
+
+# 创建任务并启动拍卖
+task = AGVTask(task_id="delivery_001", task_type="transport")
+auction_id = allocator.start_auction(task)
+
+# AGV提交出价（出价=成本估计，越低越容易获胜）
+allocator.submit_bid(auction_id, "agv_001", bid_value=10.0)
+allocator.submit_bid(auction_id, "agv_002", bid_value=8.0)  # 更低价
+
+# 关闭拍卖，确定winner
+winner = allocator.close_auction(auction_id)
+print(f"Winner: {winner}")  # agv_002 (最低价)
+```
+
+---
+
+## 编队控制
+
+支持多种编队几何形状：直线、矩形、菱形、楔形。
+
+### 基本编队控制
+
+```python
+from embodiment.multi_agv_coordinator import FormationController, MultiAGVCoordinator, FormationController
+
+coordinator = MultiAGVCoordinator()
+coordinator.add_agv(0, position=(0.0, 0.0))  # 领队
+coordinator.add_agv(1, position=(1.0, 0.0))
+coordinator.add_agv(2, position=(2.0, 0.0))
+
+controller = FormationController(coordinator)
+controller.set_leader(0)
+controller.set_formation(FormationController.FormationType.LINE, spacing=1.5)
+
+# 计算编队中每个AGV的目标位置
+positions = controller.compute_formation_positions()
+
+# 计算每个AGV的速度控制量
+controls = controller.maintain_formation()
+# controls = {1: (v, omega), 2: (v, omega), ...}
+```
+
+### 编队类型
+
+| 类型 | 描述 | 适用场景 |
+|------|------|----------|
+| LINE | 直线纵队 | 狭长通道、走廊 |
+| RECTANGLE | 矩形方阵 | 物资搬运、区域覆盖 |
+| DIAMOND | 菱形编队 | 探索、搜索 |
+| WEDGE | 楔形/箭头 | 队形突击、包围 |
+
+---
+
+## 扩展行为树节点
+
+### 新增节点类型
+
+```python
+from embodiment.behavior_tree_engine import (
+    ParallelNode, StateMachineNode, RetryNode, TimeoutNode,
+    InverterNode, AlwaysSuccessNode, AlwaysFailureNode,
+    AGVTaskTrees, NodeStatus
+)
+
+# 并行执行（多子节点同时运行）
+parallel = ParallelNode("parallel", ParallelNode.Policy.REQUIRE_ONE)
+parallel.add_child(TaskNode("t1", lambda ctx: {"success": True}))
+parallel.add_child(TaskNode("t2", lambda ctx: {"success": False}))
+status = parallel.tick({})  # REQUIRE_ONE: 一个成功即成功
+
+# 状态机（互斥状态管理）
+sm = StateMachineNode("AGVMode")
+sm.add_state("IDLE", TaskNode("idle_task", lambda ctx: {"success": True}))
+sm.add_state("MOVING", TaskNode("move_task", lambda ctx: {"success": True}))
+sm.add_transition("IDLE", "MOVING", lambda ctx: ctx.get("should_move"))
+status = sm.tick({})
+
+# 重试节点
+retry = RetryNode("Retry3", TaskNode("risky", risky_task), max_retries=3)
+
+# 超时节点
+timeout = TimeoutNode("MoveTimeout", MoveTask, timeout=5.0)
+```
+
+### 预建AGV任务树
+
+```python
+from embodiment.behavior_tree_engine import AGVTaskTrees
+
+# 巡逻任务
+patrol_tree = AGVTaskTrees.build_patrol_tree()
+
+# 物料运输任务
+transport_tree = AGVTaskTrees.build_transport_tree()
+
+# 应急处理任务
+emergency_tree = AGVTaskTrees.build_emergency_tree()
+```
+
+---
+
+## 版本更新
+
+- v3.1.0 (2026-04-13): 新增Gymnasium集成、市场拍卖、编队控制、扩展行为树节点
+- v3.0.1 (2026-04-11): 完善长期记忆系统
+- v3.0.0 (2026-04-11): 最终正式版发布

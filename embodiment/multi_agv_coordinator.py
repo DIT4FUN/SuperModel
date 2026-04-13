@@ -804,3 +804,298 @@ class MultiAGVCoordinator:
             return True
         
         return False  # Unsupported formation type
+
+
+# =============================================================================
+# Market-Based Auction and Formation Control Extensions
+# =============================================================================
+
+class MarketAuctionConfig:
+    """市场拍卖配置"""
+    def __init__(
+        self,
+        auction_timeout: float = 5.0,
+        min_bid_increment: float = 0.1,
+        reserve_price: float = 0.0,
+        bundle_support: bool = True
+    ):
+        self.auction_timeout = auction_timeout
+        self.min_bid_increment = min_bid_increment
+        self.reserve_price = reserve_price
+        self.bundle_support = bundle_support
+
+
+class AuctionBid:
+    """拍卖出价"""
+    def __init__(self, agv_id: str, bid_value: float, task_id: str, timestamp: float = 0.0):
+        self.agv_id = agv_id
+        self.bid_value = bid_value
+        self.task_id = task_id
+        self.timestamp = timestamp
+        self.winning = False
+
+
+class MarketAuctionAllocator:
+    """
+    基于市场机制的任务拍卖分配器
+    特点：
+    1. AGV对任务进行竞价，出价最低（成本最低）的获得任务
+    2. 支持任务捆绑、截止时间约束
+    3. 可配置超时、底价、捆绑支持
+    """
+    
+    def __init__(self, coordinator: MultiAGVCoordinator, config: MarketAuctionConfig = None):
+        self.coordinator = coordinator
+        self.config = config or MarketAuctionConfig()
+        self.active_auctions: Dict[str, Dict] = {}  # task_id -> auction state
+        self.auction_history: List[Dict] = []
+        self._bid_counter = 0
+    
+    def start_auction(self, task: AGVTask | Dict) -> str:
+        """启动任务拍卖，返回拍卖ID"""
+        if isinstance(task, dict):
+            task = AGVTask(**{k: v for k, v in task.items() if k in AGVTask.__dataclass_fields__})
+        
+        auction_id = f"auction_{task.task_id}_{int(time.time() * 1000)}"
+        
+        self.active_auctions[task.task_id] = {
+            "auction_id": auction_id,
+            "task": task,
+            "bids": [],
+            "status": "active",
+            "start_time": time.time(),
+            "winner": None
+        }
+        return auction_id
+    
+    def submit_bid(self, auction_id: str, agv_id: str, bid_value: float) -> bool:
+        """AGV提交出价"""
+        for task_id, auction in self.active_auctions.items():
+            if auction["auction_id"] == auction_id:
+                if auction["status"] != "active":
+                    return False
+                
+                # 检查是否超时
+                elapsed = time.time() - auction["start_time"]
+                if elapsed > self.config.auction_timeout:
+                    return False
+                
+                bid = AuctionBid(agv_id, bid_value, task_id, time.time())
+                self._bid_counter += 1
+                auction["bids"].append(bid)
+                return True
+        return False
+    
+    def close_auction(self, auction_id: str) -> Optional[str]:
+        """关闭拍卖，返回最优AGV的ID"""
+        for task_id, auction in self.active_auctions.items():
+            if auction["auction_id"] == auction_id:
+                if auction["status"] != "active":
+                    return auction.get("winner")
+                
+                auction["status"] = "closed"
+                bids = auction["bids"]
+                
+                if not bids:
+                    auction["winner"] = None
+                    return None
+                
+                # 选择最低出价（成本最低）
+                winner = min(bids, key=lambda b: b.bid_value)
+                auction["winner"] = winner.agv_id
+                winner.winning = True
+                
+                # 记录到历史
+                self.auction_history.append({
+                    "auction_id": auction_id,
+                    "task_id": task_id,
+                    "winner": winner.agv_id,
+                    "winning_bid": winner.bid_value,
+                    "num_bids": len(bids),
+                    "timestamp": time.time()
+                })
+                
+                return winner.agv_id
+        return None
+    
+    def get_auction_status(self, auction_id: str) -> Optional[Dict]:
+        """获取拍卖状态"""
+        for auction in self.active_auctions.values():
+            if auction["auction_id"] == auction_id:
+                return {
+                    "status": auction["status"],
+                    "num_bids": len(auction["bids"]),
+                    "current_best_bid": min(auction["bids"], key=lambda b: b.bid_value).bid_value if auction["bids"] else None,
+                    "elapsed_time": time.time() - auction["start_time"]
+                }
+        return None
+    
+    def cancel_auction(self, auction_id: str) -> bool:
+        """取消拍卖"""
+        for auction in self.active_auctions.values():
+            if auction["auction_id"] == auction_id:
+                auction["status"] = "cancelled"
+                return True
+        return False
+    
+    def get_statistics(self) -> Dict:
+        """获取拍卖统计信息"""
+        total_auctions = len(self.auction_history)
+        if total_auctions == 0:
+            return {"total_auctions": 0, "avg_bids_per_auction": 0.0}
+        
+        total_bids = sum(len(a["bids"]) for a in self.active_auctions.values()) + \
+                     sum(len([b for b in self.auction_history if b["auction_id"] == a["auction_id"]]) 
+                         for a in self.active_auctions.values())
+        
+        return {
+            "total_auctions": total_auctions,
+            "active_auctions": sum(1 for a in self.active_auctions.values() if a["status"] == "active"),
+            "completed_auctions": total_auctions,
+            "avg_bids_per_auction": total_bids / total_auctions if total_auctions > 0 else 0.0,
+            "total_bids": total_bids
+        }
+
+
+class FormationController:
+    """
+    编队控制器 - 管理多AGV几何编队
+    支持：直线/矩形/菱形/楔形/自定义编队
+    """
+    
+    class FormationType(Enum):
+        LINE = "line"           # 直线
+        RECTANGLE = "rectangle" # 矩形
+        DIAMOND = "diamond"     # 菱形
+        WEDGE = "wedge"         # 楔形/箭头
+        CUSTOM = "custom"       # 自定义
+    
+    def __init__(self, coordinator: MultiAGVCoordinator):
+        self.coordinator = coordinator
+        self.formation_type = self.FormationType.LINE
+        self.formation_spacing: float = 1.0
+        self.leader_id: Optional[int] = None
+        self.formation_offset: Dict[int, Tuple[float, float]] = {}  # agv_id -> offset from leader
+    
+    def set_formation(self, formation_type: FormationType, spacing: float = 1.0):
+        """设置编队类型和间距"""
+        self.formation_type = formation_type
+        self.formation_spacing = spacing
+    
+    def set_leader(self, leader_id: int):
+        """设置领队AGV"""
+        self.leader_id = leader_id
+    
+    def compute_formation_positions(self) -> Dict[int, Tuple[float, float]]:
+        """计算编队中每个AGV的目标位置（相对于领队）"""
+        if self.leader_id not in self.coordinator.agvs:
+            return {}
+        
+        leader = self.coordinator.agvs[self.leader_id]
+        leader_pos = leader.current_position
+        leader_theta = leader.current_theta
+        
+        positions = {self.leader_id: leader_pos}
+        
+        # 获取其他AGV
+        followers = [agv_id for agv_id in self.coordinator.agvs.keys() if agv_id != self.leader_id]
+        
+        cos_t = math.cos(leader_theta)
+        sin_t = math.sin(leader_theta)
+        
+        if self.formation_type == self.FormationType.LINE:
+            # 直线编队：领队在前，其他跟在后方
+            for i, agv_id in enumerate(followers):
+                offset_x = 0.0
+                offset_y = -(i + 1) * self.formation_spacing
+                # 旋转到领队方向
+                wx = leader_pos[0] + offset_x * cos_t - offset_y * sin_t
+                wy = leader_pos[1] + offset_x * sin_t + offset_y * cos_t
+                positions[agv_id] = (wx, wy)
+        
+        elif self.formation_type == self.FormationType.RECTANGLE:
+            # 矩形编队：4个AGV形成矩形
+            cols = int(math.ceil(math.sqrt(len(followers) + 1)))
+            for i, agv_id in enumerate(followers):
+                row = i // cols
+                col = i % cols
+                offset_x = -col * self.formation_spacing
+                offset_y = -(row + 1) * self.formation_spacing
+                wx = leader_pos[0] + offset_x * cos_t - offset_y * sin_t
+                wy = leader_pos[1] + offset_x * sin_t + offset_y * cos_t
+                positions[agv_id] = (wx, wy)
+        
+        elif self.formation_type == self.FormationType.DIAMOND:
+            # 菱形编队
+            offsets = [(0, 0), (1, 1), (-1, 1), (1, -1), (-1, -1)]
+            for i, agv_id in enumerate(followers[:4]):
+                ox, oy = offsets[i + 1]
+                offset_x = ox * self.formation_spacing
+                offset_y = oy * self.formation_spacing
+                wx = leader_pos[0] + offset_x * cos_t - offset_y * sin_t
+                wy = leader_pos[1] + offset_x * sin_t + offset_y * cos_t
+                positions[agv_id] = (wx, wy)
+        
+        elif self.formation_type == self.FormationType.WEDGE:
+            # 楔形/箭头编队
+            for i, agv_id in enumerate(followers):
+                offset_x = -(i % 2) * self.formation_spacing
+                offset_y = -((i // 2) + 1) * self.formation_spacing
+                if i % 2 == 1:
+                    offset_x = -offset_x
+                wx = leader_pos[0] + offset_x * cos_t - offset_y * sin_t
+                wy = leader_pos[1] + offset_x * sin_t + offset_y * cos_t
+                positions[agv_id] = (wx, wy)
+        
+        return positions
+    
+    def compute_formation_control(self, agv_id: int, target_pos: Tuple[float, float]) -> Tuple[float, float]:
+        """计算AGV到编队位置的速度指令 (v, omega)"""
+        if agv_id not in self.coordinator.agvs:
+            return (0.0, 0.0)
+        
+        agv = self.coordinator.agvs[agv_id]
+        current_pos = agv.current_position
+        
+        # 简单P控制器
+        kp_v = 1.0
+        kp_omega = 2.0
+        
+        dx = target_pos[0] - current_pos[0]
+        dy = target_pos[1] - current_pos[1]
+        distance = math.hypot(dx, dy)
+        
+        if distance < 0.05:
+            return (0.0, 0.0)
+        
+        # 计算朝向角
+        desired_angle = math.atan2(dy, dx)
+        angle_error = desired_angle - agv.current_theta
+        # 归一化角度差到[-pi, pi]
+        angle_error = math.atan2(math.sin(angle_error), math.cos(angle_error))
+        
+        v = kp_v * distance
+        omega = kp_omega * angle_error
+        
+        # 限幅
+        v = max(-agv.speed, min(v, agv.speed))
+        omega = max(-2.0, min(omega, 2.0))
+        
+        return (v, omega)
+    
+    def maintain_formation(self) -> Dict[int, Tuple[float, float]]:
+        """维持编队，返回每个AGV的速度指令"""
+        target_positions = self.compute_formation_positions()
+        controls = {}
+        
+        for agv_id, target_pos in target_positions.items():
+            if agv_id == self.leader_id:
+                continue  # 领队由上层控制
+            controls[agv_id] = self.compute_formation_control(agv_id, target_pos)
+        
+        return controls
+
+
+# 数学库兼容
+import math
+import time
