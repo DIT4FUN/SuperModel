@@ -366,6 +366,46 @@ class MemoryEnhancedExecutor:
             from .behavior_tree import BehaviorTree, NodeStatus
             bt = BehaviorTree(self.bt_root, name=f"TaskExecutor_{task_type}")
 
+            # 设置黑板初始状态（支持仿真/真实环境）
+            import numpy as np
+            target_pos = task_config.get('target_position')
+            robot_pos = task_config.get('robot_position', [0.0, 0.0, 0.0])
+            if target_pos is None and task_config.get('target'):
+                # 解析目标标识为坐标
+                known_points = {
+                    'station_a': np.array([10.0, 0.0, 0.0]),
+                    'station_b': np.array([20.0, 0.0, 0.0]),
+                    'station_c': np.array([30.0, 0.0, 0.0]),
+                    'entrance': np.array([0.0, 0.0, 0.0]),
+                    'exit': np.array([40.0, 0.0, 0.0]),
+                    'charging': np.array([2.0, 0.0, 0.0]),
+                }
+                t = task_config['target'].lower().replace('-', '_').replace(' ', '_')
+                for key, pos in known_points.items():
+                    if key in t or t in key:
+                        target_pos = pos.tolist()
+                        break
+                if target_pos is None:
+                    target_pos = [10.0, 0.0, 0.0]
+
+            pickup = np.array(task_config.get('pickup_position', [0.0, 0.0, 0.0]))
+            dropoff = np.array(task_config.get('dropoff_position', target_pos or [10.0, 0.0, 0.0]))
+
+            bt.blackboard.update_robot_state({
+                'position': robot_pos,
+                'battery_level': task_config.get('battery_level', 0.8),
+                'safety': task_config.get('safety', True),
+                'speed': task_config.get('speed', 0.0),
+            })
+            bt.blackboard.goal_state.update({
+                'target_position': dropoff,
+                'target_object': task_config.get('object') or (task_type == 'transport' and 'package_001'),
+                'pickup_position': pickup,
+                'dropoff_position': dropoff,
+            })
+            logger.info(f"Blackboard initialized: robot_pos={robot_pos}, "
+                        f"battery=0.8, pickup={pickup.tolist()}, dropoff={dropoff.tolist()}")
+
             start_tick_time = time.time()
             last_tick_time = start_tick_time
 

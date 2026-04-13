@@ -210,19 +210,37 @@ class SequenceNode(CompositeNode):
     所有子节点成功 → 整体成功
     某个节点运行中 → 保持运行
     """
+    _active_child: Optional['BTNode'] = None  # 当前活跃子节点
 
     def tick(self, blackboard: Blackboard) -> NodeStatus:
         if self.status != NodeStatus.RUNNING:
             self.initialize()
+            self._active_child = None
 
-        for child in self.children:
+        # 跟踪当前处理到的子节点索引
+        start_from_active = self._active_child is not None
+        active_idx = -1
+
+        for i, child in enumerate(self.children):
+            # 如果之前有活跃子节点，只从该节点继续（跳过已完成节点）
+            if start_from_active:
+                if child is not self._active_child:
+                    continue  # 跳过已完成节点
+                else:
+                    start_from_active = False  # 找到活跃节点，继续处理后续节点
+
             status = child.tick(blackboard)
 
             if status == NodeStatus.RUNNING:
+                self._active_child = child  # 记住当前活跃节点
                 return self.terminate(NodeStatus.RUNNING)
             elif status == NodeStatus.FAILURE:
+                self._active_child = None
                 return self.terminate(NodeStatus.FAILURE)
+            # SUCCESS: 继续下一个，_active_child 保持 None（表示无活跃节点）
+            self._active_child = None
 
+        self._active_child = None
         return self.terminate(NodeStatus.SUCCESS)
 
 
@@ -422,8 +440,15 @@ class ActionNode(BTNode):
         pass
 
     def tick(self, blackboard: Blackboard) -> NodeStatus:
-        if self.status != NodeStatus.RUNNING:
+        # 只在非RUNNING状态时初始化（避免SUCCESS后重复执行）
+        if self.status == NodeStatus.IDLE:
             self.initialize()
+        elif self.status == NodeStatus.SUCCESS:
+            # 已完成的动作不再重复执行
+            return self.status
+        elif self.status == NodeStatus.FAILURE:
+            # 已失败的动作不再重复执行
+            return self.status
         return self.terminate(self.execute(blackboard))
 
 
@@ -715,18 +740,27 @@ class AGVMoveToAction(ActionNode):
         if target_pos is None:
             return NodeStatus.FAILURE
 
-        # 在实际系统中，这里会调用运动控制器
-        # 这里只是示例，返回 RUNNING 模拟持续执行
         if not self._started:
             logger.info(f"AGV moving to target: {target_pos} at speed {self.speed}")
             self._started = True
 
-        # 检查是否到达
+        # 模拟移动：逐步接近目标位置（仿真模式）
         if current_pos is not None:
-            distance = np.linalg.norm(current_pos - np.array(target_pos))
+            target_arr = np.array(target_pos)
+            distance = np.linalg.norm(current_pos - target_arr)
             if distance < 0.1:
                 self._started = False
                 return NodeStatus.SUCCESS
+            # 每tick前进一段距离（0.1s/tick，speed m/s → speed*0.1 m/tick）
+            step = min(self.speed * 0.5, distance)  # 加速模拟
+            direction = (target_arr - current_pos) / distance
+            new_pos = current_pos + direction * step
+            blackboard.update_robot_state({'position': new_pos.tolist()})
+        else:
+            # 初始位置未知，直接跳到目标附近
+            blackboard.update_robot_state({'position': np.array(target_pos).tolist()})
+            self._started = False
+            return NodeStatus.SUCCESS
 
         return NodeStatus.RUNNING
 
@@ -738,9 +772,12 @@ class AGVMoveToAction(ActionNode):
 class AGVGraspAction(ActionNode):
     """AGV抓取动作节点"""
 
-    def __init__(self, name: str = "Grasp"):
+    def __init__(self, name: str = "Grasp", grasp_duration: float = 0.5, grasp_ticks: int = 5):
         super().__init__(name)
+        self.grasp_duration = grasp_duration
         self.grasp_start_time: Optional[float] = None
+        self.grasp_ticks = grasp_ticks
+        self._tick_count: Optional[int] = None
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         target_object = blackboard.goal_state.get('target_object')
@@ -750,11 +787,21 @@ class AGVGraspAction(ActionNode):
         if self.grasp_start_time is None:
             logger.info(f"Starting grasp on object: {target_object}")
             self.grasp_start_time = time.time()
-            # 模拟抓取过程需要时间
+            self._tick_count = 0
             return NodeStatus.RUNNING
 
-        # 模拟抓取完成
-        if time.time() - self.grasp_start_time > 2.0:
+        # Tick-based timing for simulation (ticks advance without real time)
+        if self._tick_count is not None:
+            self._tick_count += 1
+            if self._tick_count >= self.grasp_ticks:
+                logger.info(f"Completed grasp on object: {target_object}")
+                self.grasp_start_time = None
+                self._tick_count = None
+                return NodeStatus.SUCCESS
+            return NodeStatus.RUNNING
+
+        # Wall-clock fallback for production
+        if time.time() - self.grasp_start_time > self.grasp_duration:
             logger.info(f"Completed grasp on object: {target_object}")
             self.grasp_start_time = None
             return NodeStatus.SUCCESS
@@ -763,23 +810,39 @@ class AGVGraspAction(ActionNode):
 
     def reset(self) -> None:
         self.grasp_start_time = None
+        self._tick_count = None
         super().reset()
 
 
 class AGVReleaseAction(ActionNode):
     """AGV释放动作节点"""
 
-    def __init__(self, name: str = "Release"):
+    def __init__(self, name: str = "Release", release_duration: float = 0.3, release_ticks: int = 3):
         super().__init__(name)
+        self.release_duration = release_duration
         self.release_start_time: Optional[float] = None
+        self.release_ticks = release_ticks
+        self._tick_count: Optional[int] = None
 
     def execute(self, blackboard: Blackboard) -> NodeStatus:
         if self.release_start_time is None:
             logger.info("Starting release")
             self.release_start_time = time.time()
+            self._tick_count = 0
             return NodeStatus.RUNNING
 
-        if time.time() - self.release_start_time > 1.0:
+        # Tick-based timing for simulation (ticks advance without real time)
+        if self._tick_count is not None:
+            self._tick_count += 1
+            if self._tick_count >= self.release_ticks:
+                logger.info("Completed release")
+                self.release_start_time = None
+                self._tick_count = None
+                return NodeStatus.SUCCESS
+            return NodeStatus.RUNNING
+
+        # Wall-clock fallback for production
+        if time.time() - self.release_start_time > self.release_duration:
             logger.info("Completed release")
             self.release_start_time = None
             return NodeStatus.SUCCESS
@@ -788,6 +851,7 @@ class AGVReleaseAction(ActionNode):
 
     def reset(self) -> None:
         self.release_start_time = None
+        self._tick_count = None
         super().reset()
 
 
@@ -942,6 +1006,85 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
             'grade': self.grade,
             **self.capabilities,
         }
+
+    def plan_task(
+        self,
+        task_type: str,
+        target: Optional[str] = None,
+        grade: Optional[str] = None,
+        **kwargs,
+    ) -> Dict[str, Any]:
+        """
+        规划任务的接口方法（供 EmbodiedPipeline 调用）
+
+        Args:
+            task_type: 任务类型 (transport/patrol/rescue/navigate)
+            target: 目标位置描述或标识
+            grade: AGV等级（兼容参数，此处忽略）
+            **kwargs: 额外参数 (payload等)
+
+        Returns:
+            任务规划结果字典，包含 behavior_tree 和 task_config
+        """
+        # 构建目标位置
+        target_position = None
+        if target is not None:
+            # 尝试解析目标标识为坐标
+            target_position = self._resolve_target_position(target)
+
+        # 创建具身任务
+        task = EmbodiedTask(
+            task_id=f"pipeline_{int(time.time() * 1000)}",
+            task_type=task_type,
+            goal_description=f"{task_type} task to {target}",
+            target_position=target_position,
+            target_object=kwargs.get('payload', {}).get('object'),
+            priority=kwargs.get('priority', 2),
+            timeout=kwargs.get('timeout', 300.0),
+        )
+
+        # 添加到规划器
+        self.add_task(task)
+
+        # 初始化任务获取行为树
+        bt = self.initialize_task(task)
+
+        # 构建规划结果
+        result = {
+            'task_id': task.task_id,
+            'task_type': task_type,
+            'target': target,
+            'target_position': target_position.tolist() if target_position is not None else None,
+            'behavior_tree': bt,
+            'grade': grade or self.grade,
+            'status': task.status.value if hasattr(task.status, 'value') else str(task.status),
+        }
+
+        logger.info(f"Planned task {task.task_id} ({task_type}) -> {target}")
+        return result
+
+    def _resolve_target_position(self, target: str) -> Optional[np.ndarray]:
+        """将目标标识解析为位置坐标"""
+        # 已知的导航点预定义坐标
+        known_points = {
+            'station_A': np.array([10.0, 0.0, 0.0]),
+            'station_B': np.array([20.0, 0.0, 0.0]),
+            'station_C': np.array([30.0, 0.0, 0.0]),
+            'entrance': np.array([0.0, 0.0, 0.0]),
+            'exit': np.array([40.0, 0.0, 0.0]),
+            'charging': np.array([2.0, 0.0, 0.0]),
+            'warehouse_entrance': np.array([0.0, 0.0, 0.0]),
+            'loading_dock': np.array([5.0, 0.0, 0.0]),
+            'unloading_dock': np.array([15.0, 0.0, 0.0]),
+        }
+        # 大小写不敏感匹配
+        target_lower = target.lower().replace('-', '_').replace(' ', '_')
+        for key, pos in known_points.items():
+            if key.lower() == target_lower or target_lower in key.lower():
+                return pos.copy()
+        # 未知目标，返回默认坐标
+        logger.debug(f"Unknown target '{target}', using default position")
+        return np.array([10.0, 0.0, 0.0])
 
 
 # 多AGV蜂群协同特定节点

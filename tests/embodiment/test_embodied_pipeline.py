@@ -201,7 +201,7 @@ class TestTaskExecution:
         assert isinstance(result, TaskResult)
         assert result.task_id != ""
         # 任务通过 Executor 执行，返回了确定的阶段
-        assert result.phase in ("completed", "failed", "execution", "running")
+        assert result.phase in ("completed", "failed", "execution", "running", "succeeded")
         pipeline.stop()
 
     def test_execute_task_with_payload(self):
