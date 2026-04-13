@@ -55,6 +55,12 @@ from .simulation_enhancement import (
     EnvironmentGenerator,
     WarehouseSceneGenerator,
     EmbodiedSimulationEnhancer,
+    DynamicObstacleGenerator,
+    MultiAGVSimulationEnhancer,
+    WeatherType,
+    WeatherEffect,
+    Obstacle,
+    WEATHER_EFFECTS,
 )
 
 from .real_agv_interface import (
