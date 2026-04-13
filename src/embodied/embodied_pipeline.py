@@ -179,7 +179,7 @@ class EmbodiedPipeline:
         self.config = config or PipelineConfig(
             grade=grade,
             mode=mode,
-            scene_type=scene_type,
+            scene_type=scene_type.upper() if isinstance(scene_type, str) else scene_type,
         )
         self._state = PipelineState.IDLE
         self._lock = threading.Lock()
@@ -722,6 +722,184 @@ class EmbodiedPipeline:
             f"scene={self.config.scene_type}, "
             f"state={self._state.value})"
         )
+
+    # ----------------------------------------------------------
+    # 状态持久化与恢复
+    # ----------------------------------------------------------
+
+    def save_state(self) -> Dict[str, Any]:
+        """
+        保存 Pipeline 完整状态（用于故障恢复和检查点）
+
+        Returns:
+            包含所有可序列化状态的字典
+        """
+        with self._lock:
+            state = {
+                'version': '1.0',
+                'timestamp': time.time(),
+                'pipeline': {
+                    'grade': self.config.grade,
+                    'mode': self.config.mode.value,
+                    'scene_type': self.config.scene_type,
+                    'state': self._state.value,
+                    'uptime_s': self.uptime_s,
+                    'error_message': self._error_message,
+                },
+                'task_queue': [
+                    {
+                        'task_id': r.task_id,
+                        'task_type': r.task_type,
+                        'target': r.target,
+                        'priority': r.priority,
+                        'deadline': r.deadline,
+                    }
+                    for r in self._task_queue
+                ],
+                'active_tasks': [
+                    {
+                        'task_id': r.task_id,
+                        'task_type': r.task_type,
+                        'target': r.target,
+                        'priority': r.priority,
+                    }
+                    for r in self._active_tasks.values()
+                ],
+                'completed_tasks': [
+                    {
+                        'task_id': r.task_id,
+                        'success': r.success,
+                        'duration_ms': r.duration_ms,
+                        'phase': r.phase,
+                    }
+                    for r in self._completed_tasks
+                ],
+            }
+            return state
+
+    def restore_state(self, state: Dict[str, Any]) -> bool:
+        """
+        从保存的状态恢复 Pipeline
+
+        Args:
+            state: save_state() 返回的状态字典
+
+        Returns:
+            是否恢复成功
+        """
+        try:
+            with self._lock:
+                self._task_queue.clear()
+                for item in state.get('task_queue', []):
+                    req = TaskRequest(
+                        task_type=item['task_type'],
+                        task_id=item.get('task_id', ''),
+                        target=item.get('target'),
+                        priority=item.get('priority', 2),
+                        deadline=item.get('deadline'),
+                    )
+                    self._task_queue.append(req)
+                self._completed_tasks.clear()
+                for item in state.get('completed_tasks', [])[-100:]:
+                    result = TaskResult(
+                        task_id=item['task_id'],
+                        success=item['success'],
+                        duration_ms=item['duration_ms'],
+                        phase=item['phase'],
+                    )
+                    self._completed_tasks.append(result)
+                logger.info(
+                    f"Pipeline state restored: "
+                    f"{len(self._task_queue)} queued, "
+                    f"{len(self._completed_tasks)} completed"
+                )
+                return True
+        except Exception as e:
+            logger.error(f"Failed to restore pipeline state: {e}")
+            return False
+
+    def export_checkpoint(self, path: str) -> bool:
+        """导出检查点到文件 (.json)"""
+        import json
+        try:
+            state = self.save_state()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(state, f, indent=2, default=str)
+            logger.info(f"Checkpoint exported to {path}")
+            return True
+        except Exception as e:
+            logger.error(f"Failed to export checkpoint: {e}")
+            return False
+
+    @classmethod
+    def import_checkpoint(cls, path: str, **kwargs) -> Optional['EmbodiedPipeline']:
+        """从检查点文件恢复并重建 Pipeline"""
+        import json
+        try:
+            with open(path, 'r', encoding='utf-8') as f:
+                state = json.load(f)
+            p_state = state.get('pipeline', {})
+            pipeline = cls(
+                grade=p_state.get('grade', 'M'),
+                mode=PipelineMode(p_state.get('mode', 'simulation')),
+                scene_type=p_state.get('scene_type', 'WAREHOUSE'),
+                **kwargs,
+            )
+            pipeline.restore_state(state)
+            logger.info(f"Checkpoint imported from {path}")
+            return pipeline
+        except Exception as e:
+            logger.error(f"Failed to import checkpoint: {e}")
+            return None
+
+    def reset_health(self) -> None:
+        """重置错误状态，恢复到 READY"""
+        with self._lock:
+            self._error_message = None
+            if self._state == PipelineState.ERROR:
+                self._set_state(PipelineState.READY)
+            logger.info("Pipeline health reset")
+
+    def get_health_report(self) -> Dict[str, Any]:
+        """获取 Pipeline 健康状态报告"""
+        report = {
+            'timestamp': time.time(),
+            'pipeline_state': self._state.value,
+            'uptime_s': round(self.uptime_s, 1),
+            'error': self._error_message,
+            'modules': {},
+            'tasks': {
+                'queued': len(self._task_queue),
+                'active': len(self._active_tasks),
+                'completed': len(self._completed_tasks),
+                'success_rate': self._calc_success_rate(),
+            },
+            'performance': {
+                'avg_task_duration_ms': self._calc_avg_task_duration(),
+            },
+        }
+        module_checks = [
+            ('behavior_tree', self._bt_planner),
+            ('scene_intelligence', self._scene_intel),
+            ('skill_registry', self._skill_registry),
+            ('memory', self._memory_mgr),
+            ('task_executor', self._task_executor),
+            ('simulation', self._sim_enhancer),
+        ]
+        for name, module in module_checks:
+            report['modules'][name] = 'available' if module is not None else 'unavailable'
+        return report
+
+    def _calc_success_rate(self) -> float:
+        if not self._completed_tasks:
+            return 0.0
+        successes = sum(1 for t in self._completed_tasks if t.success)
+        return successes / len(self._completed_tasks)
+
+    def _calc_avg_task_duration(self) -> float:
+        if not self._completed_tasks:
+            return 0.0
+        return sum(t.duration_ms for t in self._completed_tasks) / len(self._completed_tasks)
 
 
 # ============================================================
