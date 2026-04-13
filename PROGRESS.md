@@ -4,6 +4,37 @@
 
 ---
 
+## v3.5.0 (2026-04-13 19:55) - 具身智能统一Pipeline + 新增46项测试
+### 本次更新
+✅ **具身智能统一Pipeline** (`src/embodied/embodied_pipeline.py`, ~650行):
+   - `EmbodiedPipeline`: 一体化具身智能执行管道，集成所有具身模块
+   - `PipelineMode`: 三种运行模式 (SIMULATION/HARDWARE_IN_LOOP/FULL_PHYSICAL)
+   - `PipelineState`: Pipeline 状态机 (IDLE/INITIALIZING/READY/RUNNING/PAUSED/ERROR/STOPPED)
+   - `PipelineConfig`: 统一配置类 (AGV等级/模块开关/仿真参数)
+   - `TaskRequest`/`TaskResult`: 任务请求与结果数据结构
+   - 模块懒加载: 行为树/场景智能/技能注册表/记忆系统/任务执行器/HIL/仿真增强
+   - 任务执行: 技能匹配 → 行为树规划 → Executor执行 的完整链路
+   - 仿真步骤支持: `run_simulation_step()` 接口
+   - 场景状态查询: `get_scene_state()` 接口
+   - 状态查询: `get_status()` / `get_memory_summary()` / `get_skill_summary()`
+   - 事件订阅系统: 支持 state_changed 等事件回调
+   - 工厂函数: `create_embodied_pipeline()` / `create_pipeline_from_config()`
+   - `__init__.py` 导出 Pipeline 相关类型，版本升至 v3.5.0
+
+✅ **新增46项测试，全部通过** (430项总测试全部通过):
+   - `test_embodied_pipeline.py`: 46项 (生命周期/工厂函数/任务执行/配置/状态查询/仿真/事件订阅/集成场景)
+
+✅ **其他改进**:
+   - 修复 `_init_memory` 传参错误 (`enable_consolidation` → `config={}`)
+   - 修复 `_init_task_executor` 传参错误 (`enable_skill_registry` → 直接 kwarg)
+   - 修复 `_init_simulation` 传参错误 (`physics_timestep` → `agv_grade`)
+   - 修复 `TaskRequest` dataclass 字段顺序问题 (default/non-default 冲突)
+   - 修复 `ExecutionPhase.UNKNOWN` 不存在的兼容性问题
+
+📊 整体研发进度: ~99%
+
+---
+
 ## v3.4.0 (2026-04-13 18:50) - 具身技能生命周期管理系统 + 模块集成修复 + 新增40项测试
 ### 本次更新
 ✅ **具身技能生命周期管理系统** (`src/embodied/embodied_skill.py`, ~520行):

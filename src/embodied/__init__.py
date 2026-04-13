@@ -168,6 +168,17 @@ from .hil_testing import (
     run_hil_validation,
 )
 
+from .embodied_pipeline import (
+    PipelineMode,
+    PipelineState,
+    PipelineConfig,
+    TaskRequest,
+    TaskResult,
+    EmbodiedPipeline,
+    create_embodied_pipeline,
+    create_pipeline_from_config,
+)
+
 from .embodied_skill import (
     SkillStatus,
     SkillCategory,
@@ -329,6 +340,15 @@ __all__ = [
     'EmbodiedSkillRegistry',
     'get_global_skill_registry',
     'create_skill_registry',
+    # 具身智能统一Pipeline
+    'PipelineMode',
+    'PipelineState',
+    'PipelineConfig',
+    'TaskRequest',
+    'TaskResult',
+    'EmbodiedPipeline',
+    'create_embodied_pipeline',
+    'create_pipeline_from_config',
 ]
 
-__version__ = "2.4.0"
+__version__ = "3.5.0"
