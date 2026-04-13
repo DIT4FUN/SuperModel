@@ -26,6 +26,18 @@ from .working_memory import WorkingMemory
 from .memory_store import MemoryStore
 from .memory_retrieval import MemoryRetrieval
 from .memory_consolidation import MemoryConsolidation
+from .embodied_long_term_memory import (
+    EmbodiedExperienceType,
+    EmbodiedMemoryTag,
+    EmbodiedExperience,
+    SceneMemoryIndex,
+    SkillMemoryRecord,
+    AGVGradeAwareMemory,
+    ExperienceCompressor,
+    MemoryBasedTaskPredictor,
+    EmbodiedLongTermMemory,
+    create_embodied_long_term_memory,
+)
 
 __all__ = [
     'LongTermMemory',
@@ -37,4 +49,15 @@ __all__ = [
     'MemoryStore',
     'MemoryRetrieval',
     'MemoryConsolidation',
+    # 具身长期记忆
+    'EmbodiedExperienceType',
+    'EmbodiedMemoryTag',
+    'EmbodiedExperience',
+    'SceneMemoryIndex',
+    'SkillMemoryRecord',
+    'AGVGradeAwareMemory',
+    'ExperienceCompressor',
+    'MemoryBasedTaskPredictor',
+    'EmbodiedLongTermMemory',
+    'create_embodied_long_term_memory',
 ]

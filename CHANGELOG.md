@@ -1,3 +1,21 @@
+## v3.9.2 (2026-04-14) [EMBODIED LONG-TERM MEMORY SYSTEM]
+### Core Highlights
+- ✅ **39 New Tests Passing** (`tests/test_embodied_long_term_memory.py`)
+- 🧠 **Embodied Long-Term Memory System** (`src/memory/embodied_long_term_memory.py`, 975 lines):
+  - EmbodiedExperience: 具身经验条目 (场景/动作序列/结果评估/AGV等级)
+  - SceneMemoryIndex: 场景-记忆关联索引 (按场景/标签/经验类型快速检索)
+  - SkillMemoryRecord: 技能记忆记录 (执行统计/学习曲线/掌握度评估)
+  - AGVGradeAwareMemory: AGV等级感知记忆 (跨等级经验迁移支持)
+  - ExperienceCompressor: 经验压缩器 (相似经验合并/存储优化)
+  - MemoryBasedTaskPredictor: 基于记忆的任务结果预测器 (成功率预测/置信度/参考经验)
+  - EmbodiedLongTermMemory: 具身长期记忆系统完整实现 (经验存储/检索/技能记忆/知识导出)
+- 📦 **Memory Module Integration** (`src/memory/__init__.py`):
+  - 新增 embodied_long_term_memory 模块导出
+  - 全量符号导出 (EmbodiedExperienceType, EmbodiedExperience, SceneMemoryIndex, etc.)
+- 🔢 **全量测试统计**: embodied 1155项 + 新增39项 = 1194项全部通过
+
+---
+
 ## v3.9.1 (2026-04-14) [META-COGNITION + E2E SCENARIO TESTS]
 ### Core Highlights
 - ✅ **264 New Tests Passing** (total: ~1235 tests in pytest suite)
