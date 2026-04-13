@@ -359,6 +359,27 @@ __all__ = [
     'create_pipeline_from_config',
     'ErrorRecoveryPolicy',
     'DiagnosticCollector',
+    # Vision-Language-Action 端到端
+    'VLAActionSpace',
+    'VLAGrade',
+    'VLAAction',
+    'VLAPerceptionFrame',
+    'VLAInput',
+    'VLAOutput',
+    'VisionEncoder',
+    'LanguageEncoder',
+    'ActionDecoder',
+    'VLAModel',
+    'VLAConfig',
+    'create_vla_model',
+    'load_vla_model',
+    # VLA推理管道
+    'InferencePolicy',
+    'ActionSmoothingMode',
+    'VLAPipelineConfig',
+    'ActionSmoother',
+    'VLAInferencePipeline',
+    'create_vla_inference_pipeline',
 ]
 
 
@@ -410,4 +431,31 @@ from .federated_learning import (
     create_federated_learning_system,
 )
 
-__version__ = "3.9.4"
+# Vision-Language-Action 端到端模型
+from .vla_model import (
+    VLAActionSpace,
+    VLAGrade,
+    VLAAction,
+    VLAPerceptionFrame,
+    VLAInput,
+    VLAOutput,
+    VisionEncoder,
+    LanguageEncoder,
+    ActionDecoder,
+    VLAModel,
+    VLAConfig,
+    create_vla_model,
+    load_vla_model,
+)
+
+# VLA推理管道
+from .vla_inference import (
+    InferencePolicy,
+    ActionSmoothingMode,
+    VLAPipelineConfig,
+    ActionSmoother,
+    VLAInferencePipeline,
+    create_vla_inference_pipeline,
+)
+
+__version__ = "3.10.0"
