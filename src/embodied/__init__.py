@@ -144,6 +144,42 @@ from .memory_integration import (
     connect_to_long_term_memory,
 )
 
+from .collaborative_slam import (
+    MapQuality,
+    FeaturePoint,
+    MapFragment,
+    PoseConstraint,
+    CollaborativeSlamAgent,
+    MapFusionEngine,
+    CollaborativeSlamCoordinator,
+    get_collaborative_slam_coordinator,
+)
+
+from .hil_testing import (
+    HILTestStage,
+    HILTestCase,
+    HILTestResult,
+    HILTestReport,
+    SensorReplay,
+    CANBusHILSimulator,
+    ControlCommandValidator,
+    SensorActuatorHILLoop,
+    HILTestRunner,
+    run_hil_validation,
+)
+
+from .embodied_skill import (
+    SkillStatus,
+    SkillCategory,
+    SkillMetrics,
+    SkillVersion,
+    EmbodiedSkillDefinition,
+    EmbodiedSkill,
+    EmbodiedSkillRegistry,
+    get_global_skill_registry,
+    create_skill_registry,
+)
+
 __all__ = [
     # 枚举
     'NodeStatus',
@@ -280,10 +316,19 @@ __all__ = [
     'create_executor_from_config',
     # 具身记忆集成
     'EmbodiedMemoryEntry',
-    'EmbodiedSkill',
     'EmbodiedMemoryManager',
     'create_embodied_memory_manager',
     'connect_to_long_term_memory',
+    # 具身技能管理
+    'SkillStatus',
+    'SkillCategory',
+    'SkillMetrics',
+    'SkillVersion',
+    'EmbodiedSkillDefinition',
+    'EmbodiedSkill',
+    'EmbodiedSkillRegistry',
+    'get_global_skill_registry',
+    'create_skill_registry',
 ]
 
 __version__ = "2.4.0"
