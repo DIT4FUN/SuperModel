@@ -351,4 +351,53 @@ __all__ = [
     'create_pipeline_from_config',
 ]
 
-__version__ = "3.5.0"
+
+# 医疗场景化具身智能
+from .healthcare_scene import (
+    HealthcareZone,
+    HealthcareRiskLevel,
+    PatientCallPriority,
+    MedicationType,
+    SpecimenCategory,
+    HealthcareTask,
+    HealthcareTaskLibrary,
+    HealthcareSceneController,
+    InfectionControlMonitor,
+    PatientCallHandler,
+    MedicationDeliveryPlanner,
+    SpecimenTransportManager,
+    get_healthcare_scene_controller,
+)
+
+# 工业制造场景化具身智能
+from .industrial_scene import (
+    ProductionLineType,
+    WorkstationType,
+    MaterialType,
+    QualityGrade,
+    ToolType,
+    ProductionTask,
+    ProductionLineController,
+    QualityInspectionStation,
+    PredictiveMaintenanceMonitor,
+    ToolManagementSystem,
+    SafetyMonitoringSystem,
+    MaterialFlowCoordinator,
+    get_industrial_scene_controller,
+)
+
+# 联邦学习多AGV协同
+from .federated_learning import (
+    FLClientState,
+    FLRoundResult,
+    LocalTrainingResult,
+    FederatedClient,
+    FederatedServer,
+    DifferentialPrivacy,
+    ByzantineFilter,
+    AdaptiveAggregator,
+    FederatedLearningCoordinator,
+    create_federated_learning_system,
+)
+
+__version__ = "3.6.0"

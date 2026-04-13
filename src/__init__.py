@@ -13,7 +13,7 @@ SuperModel - 超模态机器人具身智能大脑
 - memory: 长期记忆系统
 """
 
-__version__ = "2.88.0"
+__version__ = "2.89.0"
 __author__ = "DIT4FUN"
 
 from .sensors import (
