@@ -68,6 +68,13 @@ class MemoryEntry:
             "metadata": self.metadata
         }
 
+    @property
+    def summary(self) -> str:
+        """获取记忆摘要（便捷属性）"""
+        if isinstance(self.content, dict):
+            return self.content.get("summary", "") or self.content.get("name", "")
+        return str(self.content)[:200]
+
     @classmethod
     def from_dict(cls, data: Dict) -> 'MemoryEntry':
         """从字典反序列化"""
@@ -319,3 +326,173 @@ class LongTermMemory:
         """清空所有记忆（谨慎使用）"""
         for memory_id in list(self.memories.keys()):
             self._delete_memory(memory_id)
+
+    # ==================== 便捷方法 ====================
+
+    def store_episode(
+        self,
+        summary: str,
+        context: Dict[str, Any] = None,
+        importance_score: float = 0.5,
+        tags: List[str] = None,
+    ) -> MemoryEntry:
+        """存储情景记忆（便捷方法）"""
+        content = {
+            "summary": summary,
+            "context": context or {},
+            "type": "episode",
+        }
+        memory_id = self.add_memory(
+            memory_type=MemoryType.EPISODIC,
+            content=content,
+            importance=importance_score,
+            tags=tags or [],
+        )
+        return self.get_memory(memory_id)
+
+    def store_knowledge(
+        self,
+        name: str,
+        category: str,
+        description: str = "",
+    ) -> MemoryEntry:
+        """存储语义记忆/知识（便捷方法）"""
+        content = {
+            "name": name,
+            "category": category,
+            "description": description,
+            "type": "knowledge",
+        }
+        memory_id = self.add_memory(
+            memory_type=MemoryType.SEMANTIC,
+            content=content,
+            importance=0.6,
+            tags=[category],
+        )
+        return self.get_memory(memory_id)
+
+    def store_skill(
+        self,
+        name: str,
+        description: str = "",
+        category: str = "general",
+    ) -> MemoryEntry:
+        """存储程序记忆/技能（便捷方法）"""
+        content = {
+            "name": name,
+            "description": description,
+            "category": category,
+            "type": "skill",
+        }
+        memory_id = self.add_memory(
+            memory_type=MemoryType.PROCEDURAL,
+            content=content,
+            importance=0.7,
+            tags=[category],
+        )
+        return self.get_memory(memory_id)
+
+    def retrieve(self, query: str, limit: int = 10) -> List[MemoryEntry]:
+        """统一检索接口（按关键词简单过滤）"""
+        query_lower = query.lower()
+        results = []
+        for memory in self.memories.values():
+            content_str = str(memory.content).lower()
+            if query_lower in content_str:
+                results.append(memory)
+            if len(results) >= limit:
+                break
+        return results
+
+    def learn_from_interaction(
+        self,
+        interaction_type: str,
+        summary: str,
+        context: Dict[str, Any] = None,
+        actions: List[Dict[str, Any]] = None,
+        outcome: Dict[str, Any] = None,
+        success: bool = True,
+        tags: List[str] = None,
+    ) -> MemoryEntry:
+        """从交互中学习（存储情景记忆的快捷方法）"""
+        content = {
+            "interaction_type": interaction_type,
+            "summary": summary,
+            "context": context or {},
+            "actions": actions or [],
+            "outcome": outcome or {},
+            "success": success,
+            "type": "interaction",
+        }
+        importance = 0.8 if success else 0.9
+        memory_id = self.add_memory(
+            memory_type=MemoryType.EPISODIC,
+            content=content,
+            importance=importance,
+            tags=tags or [interaction_type],
+        )
+        return self.get_memory(memory_id)
+
+    def get_status(self) -> Dict[str, Any]:
+        """获取记忆系统状态（包含各子类型统计）"""
+        stats = self.get_memory_stats()
+        episodic_memories = [m for m in self.memories.values() if m.memory_type == MemoryType.EPISODIC]
+        semantic_memories = [m for m in self.memories.values() if m.memory_type == MemoryType.SEMANTIC]
+        procedural_memories = [m for m in self.memories.values() if m.memory_type == MemoryType.PROCEDURAL]
+        return {
+            "episodic": {
+                "count": len(episodic_memories),
+                "recent": [m.content.get("summary", str(m.content)) for m in list(episodic_memories)[-3:]],
+            },
+            "semantic": {
+                "count": len(semantic_memories),
+                "recent": [m.content.get("name", str(m.content)) for m in list(semantic_memories)[-3:]],
+            },
+            "procedural": {
+                "count": len(procedural_memories),
+                "recent": [m.content.get("name", str(m.content)) for m in list(procedural_memories)[-3:]],
+            },
+            "total": stats["total_memories"],
+            "storage_path": stats["storage_path"],
+        }
+
+    def get_memory_summary(self) -> str:
+        """获取记忆摘要（可读格式）"""
+        episodic = sum(1 for m in self.memories.values() if m.memory_type == MemoryType.EPISODIC)
+        semantic = sum(1 for m in self.memories.values() if m.memory_type == MemoryType.SEMANTIC)
+        procedural = sum(1 for m in self.memories.values() if m.memory_type == MemoryType.PROCEDURAL)
+        total = len(self.memories)
+        return (
+            f"记忆系统摘要: 共{total}条记忆\n"
+            f"- 情景记忆: {episodic}条\n"
+            f"- 语义记忆: {semantic}条\n"
+            f"- 程序记忆: {procedural}条"
+        )
+
+    def get_working_summary(self) -> Dict[str, Any]:
+        """获取工作记忆状态摘要（与长期记忆配合使用）"""
+        return {
+            "total_memories": len(self.memories),
+            "recent_memories": [
+                {"id": m.memory_id, "type": m.memory_type.value, "summary": m.summary}
+                for m in list(self.memories.values())[-5:]
+            ],
+            "timestamp": time.time(),
+        }
+
+    def consolidate(self) -> Dict[str, Any]:
+        """执行记忆整合/巩固（调用遗忘机制）"""
+        before_count = len(self.memories)
+        self._forget_old_memories()
+        after_count = len(self.memories)
+        return {
+            "before_count": before_count,
+            "after_count": after_count,
+            "consolidated_count": before_count - after_count,
+            "timestamp": time.time(),
+        }
+
+    def close(self):
+        """关闭记忆系统（持久化所有内存中的记忆）"""
+        for memory in self.memories.values():
+            self._save_memory(memory)

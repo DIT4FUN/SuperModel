@@ -56,7 +56,7 @@ def working_memory():
 
 @pytest.fixture
 def long_term_memory(temp_store_path):
-    return LongTermMemory(config=MemoryConfig(store_path=temp_store_path))
+    return LongTermMemory(storage_path=temp_store_path)
 
 
 # ==================== 情景记忆测试 ====================
@@ -346,7 +346,7 @@ class TestLongTermMemory:
     
     def test_initialization(self, temp_store_path):
         """测试初始化"""
-        ltm = LongTermMemory(config=MemoryConfig(store_path=temp_store_path))
+        ltm = LongTermMemory(storage_path=temp_store_path)
         assert ltm is not None
     
     def test_store_episode(self, long_term_memory):
@@ -434,7 +434,7 @@ class TestMemoryIntegration:
     
     def test_full_workflow(self, temp_store_path):
         """测试完整工作流"""
-        ltm = LongTermMemory(config=MemoryConfig(store_path=temp_store_path))
+        ltm = LongTermMemory(storage_path=temp_store_path)
         
         # 1. 从交互中学习
         ep = ltm.learn_from_interaction(
