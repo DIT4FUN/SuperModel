@@ -233,6 +233,25 @@ __all__ = [
     'AGVSwarmMember',
     'SwarmConflict',
     'AGVSwarmCoordinator',
+    # 协同SLAM
+    'MapFragment',
+    'FeaturePoint',
+    'PoseConstraint',
+    'CollaborativeSlamAgent',
+    'MapFusionEngine',
+    'CollaborativeSlamCoordinator',
+    'get_collaborative_slam_coordinator',
+    # HIL硬件在环测试
+    'HILTestStage',
+    'HILTestCase',
+    'HILTestResult',
+    'HILTestReport',
+    'SensorReplay',
+    'CANBusHILSimulator',
+    'ControlCommandValidator',
+    'SensorActuatorHILLoop',
+    'HILTestRunner',
+    'run_hil_validation',
 ]
 
-__version__ = "2.2.0"
+__version__ = "2.3.0"
