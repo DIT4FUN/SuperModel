@@ -4,6 +4,44 @@
 
 ---
 
+## v3.9.2 (2026-04-14 05:00) - 具身长期记忆系统 + 39项新测试
+
+### 本次更新
+
+✅ **具身长期记忆系统** (`src/memory/embodied_long_term_memory.py`, 975行):
+   - `EmbodiedExperience`: 具身经验条目 (场景上下文/动作序列/结果评估/AGV等级/学习模式)
+   - `SceneMemoryIndex`: 场景-记忆关联索引 (按场景/标签/经验类型快速检索)
+   - `SkillMemoryRecord`: 技能记忆记录 (执行统计/学习曲线/掌握度评估/遗忘检测)
+   - `AGVGradeAwareMemory`: AGV等级感知记忆 (跨等级经验迁移效益计算)
+   - `ExperienceCompressor`: 经验压缩器 (相似经验合并/存储优化/知识蒸馏)
+   - `MemoryBasedTaskPredictor`: 基于记忆的任务结果预测器 (成功率/置信度/失败原因)
+   - `EmbodiedLongTermMemory`: 完整具身长期记忆系统 (经验存储/检索/技能记忆/预测/知识导出)
+
+✅ **具身长期记忆测试** (`tests/test_embodied_long_term_memory.py`, 39项):
+   - `TestEmbodiedExperience`: 经验数据类序列化/反序列化/奖励计算/年龄计算
+   - `TestSceneMemoryIndex`: 场景检索/标签过滤/经验类型过滤/统计/容量限制
+   - `TestSkillMemoryRecord`: 技能记录更新/掌握度判定/遗忘检测/学习曲线/序列化
+   - `TestAGVGradeAwareMemory`: 等级感知检索/迁移效益计算
+   - `TestExperienceCompressor`: 相似度计算/经验压缩/单经验处理
+   - `TestMemoryBasedTaskPredictor`: 成功率预测/无历史默认/失败原因统计
+   - `TestEmbodiedLongTermMemory`: 完整集成测试 (存储/检索/技能/预测/导出/等级/压缩)
+   - `TestGlobalInstance`: 全局工厂函数单例测试
+   - **39项全部通过** ✅
+
+✅ **Memory模块集成** (`src/memory/__init__.py`):
+   - 新增 `embodied_long_term_memory` 模块全部符号导出
+   - 版本更新: embodied v3.9.1 → v3.9.2, src v2.89.0 → v2.90.0
+
+✅ **测试状态**: embodied 1155项全部通过 + 39项新测试 = **1194项** pytest 100%通过
+
+✅ **GitHub**: 已提交 `4284aa5` (v3.9.2)
+
+📊 整体研发进度: ~96%
+已完成: 基础架构/视觉/听觉/触觉/力觉/IMU/跨模态融合/核心目标/自主学习/控制模块/五级AGV规格/仿真环境/测试用例/协同SLAM/HIL测试/具身Pipeline/技能注册表/记忆系统/场景智能/联邦学习/元认知模块/具身长期记忆系统
+待推进: 视觉-语言-动作端到端/超模态大模型集成
+
+---
+
 ## v3.8.3 (2026-04-14 01:30) - 部署模块测试 + pytest覆盖率完整化 + 96项新测试
 
 ### 本次更新
