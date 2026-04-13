@@ -4,6 +4,33 @@
 
 ---
 
+## v3.4.0 (2026-04-13 18:50) - 具身技能生命周期管理系统 + 模块集成修复 + 新增40项测试
+### 本次更新
+✅ **具身技能生命周期管理系统** (`src/embodied/embodied_skill.py`, ~520行):
+   - `EmbodiedSkillRegistry`: 技能注册表，支持场景/类别索引检索
+   - `EmbodiedSkill`: 技能实例，含可靠性评分与自动状态转换 (Experimental→Learning→Active→Mastered)
+   - `SkillMetrics`: 执行指标追踪（成功率/均续时间/连续成功失败计数）
+   - `EmbodiedSkillDefinition`: 技能定义元数据
+   - `SkillCategory` / `SkillStatus`: 枚举定义（6种类别/5种状态）
+   - 预注册 14 种标准 AGV 技能（导航/操作/协同/安全/维护/感知）
+   - 覆盖 5 种场景：仓库/医院/工厂/餐厅/户外
+   - 技能匹配器：`get_best_skill_for_task()` 按可靠性自动排序
+   - 全局单例：`get_global_skill_registry()` / `create_skill_registry()`
+
+✅ **`__init__.py` 修复**:
+   - 补充 `collaborative_slam` 模块导入（MapFragment/CollaborativeSlamAgent/MapFusionEngine等）
+   - 补充 `hil_testing` 模块导入（HILTestStage/Result/Report/SensorReplay等）
+   - 修复 __all__ 中声明但未导入的 20+ 项符号
+   - 补充 embodied_skill 模块导出
+
+✅ **新增40项测试，全部通过** (348项总测试全部通过):
+   - `test_embodied_skill.py`: 25项 (SkillMetrics/Definition/Skill/Registry/场景匹配/全局单例)
+   - `test_embodied_integration.py`: 15项 (行为树+执行器+技能注册表+记忆系统端到端)
+
+📊 整体研发进度: ~98%
+
+---
+
 ## v3.3.0 (2026-04-13 18:05) - 具身任务执行器 + 记忆系统集成 + 新增59项测试
 ### 本次更新
 ✅ **具身任务执行器** (`src/embodied/task_executor.py`, ~650行):
