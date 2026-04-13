@@ -1,3 +1,23 @@
+## v3.1.2 (2026-04-13) [EMBODY INTEGRATION TESTS + REAL AGV ADAPTER]
+### Core Highlights
+- ✅ **193 Tests Passing** (up from 137 base + 53 in v3.1.1 = 190)
+- 🚀 **Real AGV Hardware Interface Tests** (`test_real_agv_integration.py`, 38 test cases)
+  - AGVHardwareInterface / AGVInterface 完整测试
+  - 通信协议 (UART/CAN/RS485/Ethernet)
+  - 电机控制 (速度/位置/电流环)
+  - 安全特性 (急停/碰撞检测/电子围栏)
+  - 状态估计 (里程计/Odometry/IMU融合)
+  - AGV五级规格适配 (S/M/L/XL/XXL)
+  - 仿真集成测试
+- 🤖 **Swarm Behavior Tree Integration Tests** (`test_swarm_behavior_integration.py`, 23 test cases)
+  - 行为树+蜂群协调器全链路集成
+  - 编队控制 (LINE/RECTANGLE/DIAMOND/WEDGE)
+  - 市场拍卖机制 (MarketAuctionAllocator)
+  - 碰撞规避 (ORCA/路径重规划)
+  - 动态任务重分配
+  - 仿真集成性能测试
+- 🧪 **Test Coverage**: 76 new tests for embodied intelligence integration
+
 ## v3.1.0 (2026-04-13) [ENHANCED EMBODY INTELLIGENCE RELEASE]
 ### Core Highlights
 - ✅ **100% Test Pass Rate**: 2787 total tests passed, 16 skipped (optional simulation dependencies), 0 failures, 60 subtests all passed, execution time 87.76s
