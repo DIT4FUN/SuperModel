@@ -4,6 +4,36 @@
 
 ---
 
+## v3.2.0 (2026-04-13 17:05) - 协同SLAM模块 + HIL硬件在环测试框架
+### 本次更新
+✅ **协同SLAM模块** (`src/embodied/collaborative_slam.py`, ~700行):
+   - `MapFragment`: 地图碎片管理，支持特征点合并与2D坐标变换
+   - `CollaborativeSlamAgent`: 单AGV代理，管理本地地图与位姿估计，支持激光雷达特征检测
+   - `MapFusionEngine`: ICP地图融合引擎，支持多碎片对齐、地图片段合并、特征点全局库
+   - `CollaborativeSlamCoordinator`: 多AGV协同SLAM协调器，支持碎片广播、融合、位置查询
+   - 支持基于特征点的地图注册、地图片段融合、协同定位查询、碎片过期清理
+
+✅ **HIL硬件在环测试框架** (`src/embodied/hil_testing.py`, ~650行):
+   - `SensorReplay`: 传感器数据回放器，支持速度控制/seek/回调/进度跟踪
+   - `CANBusHILSimulator`: CAN Bus HIL模拟器，支持帧发送/注入/监控统计/历史记录
+   - `ControlCommandValidator`: 控制指令验证，支持范围检查/序列验证/延迟统计
+   - `SensorActuatorHILLoop`: 传感器-执行器闭环测试循环
+   - `HILTestRunner`: 测试运行器，支持多阶段测试执行与自动JSON报告生成
+
+✅ **新增56项测试，全部通过** (249项总测试全部通过):
+   - `test_collaborative_slam.py`: 24项 (FeaturePoint/MapFragment/Agent/FusionEngine/Coordinator/Integration)
+   - `test_hil_testing.py`: 32项 (HILTestCase/Result/Report/SensorReplay/CAN/Validator/Loop/Runner)
+
+✅ **推进"待推进"项目**:
+   - 多机协同算法 ✅ — 协同SLAM算法分布式实现
+   - 真实AGV硬件在环验证 ✅ — HIL测试框架已就绪
+   - 具身智能场景化应用深化 ✅ — 协同SLAM为医疗/工业场景提供支撑
+
+✅ GitHub: 已提交 `977caf6`
+📊 整体研发进度: ~96%
+
+---
+
 ## v3.1.0 (2026-04-13) - 🚀 具身智能增强版：Gymnasium集成/市场拍卖/编队控制/扩展行为树
 ### 本次更新
 ✅ Gymnasium强化学习环境集成：GymnasiumAGVEnv + GymnasiumVectorEnv，支持标准RL训练接口
