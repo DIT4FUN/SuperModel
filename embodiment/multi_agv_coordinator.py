@@ -148,8 +148,52 @@ class MultiAGVCoordinator:
             subtasks.append(subtask)
         return subtasks
 
-    def register_agv(self, agv_id: str, *args, **kwargs) -> Dict:
-        """测试兼容接口：注册AGV"""
+    def register_agv(self, agv_id: str | int | Dict | AGVInfo = None, *args, **kwargs) -> Dict:
+        """测试兼容接口：注册AGV
+        支持: register_agv(1), register_agv("agv_1"), register_agv(agv_id=1)
+              register_agv({"agv_id": 1, ...}) - dict as first positional arg
+              register_agv(agv_info_object) - AGVInfo as first positional arg
+        """
+        import sys
+        sys.stderr.write(f"DEBUG register_agv called: agv_id={agv_id!r}, type={type(agv_id)}, AGVInfo={AGVInfo}\n")
+        # 兼容：如果传入AGVInfo对象作为第一个参数
+        if isinstance(agv_id, AGVInfo):
+            sys.stderr.write(f"DEBUG AGVINFO BRANCH HIT: agv_id.agv_id={agv_id.agv_id}\n")
+            agv_info_obj = agv_id
+            # 直接添加到agvs（保留原始agv_id）
+            self.agvs[agv_info_obj.agv_id] = agv_info_obj
+            # 转换为dict添加到agv_list（保留原始对象引用）
+            dict_repr = {
+                "agv_id": agv_info_obj.agv_id,
+                "_int_id": agv_info_obj.agv_id,
+                "position": (agv_info_obj.current_position[0], agv_info_obj.current_position[1], agv_info_obj.current_theta),
+                "status": agv_info_obj.status,
+                "battery_level": agv_info_obj.battery_level,
+                "_obj": agv_info_obj
+            }
+            self.agv_list.append(dict_repr)
+            return dict_repr
+        
+        # 兼容：如果agv_id在kwargs里，提出来
+        if agv_id is None and "agv_id" in kwargs:
+            agv_id = kwargs.pop("agv_id")
+        if agv_id is None and len(args) > 0:
+            agv_id = args[0]
+        # 兼容：如果传入dict作为第一个参数（测试兼容）
+        if isinstance(agv_id, dict):
+            dict_arg = agv_id
+            agv_id = dict_arg.get("agv_id", len(self.agvs))
+            # 合并dict_arg中的其他字段到kwargs
+            for k, v in dict_arg.items():
+                if k != "agv_id" and k not in kwargs:
+                    kwargs[k] = v
+            if "position" not in kwargs and "current_position" in dict_arg:
+                pos = dict_arg["current_position"]
+                if isinstance(pos, (list, tuple)) and len(pos) >= 2:
+                    kwargs["position"] = pos
+        if agv_id is None:
+            agv_id = len(self.agvs)
+        
         position = kwargs.get("position", (0.0, 0.0, 0.0))
         # 存储所有传入的参数到AGV dict
         agv_info = {
@@ -158,19 +202,29 @@ class MultiAGVCoordinator:
             **kwargs  # 包含type, max_load, capabilities, velocity, status等
         }
         self.agv_list.append(agv_info)
-        # 同时添加到原生AGV dict
+        # 同时添加到原生AGV dict，保留传入的agv_id
         try:
-            agv_id_int = int(agv_id.split("_")[-1]) if "_" in agv_id else int(agv_id)
-        except:
+            if isinstance(agv_id, str) and "_" in agv_id:
+                agv_id_int = int(agv_id.split("_")[-1])
+            else:
+                agv_id_int = int(agv_id)
+        except (ValueError, TypeError):
             agv_id_int = len(self.agvs)
+        # 额外跟踪字符串ID
+        agv_info["_int_id"] = agv_id_int
         status = kwargs.get("status", AGVStatus.IDLE)
         if isinstance(status, str):
-            status = AGVStatus(status.lower())
+            try:
+                status = AGVStatus(status.lower())
+            except ValueError:
+                status = AGVStatus.IDLE
+        # 优先使用传入的整型ID
         self.agvs[agv_id_int] = AGVInfo(
             agv_id=agv_id_int,
             status=status,
             current_position=(position[0], position[1]) if len(position)>=2 else (0.0, 0.0),
-            current_theta=position[2] if len(position)>=3 else 0.0
+            current_theta=position[2] if len(position)>=3 else 0.0,
+            battery_level=kwargs.get("battery_level", 1.0)
         )
         return agv_info
     
@@ -381,8 +435,25 @@ class MultiAGVCoordinator:
     def assign_tasks(self, tasks: Optional[List[Dict]] = None) -> Dict[str, str]:
         """
         分配任务（测试兼容接口）
-        传入任务列表，返回分配结果：{agv_id: task_id}
+        如果传入任务列表，使用传入的任务；否则使用self.tasks中的任务
+        返回分配结果：{agv_id: task_id}
         """
+        # 如果没有传入任务列表，使用self.tasks
+        if tasks is None:
+            if not self.tasks:
+                return {}
+            tasks = []
+            for t in self.tasks.values():
+                task_dict = {
+                    "task_id": t.task_id,
+                    "priority": t.priority,
+                    "pick_location": t.pick_location,
+                    "place_location": t.place_location,
+                    "target_position": t.target_position,
+                    "type": t.task_type
+                }
+                tasks.append(task_dict)
+        
         if not tasks or not self.agv_list:
             return {}
         
@@ -390,37 +461,48 @@ class MultiAGVCoordinator:
         
         # 优先分配高优先级任务
         sorted_tasks = sorted(tasks, key=lambda x: x.get("priority", 5), reverse=True)
-        idle_agvs = [agv for agv in self.agv_list if self.agvs[int(agv["agv_id"].split("_")[-1]) if "_" in agv["agv_id"] else int(agv["agv_id"])].status == AGVStatus.IDLE]
+        
+        # 获取空闲AGV列表（支持多种agv_id格式）
+        idle_agv_ids = self.get_idle_agvs()
         
         for task in sorted_tasks:
-            if not idle_agvs:
+            if not idle_agv_ids:
                 break
             
             # 找到距离任务起点最近的AGV
-            best_agv = None
+            best_agv_id = None
             min_distance = float('inf')
             
-            pick_loc = task.get("pick_location", task.get("start_location", (0.0, 0.0)))
-            if isinstance(pick_loc, (list, tuple)) and len(pick_loc) >= 2:
-                tx, ty = pick_loc[0], pick_loc[1]
+            # 获取任务位置
+            target = task.get("target_position") or task.get("pick_location") or (0.0, 0.0)
+            if isinstance(target, (list, tuple)) and len(target) >= 2:
+                tx, ty = target[0], target[1]
             else:
                 tx, ty = 0.0, 0.0
             
-            for agv in idle_agvs:
-                ax, ay = agv["position"]
+            for agv_id in idle_agv_ids:
+                agv = self.agvs.get(agv_id)
+                if agv is None:
+                    continue
+                ax, ay = agv.current_position
                 distance = ((ax - tx)**2 + (ay - ty)**2)**0.5
                 if distance < min_distance:
                     min_distance = distance
-                    best_agv = agv
+                    best_agv_id = agv_id
             
-            if best_agv:
-                result[best_agv["agv_id"]] = task["task_id"]
-                idle_agvs.remove(best_agv)
+            if best_agv_id is not None:
+                # 查找对应的字符串agv_id（如 "agv_001"）
+                best_agv_str_id = str(best_agv_id)
+                for agv in self.agv_list:
+                    if agv.get("_int_id") == best_agv_id:
+                        best_agv_str_id = agv.get("agv_id")
+                        break
+                result[best_agv_str_id] = task["task_id"]
+                idle_agv_ids.remove(best_agv_id)
                 # 更新AGV状态为忙碌
-                agv_id_int = int(best_agv["agv_id"].split("_")[-1]) if "_" in best_agv["agv_id"] else int(best_agv["agv_id"])
-                if agv_id_int in self.agvs:
-                    self.agvs[agv_id_int].status = AGVStatus.BUSY
-                    self.agvs[agv_id_int].current_task_id = task["task_id"]
+                if best_agv_id in self.agvs:
+                    self.agvs[best_agv_id].status = AGVStatus.BUSY
+                    self.agvs[best_agv_id].current_task_id = task["task_id"]
         
         return result
 
@@ -499,6 +581,13 @@ class MultiAGVCoordinator:
         if agv_id in self.agvs:
             del self.agvs[agv_id]
 
+    def remove_task(self, task_id: str) -> bool:
+        """移除任务"""
+        if task_id in self.tasks:
+            del self.tasks[task_id]
+            return True
+        return False
+
     def add_task(self, task: AGVTask) -> str:
         """添加任务，返回任务ID"""
         self.tasks[task.task_id] = task
@@ -538,6 +627,372 @@ class MultiAGVCoordinator:
     def update_global_obstacles(self, obstacles: List[Tuple[float, float, float]]):
         """更新全局障碍物列表"""
         self.global_obstacles = obstacles
+
+    def get_agv_status(self, agv_id: int | str) -> AGVStatus:
+        """获取指定AGV的状态"""
+        try:
+            agv_id_int = int(agv_id) if isinstance(agv_id, str) else agv_id
+        except (ValueError, TypeError):
+            # 尝试从agv_list匹配
+            for agv in self.agv_list:
+                if agv.get("agv_id") == agv_id:
+                    status = agv.get("status", AGVStatus.IDLE)
+                    if isinstance(status, str):
+                        status = AGVStatus(status.lower())
+                    return status
+            return AGVStatus.IDLE
+        if agv_id_int in self.agvs:
+            return self.agvs[agv_id_int].status
+        return AGVStatus.IDLE
+
+    def get_nearest_agv(self, position: Tuple[float, float], status_filter: AGVStatus = None) -> Optional[int]:
+        """
+        获取最近的AGV
+        status_filter: 如果提供，只返回处于该状态的AGV
+        返回AGV的实际agv_id（不是内部索引）
+        """
+        min_dist = float('inf')
+        nearest_id = None
+        for agv_id, agv in self.agvs.items():
+            if status_filter is not None and agv.status != status_filter:
+                continue
+            dx = agv.current_position[0] - position[0]
+            dy = agv.current_position[1] - position[1]
+            dist = (dx**2 + dy**2)**0.5
+            if dist < min_dist:
+                min_dist = dist
+                nearest_id = agv.agv_id  # Return actual agv_id, not internal index
+        # 如果原生agvs没有，尝试从agv_list匹配
+        if nearest_id is None:
+            for agv in self.agv_list:
+                agv_id_val = agv.get("agv_id")
+                pos = agv.get("position", (0.0, 0.0))
+                status = agv.get("status", AGVStatus.IDLE)
+                if isinstance(status, str):
+                    try:
+                        status = AGVStatus(status.lower())
+                    except ValueError:
+                        status = AGVStatus.IDLE
+                if status_filter is not None and status != status_filter:
+                    continue
+                dx = pos[0] - position[0]
+                dy = pos[1] - position[1]
+                dist = (dx**2 + dy**2)**0.5
+                if dist < min_dist:
+                    min_dist = dist
+                    try:
+                        if isinstance(agv_id_val, str) and "_" in agv_id_val:
+                            nearest_id = int(agv_id_val.split("_")[-1])
+                        else:
+                            nearest_id = int(agv_id_val)
+                    except (ValueError, TypeError):
+                        pass
+        return nearest_id
+
+    def get_idle_agvs(self) -> List[int]:
+        """返回所有空闲AGV的ID列表（从self.agv_list读取以避免重复）"""
+        idle_ids = []
+        seen_int_ids = set()
+        
+        # 首先从agv_list读取（这是主要的数据源）
+        for agv in self.agv_list:
+            agv_id_val = agv.get("agv_id")
+            try:
+                agv_id_int = int(agv_id_val)
+            except (ValueError, TypeError):
+                # 尝试从"agv_N"格式提取
+                if isinstance(agv_id_val, str) and "_" in agv_id_val:
+                    try:
+                        agv_id_int = int(agv_id_val.split("_")[-1])
+                    except (ValueError, TypeError):
+                        continue
+                else:
+                    continue
+            
+            if agv_id_int in seen_int_ids:
+                continue
+            
+            status = agv.get("status", AGVStatus.IDLE)
+            if isinstance(status, str):
+                try:
+                    status = AGVStatus(status.lower())
+                except ValueError:
+                    status = AGVStatus.IDLE
+            
+            if status == AGVStatus.IDLE:
+                idle_ids.append(agv_id_int)
+                seen_int_ids.add(agv_id_int)
+        
+        # 也检查self.agvs中不在agv_list的AGV
+        for agv_id_int, agv in self.agvs.items():
+            if agv_id_int in seen_int_ids:
+                continue
+            if agv.status == AGVStatus.IDLE:
+                idle_ids.append(agv_id_int)
+                seen_int_ids.add(agv_id_int)
+        
+        return idle_ids
+
+    def add_obstacle(self, obstacle: Tuple[float, float, float]):
+        """添加单个障碍物到全局障碍物列表 (x, y, radius)"""
+        if len(obstacle) >= 3:
+            self.global_obstacles.append(obstacle)
+
+    def check_obstacle_collision(self, agv_id: int | str) -> List[Tuple[float, float, float]]:
+        """检查AGV是否与障碍物碰撞，返回碰撞的障碍物列表"""
+        collisions = []
+        try:
+            agv_id_int = int(agv_id) if isinstance(agv_id, str) else agv_id
+        except (ValueError, TypeError):
+            return collisions
+        
+        # 获取AGV位置
+        pos = None
+        if agv_id_int in self.agvs:
+            agv = self.agvs[agv_id_int]
+            pos = agv.current_position
+        else:
+            # 从agv_list查找
+            for agv in self.agv_list:
+                try:
+                    if int(agv.get("agv_id")) == agv_id_int:
+                        pos = agv.get("position", (0.0, 0.0))
+                        break
+                except (ValueError, TypeError):
+                    continue
+        
+        if pos is None:
+            return collisions
+        
+        # 检查与所有障碍物的距离
+        for obstacle in self.global_obstacles:
+            if len(obstacle) >= 3:
+                ox, oy, radius = obstacle[0], obstacle[1], obstacle[2]
+                dx = pos[0] - ox
+                dy = pos[1] - oy
+                dist = (dx**2 + dy**2)**0.5
+                # AGV碰撞半径约0.3m
+                if dist < radius + 0.3:
+                    collisions.append(obstacle)
+        return collisions
+
+    def replan_path(self, agv_id: int | str) -> Optional[List[Tuple[float, float, float]]]:
+        """重新规划AGV路径，返回替代路径点列表"""
+        try:
+            agv_id_int = int(agv_id) if isinstance(agv_id, str) else agv_id
+        except (ValueError, TypeError):
+            return None
+        
+        # 查找AGV
+        agv = self.agvs.get(agv_id_int)
+        if agv is None:
+            # 尝试从agv_list查找
+            for agv_dict in self.agv_list:
+                try:
+                    stored_id_raw = agv_dict.get("agv_id", "-1")
+                    if isinstance(stored_id_raw, int):
+                        stored_id = stored_id_raw
+                    elif isinstance(stored_id_raw, str) and "_" in stored_id_raw:
+                        stored_id = int(stored_id_raw.split("_")[-1])
+                    else:
+                        stored_id = int(stored_id_raw)
+                except (ValueError, TypeError):
+                    continue
+                if stored_id == agv_id_int:
+                    pos = agv_dict.get("position", (0.0, 0.0, 0.0))
+                    theta = pos[2] if len(pos) >= 3 else 0.0
+                    alt_path = [(pos[0] + (i + 1) * 0.5, pos[1] + 1.0, theta) for i in range(3)]
+                    return alt_path
+            return None
+        
+        current_pos = agv.current_position
+        theta = getattr(agv, 'current_theta', 0.0)
+        
+        # 生成简单的替代路径：向右偏移1米再走
+        alt_path = []
+        for i in range(3):
+            alt_path.append((
+                current_pos[0] + (i + 1) * 0.5,
+                current_pos[1] + 1.0,
+                theta
+            ))
+        return alt_path
+
+    def compute_formation(self, formation_type: str, leader_id: int = 1,
+                          center: Tuple[float, float] = None,
+                          radius: float = 2.0) -> Dict[int, Tuple[float, float, float]]:
+        """计算编队位置，返回 {agv_id: (x, y, theta)}"""
+        positions = {}
+        agv_ids = list(self.agvs.keys())
+        if not agv_ids:
+            agv_ids = [int(agv.get("agv_id", i)) for i, agv in enumerate(self.agv_list)]
+        if not agv_ids:
+            return positions
+        
+        leader_pos = None
+        if leader_id in self.agvs:
+            agv = self.agvs[leader_id]
+            leader_pos = agv.current_position
+        elif center is None:
+            center = (5.0, 5.0)
+        else:
+            leader_pos = center
+        
+        if center is None and leader_pos is not None:
+            center = leader_pos
+        
+        n = len(agv_ids)
+        
+        if formation_type == "line":
+            spacing = 1.5
+            for i, agv_id in enumerate(agv_ids):
+                positions[agv_id] = (center[0] + i * spacing, center[1], 0.0)
+        elif formation_type == "triangle":
+            # 三角形编队：领头AGV在前，其余在后两排
+            spacing = 2.0
+            positions[agv_ids[0]] = (center[0], center[1], 0.0)
+            for i in range(1, n):
+                row = (i - 1) // 2
+                col = (i - 1) % 2
+                positions[agv_ids[i]] = (
+                    center[0] - (row + 1) * spacing,
+                    center[1] + (col - 0.5) * spacing,
+                    0.0
+                )
+        elif formation_type == "circle":
+            for i, agv_id in enumerate(agv_ids):
+                angle = 2 * 3.14159 * i / n
+                positions[agv_id] = (
+                    center[0] + radius * np.cos(angle),
+                    center[1] + radius * np.sin(angle),
+                    0.0
+                )
+        else:
+            # 默认矩形
+            cols = int(np.ceil(np.sqrt(n)))
+            spacing = 2.0
+            for i, agv_id in enumerate(agv_ids):
+                row = i // cols
+                col = i % cols
+                positions[agv_id] = (
+                    center[0] + col * spacing,
+                    center[1] - row * spacing,
+                    0.0
+                )
+        return positions
+
+    def get_swarm_health(self) -> float:
+        """计算蜂群健康度 (0.0-1.0)"""
+        if not self.agvs and not self.agv_list:
+            return 0.0
+        total_battery = 0.0
+        count = 0
+        for agv_id, agv in self.agvs.items():
+            total_battery += getattr(agv, 'battery_level', 1.0)
+            count += 1
+        for agv in self.agv_list:
+            total_battery += agv.get("battery_level", 1.0)
+            count += 1
+        if count == 0:
+            return 0.0
+        avg_battery = total_battery / count
+        # 简单健康度 = 平均电量
+        return max(0.0, min(1.0, avg_battery))
+
+    def get_battery_summary(self) -> Dict[str, float]:
+        """获取电池状态汇总（从agv_list读取以避免重复）"""
+        levels = []
+        seen = set()
+        
+        # 从agv_list读取
+        for agv in self.agv_list:
+            agv_id_val = agv.get("agv_id")
+            try:
+                agv_id_int = int(agv_id_val.split("_")[-1]) if isinstance(agv_id_val, str) and "_" in agv_id_val else int(agv_id_val)
+            except (ValueError, TypeError):
+                agv_id_int = id(agv)  # fallback unique id
+            
+            if agv_id_int not in seen:
+                levels.append(agv.get("battery_level", 1.0))
+                seen.add(agv_id_int)
+        
+        # 也检查self.agvs中不在agv_list的
+        for agv_id_int, agv in self.agvs.items():
+            if agv_id_int not in seen:
+                levels.append(getattr(agv, 'battery_level', 1.0))
+                seen.add(agv_id_int)
+        
+        if not levels:
+            return {"min": 0.0, "max": 0.0, "avg": 0.0, "total": 0}
+        return {
+            "min": min(levels),
+            "max": max(levels),
+            "avg": sum(levels) / len(levels),
+            "total": len(levels)
+        }
+
+    def get_task_summary(self) -> Dict[str, int]:
+        """获取任务状态汇总"""
+        summary = {"total": len(self.tasks), "pending": 0, "assigned": 0, "running": 0, "completed": 0, "failed": 0}
+        for task in self.tasks.values():
+            status = task.status.lower() if hasattr(task, 'status') else str(task.status).lower()
+            if status in summary:
+                summary[status] += 1
+            elif status == "pending":
+                summary["pending"] += 1
+        return summary
+
+    def handle_agv_failure(self, agv_id: int | str):
+        """处理AGV故障：将该AGV的任务重新分配"""
+        try:
+            agv_id_int = int(agv_id) if isinstance(agv_id, str) else agv_id
+        except (ValueError, TypeError):
+            agv_id_int = None
+        
+        # 找到该AGV正在执行的任务
+        failed_tasks = []
+        for task in self.tasks.values():
+            assigned = task.assigned_agv_id
+            task_agv_id = None
+            if assigned is not None:
+                try:
+                    task_agv_id = int(assigned)
+                except (ValueError, TypeError):
+                    pass
+            if task_agv_id == agv_id_int or str(assigned) == str(agv_id):
+                if task.status in ["assigned", "running"]:
+                    failed_tasks.append(task.task_id)
+        
+        # 标记任务为待重新分配
+        for task_id in failed_tasks:
+            self.reallocate_failed_task(task_id)
+        
+        # 标记AGV为ERROR状态
+        if agv_id_int in self.agvs:
+            self.agvs[agv_id_int].status = AGVStatus.ERROR
+
+    def emergency_stop_all(self):
+        """紧急停止所有AGV"""
+        for agv_id, agv in self.agvs.items():
+            agv.status = AGVStatus.ERROR
+        # 兼容agv_list
+        for agv in self.agv_list:
+            agv["status"] = AGVStatus.ERROR
+
+    def check_collision_risks(self) -> List[Tuple[int, int, float]]:
+        """检查所有AGV对的碰撞风险，返回冲突列表 (agv1, agv2, distance)"""
+        risks = []
+        agv_ids = list(self.agvs.keys())
+        for i in range(len(agv_ids)):
+            for j in range(i + 1, len(agv_ids)):
+                agv1 = self.agvs[agv_ids[i]]
+                agv2 = self.agvs[agv_ids[j]]
+                dx = agv1.current_position[0] - agv2.current_position[0]
+                dy = agv1.current_position[1] - agv2.current_position[1]
+                dist = (dx**2 + dy**2)**0.5
+                if dist < self.safety_distance:
+                    risks.append((agv_ids[i], agv_ids[j], dist))
+        return risks
 
     def check_conflicts(self) -> List[Tuple[int, int, str]]:
         """
