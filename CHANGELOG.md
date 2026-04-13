@@ -1,3 +1,40 @@
+## v3.9.1 (2026-04-14) [META-COGNITION + E2E SCENARIO TESTS]
+### Core Highlights
+- ✅ **264 New Tests Passing** (total: ~1235 tests in pytest suite)
+- 🧠 **Meta-Cognition Module** (`src/core/meta_cognition.py`, 1105 lines):
+  - CognitiveLoadTracker: 认知负荷追踪 (感知/推理/动作三维分量)
+  - AttentionManager: 注意力资源管理与分配 (FOCUSED/DIVIDED/SUSTAINED/VIGILANT/FATIGUED/DEPLETED)
+  - UncertaintyTracker: 推理不确定性量化 (贝叶斯证据累积)
+  - BiasDetector: 认知偏差检测 (确认/锚定/可得性/过度自信/近因/首因/赌徒谬误)
+  - ConfidenceEvaluator: 决策信心评估 (多维度综合评分)
+  - SelfEfficacyMonitor: 自我效能监控 (基于成功率的动态估计)
+  - MetaCognitionEngine: 完整元认知引擎 (evaluate_situation → 干预建议)
+  - AGV五级规格适配 (S:基础监控 → XXL:完整元认知)
+  - `src/core/__init__.py` 完整导出
+- 📝 **Meta-Cognition Tests** (`tests/test_meta_cognition.py`, 84 tests):
+  - CognitiveLoadTracker / AttentionManager / UncertaintyTracker 基础测试
+  - BiasDetector / ConfidenceEvaluator / SelfEfficacyMonitor 功能测试
+  - MetaCognitionEngine 集成测试 (AGV五级参数化)
+  - AGV等级 × 元认知子模块全矩阵测试
+- 📝 **E2E Embodied Scenarios** (`tests/embodiment/test_embodied_e2e_scenarios.py`, 71 tests):
+  - EmbodiedPipeline × SceneIntelligence × BehaviorTree 完整集成
+  - 场景化任务 (仓库/医院/工厂/餐厅/户外) × AGV五级规格矩阵
+  - 状态持久化与恢复 × 行为树具身任务规划
+- 📝 **Healthcare Scene Tests** (`tests/embodiment/test_healthcare_scene.py`, 52 tests):
+  - HealthcareSceneController / PatientCallHandler / MedicationDeliveryPlanner
+  - InfectionControlMonitor / SpecimenTransportManager
+  - AGV五级医疗场景适配测试
+- 📝 **Industrial Scene Tests** (`tests/embodiment/test_industrial_scene.py`, 57 tests):
+  - ProductionLineController / QualityInspectionStation / PredictiveMaintenanceMonitor
+  - ToolManagementSystem / SafetyMonitoringSystem / MaterialFlowCoordinator
+  - AGV五级工业场景适配测试
+
+### Overall Progress: ~95%
+- Completed: base/vision/audio/tactile/force/IMU/cross-modal fusion/core goals/autonomous learning/simulation/hardware/5-grade spec/control/modules/meta-cognition
+- Active: embodied intelligence scenario applications ✅, multi-machine coordination ✅, long-term memory ✅
+
+---
+
 ## v3.8.3 (2026-04-14) [DEPLOYMENT MODULE TESTS + MODULE COVERAGE COMPLETE]
 ### Core Highlights
 - ✅ **96 New Tests Passing** (total: 971 tests in pytest suite)

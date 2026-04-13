@@ -49,6 +49,27 @@ from .decision_making import DecisionMaking
 from .interaction import InteractionManager
 from .goal_dispatcher import GoalDispatcher
 from .core_brain import CoreBrain
+from .meta_cognition import (
+    # 枚举
+    CognitiveLoadLevel,
+    AttentionState,
+    UncertaintyLevel,
+    BiasType,
+    # 数据类
+    MetaCogConfig,
+    CognitiveMetrics,
+    CognitiveSnapshot,
+    MetacognitiveDecision,
+    # 子模块
+    AttentionManager,
+    UncertaintyTracker,
+    BiasDetector,
+    ConfidenceEvaluator,
+    SelfEfficacyMonitor,
+    CognitiveLoadTracker,
+    # 主引擎
+    MetaCognitionEngine,
+)
 
 __all__ = [
     # Core goals
@@ -69,4 +90,20 @@ __all__ = [
     "InteractionManager",
     "GoalDispatcher",
     "CoreBrain",
+    # 元认知
+    "CognitiveLoadLevel",
+    "AttentionState",
+    "UncertaintyLevel",
+    "BiasType",
+    "MetaCogConfig",
+    "CognitiveMetrics",
+    "CognitiveSnapshot",
+    "MetacognitiveDecision",
+    "AttentionManager",
+    "UncertaintyTracker",
+    "BiasDetector",
+    "ConfidenceEvaluator",
+    "SelfEfficacyMonitor",
+    "CognitiveLoadTracker",
+    "MetaCognitionEngine",
 ]

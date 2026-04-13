@@ -406,4 +406,4 @@ from .federated_learning import (
     create_federated_learning_system,
 )
 
-__version__ = "3.7.2"
+__version__ = "3.9.1"
