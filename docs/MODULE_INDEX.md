@@ -1,5 +1,5 @@
 # SuperModel 模块索引 / Module Index
-- **v2.91.0** (2026-04-12): 完善多AGV蜂群协同调度器，新增实时碰撞检测、障碍物碰撞预警、死锁检测三大功能; 所有5项具身测试用例100%通过; 整体项目进度提升至95%
+- **v3.8.0** (2026-04-14): 具身仿真增强模块测试(94项) + DynamicObstacleGenerator/MultiAGVSimulationEnhancer/WeatherEffect完整导出; 782项具身测试+828项全量测试100%通过
 - **v2.87.0** (2026-04-12): 完成长期记忆系统全模块开发; 实现记忆存储/检索/巩固/遗忘四大核心机制; 32项记忆模块测试全通过; 2735项全量测试100%通过; 符合正式发布要求
 - **v2.68.0** (2026-04-11): 新增具身智能部署管理模块(deployment.py, 420行); DeploymentValidator+HealthMonitor+EmergencyProcedure+DeploymentManager; 30项测试; 2679项测试全通过; 标定噪声密度Bug修复
 - **v2.67.0** (2026-04-11): 传感器模块Bug修复(estimate_payload/abs/WrenchProcessor/VirtualSensor上下文管理器); 2625项测试全通过
@@ -136,6 +136,26 @@ src/
 │   ├── memory_store.py     # 持久化存储层 (向量+结构化存储)
 │   ├── memory_retrieval.py # 统一检索引擎 (向量+关键词+语义)
 │   └── memory_consolidation.py # 记忆巩固 (从经验中提取知识/技能)
+├── embodied/        # 具身智能模块 (16个核心文件)
+│   ├── __init__.py
+│   ├── behavior_tree.py        # 行为树 + 具身任务规划器 (65KB, 51+节点)
+│   ├── embodied_pipeline.py    # 具身Pipeline (启动/任务执行/状态机)
+│   ├── embodied_skill.py       # 具身技能注册与执行
+│   ├── simulation_enhancement.py # 仿真增强 (PhysicsParameters/SensorNoise/Delay/Collision/Environment/WarehouseScene/DynamicObstacle/MultiAGV)
+│   ├── real_agv_interface.py   # 真实AGV硬件接口 (CANBus/ZLAC8015D/Lidar/IMU/Tactile/Force)
+│   ├── scene_intelligence.py   # 场景智能 (SceneType/SceneContext/SafetyRule/NavigationRule)
+│   ├── scene_task_planner.py   # 场景任务规划器 (物流/医疗/工业场景)
+│   ├── scene_coordination.py   # 场景协同
+│   ├── agv_swarm_coordinator.py # 多AGV蜂群协同调度 (碰撞检测/死锁检测/任务分配)
+│   ├── task_executor.py        # 具身任务执行器 (12种任务类型)
+│   ├── memory_integration.py   # 具身记忆集成
+│   ├── collaborative_slam.py   # 协同SLAM
+│   ├── hil_testing.py         # 硬件在环测试
+│   ├── deployment.py          # 部署管理 (DeploymentValidator/HealthMonitor/EmergencyProcedure)
+│   ├── healthcare_scene.py    # 医疗场景具体化
+│   ├── industrial_scene.py    # 工业场景具体化
+│   └── federated_learning.py  # 联邦学习 (FedAvg/ByzantineFilter/差分隐私)
+│
 └── config_loader.py   # 配置加载器
 ```
 
@@ -255,8 +275,9 @@ src/
 | `pybullet_sim_tests.py` | 41 | PyBullet仿真 |
 | `ros2_interface_tests.py` | 44+ | ROS2通信 |
 | `five_grade_integration_tests.py` | 50+ | 五级AGV完整集成 |
-| 其他 | 762+ | 编码器/仿真/场景/边界/鲁棒性/行为树 |
-| | **总计** | **2286** | **全部通过** |
+| `tests/embodiment/` | 782 | 具身Pipeline/行为树/仿真增强/任务规划/记忆集成/多AGV蜂群 |
+| 其他 | 46+ | 编码器/仿真/场景/边界/鲁棒性/行为树 |
+| | **总计** | **828** | **全部通过** |
 
 ---
 
