@@ -183,6 +183,8 @@ from .embodied_pipeline import (
     EmbodiedPipeline,
     create_embodied_pipeline,
     create_pipeline_from_config,
+    ErrorRecoveryPolicy,
+    DiagnosticCollector,
 )
 
 from .embodied_skill import (
@@ -355,6 +357,8 @@ __all__ = [
     'EmbodiedPipeline',
     'create_embodied_pipeline',
     'create_pipeline_from_config',
+    'ErrorRecoveryPolicy',
+    'DiagnosticCollector',
 ]
 
 
@@ -406,4 +410,4 @@ from .federated_learning import (
     create_federated_learning_system,
 )
 
-__version__ = "3.9.3"
+__version__ = "3.9.4"

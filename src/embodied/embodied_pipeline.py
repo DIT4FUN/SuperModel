@@ -41,6 +41,8 @@ __all__ = [
     'EmbodiedPipeline',
     'create_embodied_pipeline',
     'create_pipeline_from_config',
+    'ErrorRecoveryPolicy',
+    'DiagnosticCollector',
 ]
 
 
@@ -1166,3 +1168,257 @@ def create_pipeline_from_config(config_dict: Dict[str, Any]) -> EmbodiedPipeline
         配置好的 EmbodiedPipeline 实例
     """
     return create_embodied_pipeline(**config_dict)
+
+
+# ============================================================
+# 错误恢复与诊断增强 (v3.9.4)
+# ============================================================
+
+class ErrorRecoveryPolicy(Enum):
+    """错误恢复策略"""
+    MANUAL = "manual"
+    RETRY = "retry"
+    FALLBACK = "fallback"
+    RESTART_MODULE = "restart_module"
+    FULL_RESET = "full_reset"
+
+
+class DiagnosticCollector:
+    """Pipeline诊断收集器"""
+
+    def __init__(self, max_history: int = 10000):
+        self._max_history = max_history
+        self._snapshots: deque = deque(maxlen=max_history)
+        self._error_log: deque = deque(maxlen=1000)
+        self._metric_summaries: Dict[str, List[float]] = {}
+        self._start_time = time.time()
+
+    def record_tick(
+        self,
+        pipeline_state: str,
+        active_tasks: int,
+        queue_size: int,
+        additional_metrics: Optional[Dict[str, float]] = None,
+    ) -> None:
+        snapshot = {
+            'timestamp': time.time(),
+            'pipeline_state': pipeline_state,
+            'active_tasks': active_tasks,
+            'queue_size': queue_size,
+            'metrics': additional_metrics or {},
+        }
+        self._snapshots.append(snapshot)
+        if additional_metrics:
+            for k, v in additional_metrics.items():
+                self._metric_summaries.setdefault(k, []).append(v)
+
+    def record_error(
+        self,
+        error_code: str,
+        error_message: str,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        self._error_log.append({
+            'timestamp': time.time(),
+            'error_code': error_code,
+            'message': error_message,
+            'context': context or {},
+        })
+
+    def generate_report(self) -> Dict[str, Any]:
+        now = time.time()
+        elapsed = now - self._start_time
+        metric_stats = {}
+        for name, values in self._metric_summaries.items():
+            if values:
+                metric_stats[name] = {
+                    'min': round(float(np.min(values)), 4),
+                    'max': round(float(np.max(values)), 4),
+                    'mean': round(float(np.mean(values)), 4),
+                    'count': len(values),
+                }
+        state_counts: Dict[str, int] = {}
+        for snap in self._snapshots:
+            s = snap['pipeline_state']
+            state_counts[s] = state_counts.get(s, 0) + 1
+        return {
+            'report_time': now,
+            'elapsed_s': round(elapsed, 1),
+            'snapshots_collected': len(self._snapshots),
+            'errors_logged': len(self._error_log),
+            'state_distribution': state_counts,
+            'metric_summaries': metric_stats,
+            'recent_errors': list(self._error_log)[-20:],
+        }
+
+    def export(self, path: str) -> bool:
+        import json
+        try:
+            report = self.generate_report()
+            with open(path, 'w', encoding='utf-8') as f:
+                json.dump(report, f, indent=2, default=str)
+            return True
+        except Exception:
+            return False
+
+    def get_metric_trend(
+        self,
+        metric_name: str,
+        window_size: int = 100,
+    ) -> Optional[Dict[str, float]]:
+        values = self._metric_summaries.get(metric_name, [])
+        if len(values) < 2:
+            return None
+        recent = values[-window_size:]
+        return {
+            'first': round(recent[0], 4),
+            'last': round(recent[-1], 4),
+            'delta': round(recent[-1] - recent[0], 4),
+            'slope': round((recent[-1] - recent[0]) / max(1, len(recent) - 1), 4),
+        }
+
+
+# ── EmbodiedPipeline 增强方法 ──────────────────────────────────────────────
+
+# 以下方法通过 monkey-patch 风格添加到 EmbodiedPipeline 类
+# 以避免修改原有类结构（向后兼容）
+
+def _get_error_recovery_suggestions(self, error_code=None):
+    suggestions: List[Dict[str, Any]] = []
+    if self._state == PipelineState.ERROR:
+        suggestions.append({
+            'action': 'reset_health',
+            'description': '重置Pipeline健康状态',
+            'reason': f'Pipeline处于ERROR状态: {self._error_message}',
+            'priority': 1,
+        })
+        suggestions.append({
+            'action': 'stop + start',
+            'description': '完全重启Pipeline',
+            'reason': 'ERROR状态需要完整重启才能恢复',
+            'priority': 2,
+        })
+    if len(self._task_queue) > 10:
+        suggestions.append({
+            'action': 'increase_workers',
+            'description': '增加并发任务数或优化任务处理',
+            'reason': f'任务队列积压 {len(self._task_queue)} 项',
+            'priority': 3,
+        })
+    if self._skill_registry is None and getattr(self.config, 'enable_skill_registry', True):
+        suggestions.append({
+            'action': 'check_skill_registry',
+            'description': '技能注册表未加载',
+            'reason': 'enable_skill_registry=True 但模块未初始化',
+            'priority': 2,
+        })
+    recent = list(self._completed_tasks)[-50:] if self._completed_tasks else []
+    if recent:
+        failures = [t for t in recent if not t.success]
+        if len(failures) / len(recent) > 0.3:
+            suggestions.append({
+                'action': 'analyze_failure_pattern',
+                'description': '任务失败率过高({:.0f}%)'.format(len(failures) / len(recent) * 100),
+                'reason': f'{len(failures)}/{len(recent)} 最近任务失败',
+                'priority': 2,
+            })
+    suggestions.sort(key=lambda x: x['priority'])
+    return suggestions
+
+
+def _attempt_auto_recovery(self, max_attempts=3):
+    attempts: List[Dict[str, Any]] = []
+    if self._state == PipelineState.ERROR:
+        try:
+            self.reset_health()
+            attempts.append({'strategy': 'reset_health', 'success': True, 'message': 'ERROR状态已重置'})
+        except Exception as e:
+            attempts.append({'strategy': 'reset_health', 'success': False, 'message': str(e)})
+    if len(self._task_queue) > 5:
+        cleared = len(self._task_queue)
+        with self._lock:
+            self._task_queue.clear()
+        attempts.append({'strategy': 'clear_queue', 'success': True, 'message': f'已清空 {cleared} 项任务'})
+    if (self.config.mode == PipelineMode.SIMULATION and self._sim_enhancer is not None):
+        try:
+            reset_fn = getattr(self._sim_enhancer, 'reset', None)
+            if callable(reset_fn):
+                reset_fn()
+            attempts.append({'strategy': 'reset_simulation', 'success': True, 'message': '仿真环境已重置'})
+        except Exception as e:
+            attempts.append({'strategy': 'reset_simulation', 'success': False, 'message': str(e)})
+    recovered = self._state in (PipelineState.READY, PipelineState.RUNNING) and len(self._task_queue) < 5
+    return {
+        'recovered': recovered,
+        'attempts': attempts,
+        'final_state': self._state.value,
+        'queue_size': len(self._task_queue),
+    }
+
+
+def _get_diagnostics(self):
+    now = time.time()
+    recent_100 = list(self._completed_tasks)[-100:] if self._completed_tasks else []
+    durations = [t.duration_ms for t in recent_100] if recent_100 else [0]
+    p50 = float(np.percentile(durations, 50)) if durations else 0.0
+    p95 = float(np.percentile(durations, 95)) if durations else 0.0
+    p99 = float(np.percentile(durations, 99)) if durations else 0.0
+
+    def module_health(name, module):
+        if module is None:
+            return {'status': 'not_loaded', 'available': False}
+        try:
+            health = getattr(module, 'get_health_status', None)
+            if callable(health):
+                return {'status': 'healthy', 'available': True, 'detail': health()}
+            return {'status': 'healthy', 'available': True}
+        except Exception as e:
+            return {'status': 'error', 'available': True, 'error': str(e)}
+
+    return {
+        'generated_at': now,
+        'pipeline': {
+            'version': '3.9.4',
+            'state': self._state.value,
+            'mode': self.config.mode.value,
+            'grade': self.config.grade,
+            'scene_type': self.config.scene_type,
+            'uptime_s': round(self.uptime_s, 1),
+        },
+        'health': {
+            'error_message': self._error_message,
+            'success_rate_100': self._calc_success_rate() if recent_100 else 0.0,
+        },
+        'performance': {
+            'p50_duration_ms': round(p50, 2),
+            'p95_duration_ms': round(p95, 2),
+            'p99_duration_ms': round(p99, 2),
+            'avg_duration_ms': round(self._calc_avg_task_duration(), 2),
+            'total_completed': len(self._completed_tasks),
+        },
+        'modules': {
+            'behavior_tree': module_health('bt', self._bt_planner),
+            'scene_intelligence': module_health('scene', self._scene_intel),
+            'skill_registry': module_health('skill', self._skill_registry),
+            'memory': module_health('memory', self._memory_mgr),
+            'task_executor': module_health('executor', self._task_executor),
+            'simulation': module_health('sim', self._sim_enhancer),
+            'hil': module_health('hil', self._hil_runner),
+            'federated_learning': module_health('fl', self._fl_coordinator),
+            'swarm': module_health('swarm', self._swarm_coord),
+        },
+        'tasks': {
+            'queued': len(self._task_queue),
+            'active': len(self._active_tasks),
+            'completed': len(self._completed_tasks),
+            'recent_success_rate': round(self._calc_success_rate(), 4),
+        },
+        'recovery_suggestions': _get_error_recovery_suggestions(self),
+    }
+
+
+# 动态绑定增强方法到 EmbodiedPipeline
+EmbodiedPipeline.get_error_recovery_suggestions = _get_error_recovery_suggestions
+EmbodiedPipeline.attempt_auto_recovery = _attempt_auto_recovery
+EmbodiedPipeline.get_diagnostics = _get_diagnostics
+

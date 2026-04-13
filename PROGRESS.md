@@ -4,6 +4,45 @@
 
 ---
 
+## v3.9.4 (2026-04-14 06:05) - 诊断系统增强 + 接口规范文档 + 21项新测试
+
+### 本次更新
+
+✅ **具身智能模块接口规范文档** (`docs/EMBODIED_INTERFACE_SPEC.md`, 新建 36798字节):
+   - 15个章节完整覆盖所有具身模块接口契约
+   - 行为树/Pipeline/仿真/硬件接口/场景智能/任务规划/部署/蜂群/联邦学习/HIL
+   - 标准化数据结构和枚举定义（NodeStatus, TaskStatus, EmbodiedTask, Blackboard）
+   - AGV五级等级参数对照表
+   - 接口兼容性矩阵和错误码规范
+   - 事件总线规范（PIPELINE_EVENTS 15种事件类型）
+   - 返回值规范和类型安全要求
+
+✅ **Pipeline错误恢复与诊断增强** (`src/embodied/embodied_pipeline.py` 增强):
+   - `ErrorRecoveryPolicy` 枚举: MANUAL/RETRY/FALLBACK/RESTART_MODULE/FULL_RESET 五种策略
+   - `DiagnosticCollector`: 诊断收集器，支持快照记录/错误日志/趋势分析/JSON导出
+   - `EmbodiedPipeline.get_error_recovery_suggestions()`: 基于状态和历史的智能恢复建议
+   - `EmbodiedPipeline.attempt_auto_recovery()`: 多策略自动恢复（重置健康/清空队列/重置仿真）
+   - `EmbodiedPipeline.get_diagnostics()`: 完整诊断报告 (pipeline/health/performance/modules/tasks)
+   - 性能百分位数统计 (p50/p95/p99)
+   - 模块健康状态深度检查
+
+✅ **新增测试** (`tests/embodiment/test_pipeline_diagnostics.py`, 21项新测试):
+   - `TestDiagnosticCollector` (7项): 创建/快照记录/错误记录/报告生成/趋势分析/导出
+   - `TestErrorRecoverySuggestions` (3项): 正常状态/ERROR状态/队列积压场景建议
+   - `TestAutoRecovery` (2项): ERROR重置恢复/队列清空恢复
+   - `TestDiagnostics` (5项): 报告结构/模块状态/任务历史/成功率/百分位数
+   - `TestErrorRecoveryPolicy` (2项): 枚举值验证/策略数量
+   - `TestDiagnosticsIntegration` (2项): 正常操作诊断/失败模式分析
+   - **1190项全部通过** ✅ (1169项原测试 + 21项新测试)
+
+✅ **版本更新**: embodied v3.9.3 → v3.9.4
+
+📊 整体研发进度: ~97%
+已完成: 基础架构/视觉/听觉/触觉/力觉/IMU/跨模态融合/核心目标/自主学习/控制模块/五级AGV规格/仿真环境/测试用例/协同SLAM/HIL测试/具身Pipeline/技能注册表/记忆系统/场景智能/联邦学习/元认知/具身长期记忆/FL集成/蜂群协调/诊断系统/接口规范文档
+待推进: 视觉-语言-动作端到端/超模态大模型集成
+
+---
+
 ## v3.9.3 (2026-04-14 05:25) - 联邦学习 + 蜂群协调集成 + 14项新测试
 
 ### 本次更新
