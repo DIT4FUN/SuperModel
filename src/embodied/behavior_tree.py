@@ -1135,13 +1135,7 @@ class MultiAGVBehaviorTreePlanner:
         logger.info(f"Coordinated swarm task {task_type} for {self.num_agvs} AGVs")
 
 
-def create_behavior_tree_from_dict(config: Dict[str, Any]) -> BTNode:
-    """从字典配置创建行为树 - 用于反序列化/配置文件驱动"""
-    # TODO: 实现配置驱动的行为树创建
-    pass
-# ============================================================================
-# 配置驱动的行为树构建器
-# ============================================================================
+# 配置驱动的行为树构建器 (实现见下方 _build_node_from_config + create_behavior_tree_from_dict)
 
 # 节点类型注册表
 _NODE_TYPE_REGISTRY: Dict[str, type] = {

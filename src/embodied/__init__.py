@@ -126,6 +126,24 @@ from .agv_swarm_coordinator import (
     AGVSwarmCoordinator,
 )
 
+from .task_executor import (
+    ExecutionPhase,
+    ExecutionResult,
+    TaskExecutionRecord,
+    MemoryEnhancedExecutor,
+    ScenarioTaskExecutor,
+    create_task_executor,
+    create_executor_from_config,
+)
+
+from .memory_integration import (
+    EmbodiedMemoryEntry,
+    EmbodiedSkill,
+    EmbodiedMemoryManager,
+    create_embodied_memory_manager,
+    connect_to_long_term_memory,
+)
+
 __all__ = [
     # 枚举
     'NodeStatus',
@@ -252,6 +270,20 @@ __all__ = [
     'SensorActuatorHILLoop',
     'HILTestRunner',
     'run_hil_validation',
+    # 任务执行器
+    'ExecutionPhase',
+    'ExecutionResult',
+    'TaskExecutionRecord',
+    'MemoryEnhancedExecutor',
+    'ScenarioTaskExecutor',
+    'create_task_executor',
+    'create_executor_from_config',
+    # 具身记忆集成
+    'EmbodiedMemoryEntry',
+    'EmbodiedSkill',
+    'EmbodiedMemoryManager',
+    'create_embodied_memory_manager',
+    'connect_to_long_term_memory',
 ]
 
-__version__ = "2.3.0"
+__version__ = "2.4.0"

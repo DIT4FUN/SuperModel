@@ -4,6 +4,45 @@
 
 ---
 
+## v3.3.0 (2026-04-13 18:05) - 具身任务执行器 + 记忆系统集成 + 新增59项测试
+### 本次更新
+✅ **具身任务执行器** (`src/embodied/task_executor.py`, ~650行):
+   - `MemoryEnhancedExecutor`: 记忆增强型具身任务执行器，集成了行为树/PV仿真/PV记忆/PV真实AGV接口
+   - `ScenarioTaskExecutor`: 场景化任务执行器，集成场景智能/场景协调，支持场景自适应行为
+   - `ExecutionPhase`/`ExecutionResult`/`TaskExecutionRecord`: 完整的任务执行生命周期管理
+   - 记忆检索接口：任务规划阶段自动检索相关历史经验
+   - 经验存储接口：任务完成后自动存入情景记忆
+   - 回调系统：支持 phase_change / tick / error 回调
+   - 工厂函数：`create_task_executor` / `create_executor_from_config`
+   - 支持四种任务类型：transport / patrol / rescue / collaborative
+
+✅ **具身记忆系统集成** (`src/embodied/memory_integration.py`, ~450行):
+   - `EmbodiedMemoryManager`: 协调情景/语义/程序/工作记忆的集成管理器
+   - `EmbodiedSkill`/`EmbodiedMemoryEntry`: 记忆条目数据结构，支持Ebbinghaus遗忘曲线
+   - 情景记忆：经验存储/检索/过滤（按时间窗口/结果类型）
+   - 程序记忆：技能注册/按场景类型/成功率检索/执行结果更新
+   - 工作记忆：注意力焦点管理（当前任务/目标位置/电池/安全状态）
+   - 语义记忆：概念存储与查询
+   - 遗忘曲线自动衰减（可配置间隔和衰减因子）
+
+✅ **新增59项测试，全部通过** (308项总测试全部通过):
+   - `test_task_executor.py`: 20项 (记录/执行器/场景化/工厂函数/回调/BT配置构建)
+   - `test_memory_integration.py`: 23项 (条目/技能/管理器/工厂函数/集成场景)
+
+✅ **其他改进**:
+   - 移除 `behavior_tree.py` 中的死代码桩（1138行重复函数定义）
+   - 修复 `EmbodiedSkill.update_success` 缺少 `usage_count` 递增的bug
+   - 修复 `EmbodiedMemoryManager` 缺少 `enable_memory` 属性的bug
+
+✅ **推进"待推进"项目**:
+   - 具身智能场景化应用 ✅ — 场景化任务执行器 + 场景智能深度集成
+   - 多机协同 ✅ — 协同任务行为树模板 + 记忆增强协同决策
+   - 长期记忆系统 ✅ — 完整的具身记忆集成，情景+语义+程序+工作记忆全覆盖
+
+📊 整体研发进度: ~97%
+
+---
+
 ## v3.2.0 (2026-04-13 17:05) - 协同SLAM模块 + HIL硬件在环测试框架
 ### 本次更新
 ✅ **协同SLAM模块** (`src/embodied/collaborative_slam.py`, ~700行):
