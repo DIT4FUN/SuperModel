@@ -4,6 +4,41 @@
 
 ---
 
+## v3.9.3 (2026-04-14 05:25) - 联邦学习 + 蜂群协调集成 + 14项新测试
+
+### 本次更新
+
+✅ **联邦学习集成** (`src/embodied/embodied_pipeline.py` 增强):
+   - `PipelineConfig.enable_federated_learning`: FL开关 (默认False)
+   - `PipelineConfig.fl_num_clients/fl_local_epochs/fl_rounds/fl_aggregation`: FL参数配置
+   - `EmbodiedPipeline._fl_coordinator`: FederatedLearningCoordinator实例
+   - `EmbodiedPipeline.register_agv_to_fl(agv_id, agv_grade)`: AGV注册到FL系统
+   - `EmbodiedPipeline.start_fl_round()`: 启动一轮联邦学习训练
+   - `EmbodiedPipeline.get_fl_status()`: 获取FL状态 (enabled/round_count/registered_clients/last_result)
+   - FL round count持久化到 `save_state()` / `restore_state()`
+   - 场景类型 × FL配置矩阵支持
+
+✅ **蜂群协调集成** (`src/embodied/embodied_pipeline.py` 增强):
+   - `PipelineConfig.enable_swarm_coordination`: 蜂群协调开关 (默认True)
+   - `EmbodiedPipeline._swarm_coord`: AGVSwarmCoordinator实例 (MinimalSwarmScene导航图)
+   - `EmbodiedPipeline.trigger_swarm_task(task_type, target_agvs, task_config)`: 触发蜂群任务
+   - `EmbodiedPipeline.get_swarm_status()`: 获取蜂群状态 (enabled/num_agvs/active_tasks)
+   - 支持 transport/patrol/inspection/assembly 任务类型
+
+✅ **新增测试** (`tests/embodiment/test_embodied_pipeline.py`, +14项, 60项总计):
+   - `TestFederatedLearningIntegration` (5项): FL启用/初始化/AGV注册/状态字段/禁用处理
+   - `TestSwarmCoordinationIntegration` (5项): 蜂群启用/初始化/任务触发/inspection类型/禁用处理
+   - `TestFLAndSwarmCombined` (4项): 同时启用/联合流程/状态持久化/AGV等级传递
+   - **60项全部通过** ✅
+
+✅ **版本更新**: embodied v3.9.2 → v3.9.3
+
+📊 整体研发进度: ~97%
+已完成: 基础架构/视觉/听觉/触觉/力觉/IMU/跨模态融合/核心目标/自主学习/控制模块/五级AGV规格/仿真环境/测试用例/协同SLAM/HIL测试/具身Pipeline/技能注册表/记忆系统/场景智能/联邦学习/元认知/具身长期记忆/FL集成/蜂群协调
+待推进: 视觉-语言-动作端到端/超模态大模型集成
+
+---
+
 ## v3.9.2 (2026-04-14 05:00) - 具身长期记忆系统 + 39项新测试
 
 ### 本次更新

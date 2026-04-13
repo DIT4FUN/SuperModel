@@ -27,6 +27,8 @@ from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Set, Tuple, Union
 from enum import Enum, auto
 from collections import deque
+from collections.abc import Sequence as ABCSequence
+import numpy as np
 
 logger = logging.getLogger(__name__)
 
@@ -81,6 +83,8 @@ class PipelineConfig:
     enable_memory: bool = True
     enable_scene_intelligence: bool = True
     enable_hil: bool = False
+    enable_federated_learning: bool = False
+    enable_swarm_coordination: bool = True
 
     # 传感器配置
     enable_vision: bool = True
@@ -98,6 +102,12 @@ class PipelineConfig:
     simulation_timestep: float = 0.01
     enable_physics_simulation: bool = True
 
+    # 联邦学习配置
+    fl_num_clients: int = 4
+    fl_local_epochs: int = 2
+    fl_rounds: int = 10
+    fl_aggregation: str = "fedavg"
+
     def to_dict(self) -> Dict[str, Any]:
         return {
             'grade': self.grade,
@@ -107,6 +117,8 @@ class PipelineConfig:
             'enable_memory': self.enable_memory,
             'enable_scene_intelligence': self.enable_scene_intelligence,
             'enable_hil': self.enable_hil,
+            'enable_federated_learning': self.enable_federated_learning,
+            'enable_swarm_coordination': self.enable_swarm_coordination,
         }
 
 
@@ -198,6 +210,12 @@ class EmbodiedPipeline:
         self._task_executor: Optional[Any] = None
         self._hil_runner: Optional[Any] = None
         self._sim_enhancer: Optional[Any] = None
+        self._fl_coordinator: Optional[Any] = None
+        self._swarm_coord: Optional[Any] = None
+
+        # FL round tracking
+        self._fl_round_count: int = 0
+        self._fl_last_result: Optional[Any] = None
 
     # ----------------------------------------------------------
     # 状态管理
@@ -317,6 +335,77 @@ class EmbodiedPipeline:
             logger.warning(f"SimulationEnhancer init failed: {e}")
             self._sim_enhancer = None
 
+    def _init_federated_learning(self) -> None:
+        """初始化联邦学习协调器"""
+        if not self.config.enable_federated_learning:
+            return
+        try:
+            from .federated_learning import FederatedLearningCoordinator
+            self._fl_coordinator = FederatedLearningCoordinator(
+                model_config={
+                    'input_dim': 128,
+                    'hidden_dim': 64,
+                    'output_dim': 32,
+                    'grade': self.config.grade,
+                },
+                grade=self.config.grade,
+            )
+            logger.info(
+                f"FederatedLearning initialized: {self.config.fl_num_clients} clients, "
+                f"{self.config.fl_rounds} rounds"
+            )
+        except Exception as e:
+            logger.warning(f"FederatedLearning init failed: {e}")
+            self._fl_coordinator = None
+
+    def _init_swarm_coordination(self) -> None:
+        """初始化蜂群协调器"""
+        if not self.config.enable_swarm_coordination:
+            return
+        try:
+            from .agv_swarm_coordinator import AGVSwarmCoordinator
+
+            # Build a minimal scene with required navigation graph
+            class MinimalSwarmScene:
+                """Minimal scene object providing required AGVSwarmCoordinator interface"""
+                def __init__(self):
+                    self.warehouse_id = "pipeline_default"
+                    self.width = 50.0
+                    self.length = 50.0
+                    # Required by _build_global_map: navigation_points and path_segments
+                    self.navigation_points = {
+                        'entrance': np.array([0.0, 0.0, 0.0]),
+                        'charging_station': np.array([2.0, 0.0, 0.0]),
+                        'station_A': np.array([10.0, 0.0, 0.0]),
+                        'station_B': np.array([20.0, 0.0, 0.0]),
+                        'station_C': np.array([30.0, 0.0, 0.0]),
+                        'exit': np.array([40.0, 0.0, 0.0]),
+                    }
+                    self.path_segments = {
+                        ('entrance', 'charging_station'): 2.0,
+                        ('charging_station', 'station_A'): 8.0,
+                        ('station_A', 'station_B'): 10.0,
+                        ('station_B', 'station_C'): 10.0,
+                        ('station_C', 'exit'): 10.0,
+                    }
+                    self.resources = {
+                        'charger_1': {'position': (2.0, 0.0, 0.0)},
+                        'station_A': {'position': (10.0, 0.0, 0.0)},
+                        'station_B': {'position': (20.0, 0.0, 0.0)},
+                    }
+
+            scene = MinimalSwarmScene()
+            self._swarm_coord = AGVSwarmCoordinator(
+                scene=scene,
+                max_workers=self.config.fl_num_clients,
+            )
+            logger.info(
+                f"SwarmCoordinator initialized: {self.config.fl_num_clients} workers"
+            )
+        except Exception as e:
+            logger.warning(f"SwarmCoordinator init failed: {e}")
+            self._swarm_coord = None
+
     def _register_scene_skills(self) -> None:
         """根据场景类型注册适用的技能"""
         if self._skill_registry is None:
@@ -352,6 +441,8 @@ class EmbodiedPipeline:
         self._init_task_executor()
         self._init_hil()
         self._init_simulation()
+        self._init_federated_learning()
+        self._init_swarm_coordination()
 
     # ----------------------------------------------------------
     # Pipeline 生命周期
@@ -647,6 +738,127 @@ class EmbodiedPipeline:
     # 状态查询
     # ----------------------------------------------------------
 
+    # ----------------------------------------------------------
+    # 联邦学习接口
+    # ----------------------------------------------------------
+
+    def register_agv_to_fl(self, agv_id: str, agv_grade: str = "M") -> bool:
+        """
+        将 AGV 注册为联邦学习客户端
+
+        Args:
+            agv_id: AGV 唯一标识
+            agv_grade: AGV 等级 (S/M/L/XL/XXL)
+
+        Returns:
+            True if registration successful
+        """
+        if self._fl_coordinator is None:
+            logger.warning("Federated learning not enabled")
+            return False
+        try:
+            self._fl_coordinator.register_agv(agv_id, agv_grade)
+            logger.info(f"AGV {agv_id} registered to FL system")
+            return True
+        except Exception as e:
+            logger.error(f"FL AGV registration failed: {e}")
+            return False
+
+    def start_fl_round(self) -> Optional[Dict[str, Any]]:
+        """
+        启动一轮联邦学习
+
+        Returns:
+            轮次结果字典，失败返回 None
+        """
+        if self._fl_coordinator is None:
+            logger.warning("Federated learning not enabled")
+            return None
+        try:
+            result = self._fl_coordinator.start_training_round()
+            if result is not None:
+                self._fl_round_count += 1
+                self._fl_last_result = result
+            return result
+        except Exception as e:
+            logger.error(f"FL round failed: {e}")
+            return None
+
+    def get_fl_status(self) -> Dict[str, Any]:
+        """
+        获取联邦学习状态
+
+        Returns:
+            FL 状态字典
+        """
+        if self._fl_coordinator is None:
+            return {"enabled": False, "message": "Federated learning not enabled"}
+        try:
+            status = self._fl_coordinator.get_system_status()
+            status["round_count"] = self._fl_round_count
+            status["last_result"] = {
+                "round": getattr(self._fl_last_result, 'round', None),
+                "loss": getattr(self._fl_last_result, 'loss', None),
+                "accuracy": getattr(self._fl_last_result, 'accuracy', None),
+            } if self._fl_last_result else None
+            status["enabled"] = True
+            return status
+        except Exception as e:
+            return {"enabled": True, "error": str(e)}
+
+    def trigger_swarm_task(self, task_type: str, target_agvs: List[str],
+                           task_config: Optional[Dict[str, Any]] = None) -> Optional[str]:
+        """
+        触发蜂群任务
+
+        Args:
+            task_type: 任务类型 ("transport"/"patrol"/"inspection"/"assembly")
+            target_agvs: 目标 AGV ID 列表 (这些AGV需先注册到蜂群)
+            task_config: 任务配置，包含 source_point, target_point 等
+
+        Returns:
+            任务 ID，失败返回 None
+        """
+        if self._swarm_coord is None:
+            logger.warning("Swarm coordination not enabled")
+            return None
+        try:
+            from .agv_swarm_coordinator import SwarmTask, TaskPriority
+            cfg = task_config or {}
+            task = SwarmTask(
+                task_type=task_type,
+                priority=TaskPriority.P2_MEDIUM,
+                source_point=tuple(cfg.get('source', [0.0, 0.0, 0.0])),
+                target_point=tuple(cfg.get('dest', [10.0, 0.0, 0.0])),
+                payload=cfg.get('payload', 0.0),
+                required_agv_spec=cfg.get('agv_spec', 'M'),
+                deadline=cfg.get('deadline', 3600.0),
+            )
+            task_id = self._swarm_coord.add_task(task)
+            logger.info(f"Swarm task triggered: {task_id} ({task_type})")
+            return task_id
+        except Exception as e:
+            logger.error(f"Swarm task trigger failed: {e}")
+            return None
+
+    def get_swarm_status(self) -> Dict[str, Any]:
+        """
+        获取蜂群协调状态
+
+        Returns:
+            蜂群状态字典
+        """
+        if self._swarm_coord is None:
+            return {"enabled": False, "message": "Swarm coordination not enabled"}
+        try:
+            return {
+                "enabled": True,
+                "num_agvs": len(getattr(self._swarm_coord, '_agvs', {})),
+                "active_tasks": len(getattr(self._swarm_coord, '_active_tasks', [])),
+            }
+        except Exception as e:
+            return {"enabled": True, "error": str(e)}
+
     def get_status(self) -> Dict[str, Any]:
         """获取 Pipeline 完整状态"""
         return {
@@ -666,6 +878,8 @@ class EmbodiedPipeline:
                 "task_executor": self._task_executor is not None,
                 "hil": self._hil_runner is not None,
                 "simulation": self._sim_enhancer is not None,
+                "federated_learning": self._fl_coordinator is not None,
+                "swarm_coordination": self._swarm_coord is not None,
             },
             "error": self._error_message,
         }
@@ -745,6 +959,7 @@ class EmbodiedPipeline:
                     'state': self._state.value,
                     'uptime_s': self.uptime_s,
                     'error_message': self._error_message,
+                    'fl_round_count': self._fl_round_count,
                 },
                 'task_queue': [
                     {

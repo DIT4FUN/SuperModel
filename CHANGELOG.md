@@ -1,3 +1,25 @@
+## v3.9.3 (2026-04-14) [FEDERATED LEARNING + SWARM INTEGRATION]
+### Core Highlights
+- ✅ **14 New Tests Passing** (`tests/embodiment/test_embodied_pipeline.py`, 60 total in file)
+- 🔗 **Federated Learning Integration** (`src/embodied/embodied_pipeline.py`):
+  - `PipelineConfig.enable_federated_learning`: FL开关配置
+  - `PipelineConfig.fl_num_clients/fl_local_epochs/fl_rounds/fl_aggregation`: FL参数配置
+  - `EmbodiedPipeline._fl_coordinator`: 联邦学习协调器 (FederatedLearningCoordinator)
+  - `EmbodiedPipeline.register_agv_to_fl(agv_id, agv_grade)`: AGV注册到FL系统
+  - `EmbodiedPipeline.start_fl_round()`: 启动一轮联邦学习
+  - `EmbodiedPipeline.get_fl_status()`: 获取FL状态 (enabled/round_count/registered_clients/last_result)
+  - FL round count持久化到 `save_state()` / `restore_state()`
+- 🤖 **Swarm Coordination Integration** (`src/embodied/embodied_pipeline.py`):
+  - `PipelineConfig.enable_swarm_coordination`: 蜂群协调开关
+  - `EmbodiedPipeline._swarm_coord`: 蜂群协调器 (AGVSwarmCoordinator)
+  - `EmbodiedPipeline.trigger_swarm_task(task_type, target_agvs, task_config)`: 触发蜂群任务
+  - `EmbodiedPipeline.get_swarm_status()`: 获取蜂群状态
+  - MinimalSwarmScene: 导航图场景对象 (navigation_points + path_segments接口)
+- 📊 **Module Status Updates**: `get_status()` 增加 federated_learning 和 swarm_coordination 模块报告
+- 🔢 **Pipeline测试总数**: 60项全部通过 (原46项 + 14项新测试)
+
+---
+
 ## v3.9.2 (2026-04-14) [EMBODIED LONG-TERM MEMORY SYSTEM]
 ### Core Highlights
 - ✅ **39 New Tests Passing** (`tests/test_embodied_long_term_memory.py`)

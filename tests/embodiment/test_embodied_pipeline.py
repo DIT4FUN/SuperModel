@@ -605,3 +605,198 @@ class TestIntegrationScenarios:
             state = pipeline.get_scene_state()
             assert state['scene_type'] == scene.upper()
             pipeline.stop()
+
+
+# ============================================================
+# Federated Learning + Swarm Integration Tests (v3.9.3)
+# ============================================================
+
+class TestFederatedLearningIntegration:
+    """联邦学习与Pipeline集成测试"""
+
+    def test_pipeline_with_fl_enabled(self):
+        """测试启用FL的Pipeline创建"""
+        config = PipelineConfig(
+            grade='L',
+            mode=PipelineMode.SIMULATION,
+            enable_federated_learning=True,
+        )
+        p = EmbodiedPipeline(config=config)
+        assert config.enable_federated_learning is True
+
+    def test_fl_coordinator_initialized(self):
+        """测试FL协调器正确初始化"""
+        config = PipelineConfig(
+            grade='L',
+            mode=PipelineMode.SIMULATION,
+            enable_federated_learning=True,
+            fl_num_clients=4,
+        )
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        assert p._fl_coordinator is not None
+        assert p.get_status()['modules']['federated_learning'] is True
+        p.stop()
+
+    def test_register_agv_to_fl(self):
+        """测试AGV注册到FL系统"""
+        config = PipelineConfig(grade='L', enable_federated_learning=True)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        ok = p.register_agv_to_fl('agv_fl_001', 'L')
+        assert ok is True
+        status = p.get_fl_status()
+        assert status['enabled'] is True
+        assert status['registered_clients'] >= 1
+        p.stop()
+
+    def test_fl_status_fields(self):
+        """测试FL状态返回正确字段"""
+        config = PipelineConfig(grade='M', enable_federated_learning=True)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        status = p.get_fl_status()
+        assert 'enabled' in status
+        assert 'round_count' in status
+        assert status['round_count'] == 0
+        p.stop()
+
+    def test_fl_disabled_returns_proper_message(self):
+        """测试FL禁用时返回正确的提示"""
+        config = PipelineConfig(grade='M', enable_federated_learning=False)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        status = p.get_fl_status()
+        assert status.get('enabled') is False
+        p.stop()
+
+
+class TestSwarmCoordinationIntegration:
+    """蜂群协调与Pipeline集成测试"""
+
+    def test_pipeline_with_swarm_enabled(self):
+        """测试启用蜂群协调的Pipeline创建"""
+        config = PipelineConfig(
+            grade='L',
+            mode=PipelineMode.SIMULATION,
+            enable_swarm_coordination=True,
+        )
+        p = EmbodiedPipeline(config=config)
+        assert config.enable_swarm_coordination is True
+
+    def test_swarm_coordinator_initialized(self):
+        """测试蜂群协调器正确初始化"""
+        config = PipelineConfig(
+            grade='L',
+            mode=PipelineMode.SIMULATION,
+            enable_swarm_coordination=True,
+            fl_num_clients=3,
+        )
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        assert p._swarm_coord is not None
+        assert p.get_status()['modules']['swarm_coordination'] is True
+        p.stop()
+
+    def test_swarm_task_trigger(self):
+        """测试蜂群任务触发"""
+        config = PipelineConfig(grade='L', enable_swarm_coordination=True)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        task_id = p.trigger_swarm_task(
+            'transport',
+            ['agv_s001', 'agv_s002'],
+            {'dest': [10.0, 0.0, 0.0], 'source': [0.0, 0.0, 0.0]}
+        )
+        assert task_id is not None
+        assert len(task_id) > 0
+        p.stop()
+
+    def test_swarm_task_with_inspection_type(self):
+        """测试inspection类型蜂群任务"""
+        config = PipelineConfig(grade='L', enable_swarm_coordination=True)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        task_id = p.trigger_swarm_task('inspection', ['agv_001'], {'dest': [5.0, 5.0, 0.0]})
+        assert task_id is not None
+        p.stop()
+
+    def test_swarm_disabled_returns_proper_message(self):
+        """测试蜂群禁用时返回正确的提示"""
+        config = PipelineConfig(grade='M', enable_swarm_coordination=False)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        status = p.get_swarm_status()
+        assert status.get('enabled') is False
+        p.stop()
+
+
+class TestFLAndSwarmCombined:
+    """FL + Swarm 联合测试"""
+
+    def test_pipeline_with_both_enabled(self):
+        """测试同时启用FL和蜂群"""
+        config = PipelineConfig(
+            grade='XL',
+            mode=PipelineMode.SIMULATION,
+            enable_federated_learning=True,
+            enable_swarm_coordination=True,
+            fl_num_clients=4,
+        )
+        p = EmbodiedPipeline(config=config)
+        p.start()
+        assert p._fl_coordinator is not None
+        assert p._swarm_coord is not None
+        assert p.get_status()['modules']['federated_learning'] is True
+        assert p.get_status()['modules']['swarm_coordination'] is True
+        p.stop()
+
+    def test_fl_register_then_swarm_task(self):
+        """测试FL注册和蜂群任务联合流程"""
+        config = PipelineConfig(
+            grade='L',
+            enable_federated_learning=True,
+            enable_swarm_coordination=True,
+        )
+        p = EmbodiedPipeline(config=config)
+        p.start()
+
+        # Register to FL
+        ok = p.register_agv_to_fl('agv_combined_001', 'L')
+        assert ok is True
+
+        # Trigger swarm task
+        task_id = p.trigger_swarm_task('transport', ['agv_combined_001'], {'dest': [20.0, 0.0, 0.0]})
+        assert task_id is not None
+
+        # Verify both systems report correct state
+        fl_status = p.get_fl_status()
+        swarm_status = p.get_swarm_status()
+        assert fl_status['enabled'] is True
+        assert swarm_status['enabled'] is True
+
+        p.stop()
+
+    def test_save_restore_with_fl_round_count(self):
+        """测试FL轮次计数在状态保存/恢复中的正确性"""
+        config = PipelineConfig(grade='L', enable_federated_learning=True)
+        p = EmbodiedPipeline(config=config)
+        p.start()
+
+        # Manually increment round count (simulate FL training)
+        p._fl_round_count = 5
+
+        # Save state
+        state = p.save_state()
+        assert state['pipeline']['fl_round_count'] == 5
+
+        p.stop()
+
+    def test_grade_config_passed_to_fl(self):
+        """测试AGV等级配置正确传递给FL系统"""
+        for grade in ['S', 'M', 'L', 'XL', 'XXL']:
+            config = PipelineConfig(grade=grade, enable_federated_learning=True)
+            p = EmbodiedPipeline(config=config)
+            p.start()
+            assert p._fl_coordinator is not None
+            p.stop()
