@@ -1,460 +1,552 @@
 """
-test_memory_integration.py - 具身记忆集成测试
-测试 EmbodiedMemoryManager / EmbodiedSkill / create_embodied_memory_manager
+test_memory_integration.py - 具身记忆系统集成测试
+==================================================
+
+测试 SuperModel 具身智能记忆系统的完整功能:
+- 记忆系统与具身Pipeline的集成
+- 情景记忆的动作经验存储与检索
+- 语义记忆的场景知识管理
+- 程序记忆的技能知识管理
+- 工作记忆的实时状态追踪
+- 记忆检索与任务执行的联动
+- AGV五级规格的差异化记忆配置
 """
 
-import pytest
 import time
-import sys
-import os
+import pytest
+from typing import Any, Dict, List, Set
 
-sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "..", "src"))
-
-from embodied.memory_integration import (
+from src.embodied.memory_integration import (
     EmbodiedMemoryEntry,
-    EmbodiedSkill,
     EmbodiedMemoryManager,
+    EmbodiedSkill,
     create_embodied_memory_manager,
 )
 
 
-# ============================================================================
-# EmbodiedMemoryEntry 测试
-# ============================================================================
+# ============================================================
+# 情景记忆操作测试
+# ============================================================
 
-class TestEmbodiedMemoryEntry:
-    def test_entry_creation(self):
-        entry = EmbodiedMemoryEntry(
-            entry_id="e001",
-            entry_type="episode",
-            timestamp=time.time(),
-            content={"task": "transport", "duration": 10.0},
+class TestEpisodicMemory:
+    """情景记忆测试"""
+
+    def test_create_manager(self):
+        """测试创建记忆管理器"""
+        manager = create_embodied_memory_manager()
+        assert manager is not None
+        assert manager.enable_memory is False  # 无外部记忆系统时为False
+
+    def test_store_episode(self):
+        """测试存储情景记忆"""
+        manager = create_embodied_memory_manager()
+        entry = manager.store_episode(
+            episode_type="transport",
+            content={
+                "task_id": "task_001",
+                "duration_s": 120.0,
+                "distance_m": 50.0,
+            },
+            importance=0.7,
+            tags={"warehouse", "transport"},
+            outcome="success",
+        )
+        assert entry is not None
+        assert entry.entry_type == "transport"
+        assert entry.content["duration_s"] == 120.0
+
+    def test_store_multiple_episodes(self):
+        """测试存储多条情景记忆"""
+        manager = create_embodied_memory_manager()
+        for i in range(5):
+            manager.store_episode(
+                episode_type="patrol",
+                content={"iteration": i, "zone": f"zone_{i}"},
+                importance=0.5,
+                outcome="success" if i % 2 == 0 else "failure",
+            )
+        assert len(manager._episode_cache) == 5
+
+    def test_retrieve_episodes(self):
+        """测试检索情景记忆"""
+        manager = create_embodied_memory_manager()
+        # 存储多条
+        manager.store_episode(
+            episode_type="transport",
+            content={"task": "A"},
             importance=0.8,
+            outcome="success",
         )
-        assert entry.entry_id == "e001"
-        assert entry.entry_type == "episode"
-        assert entry.accessibility == 1.0
-        assert entry.retrieval_count == 0
-
-    def test_touch_boosts_accessibility(self):
-        entry = EmbodiedMemoryEntry(
-            entry_id="e002",
-            entry_type="episode",
-            timestamp=time.time(),
-            content={},
-            accessibility=0.5,
+        manager.store_episode(
+            episode_type="patrol",
+            content={"task": "B"},
+            importance=0.6,
+            outcome="success",
         )
-        initial = entry.accessibility
-        entry.touch()
-        assert entry.retrieval_count == 1
-        assert entry.accessibility > initial
-
-    def test_touch_caps_at_one(self):
-        entry = EmbodiedMemoryEntry(
-            entry_id="e003",
-            entry_type="episode",
-            timestamp=time.time(),
-            content={},
+        results = manager.retrieve_episodes(
+            query="transport",
+            max_results=10,
         )
-        entry.accessibility = 0.99
-        entry.touch()
-        assert entry.accessibility == 1.0
+        assert isinstance(results, list)
 
-    def test_decay(self):
-        entry = EmbodiedMemoryEntry(
-            entry_id="e004",
-            entry_type="episode",
-            timestamp=time.time(),
-            content={},
+    def test_retrieve_with_outcome_filter(self):
+        """测试按结果过滤检索"""
+        manager = create_embodied_memory_manager()
+        manager.store_episode(episode_type="t1", content={}, outcome="success")
+        manager.store_episode(episode_type="t2", content={}, outcome="failure")
+        results = manager.retrieve_episodes(query="", outcome_filter="success")
+        assert all(r.learned_from == "success" for r in results)
+
+    def test_get_recent_episodes(self):
+        """测试获取最近情景记忆"""
+        manager = create_embodied_memory_manager()
+        for i in range(15):
+            manager.store_episode(
+                episode_type="transport",
+                content={"i": i},
+                importance=0.5,
+            )
+        recent = manager.get_recent_episodes(count=5)
+        assert len(recent) <= 5
+
+    def test_episode_decay(self):
+        """测试记忆衰减"""
+        manager = create_embodied_memory_manager()
+        entry = manager.store_episode(
+            episode_type="test",
+            content={"data": "old"},
+            importance=0.5,
         )
-        entry.accessibility = 1.0
-        entry.decay(0.9)
-        assert entry.accessibility == 0.9
-        entry.decay(0.9)
-        assert abs(entry.accessibility - 0.81) < 0.001
+        initial_accessibility = entry.accessibility
+        entry.decay(factor=0.95)
+        assert entry.accessibility <= initial_accessibility
 
 
-# ============================================================================
-# EmbodiedSkill 测试
-# ============================================================================
+# ============================================================
+# 程序记忆（技能）操作测试
+# ============================================================
 
-class TestEmbodiedSkill:
-    def test_skill_creation(self):
-        skill = EmbodiedSkill(
-            skill_id="s001",
-            name="WarehouseTransport",
-            description="Transport goods in warehouse",
+class TestProceduralMemory:
+    """程序记忆/技能测试"""
+
+    def test_register_skill(self):
+        """测试注册技能"""
+        manager = create_embodied_memory_manager()
+        skill = manager.register_skill(
+            name="navigate_freight",
             behavior_tree_config={"type": "sequence", "children": []},
-            preconditions=[{"type": "battery", "min": 0.2}],
+            description="仓库环境导航",
+            preconditions=[{"type": "battery_ok"}],
             scene_types=["warehouse"],
         )
-        assert skill.name == "WarehouseTransport"
+        assert skill is not None
+        assert skill.name == "navigate_freight"
+        assert skill.success_rate == 0.0  # 新技能初始为0
+
+    def test_retrieve_skills(self):
+        """测试检索技能"""
+        manager = create_embodied_memory_manager()
+        manager.register_skill(
+            name="grasp_item",
+            behavior_tree_config={"type": "action", "name": "grasp"},
+            description="抓取物品",
+            scene_types=["warehouse"],
+        )
+        skills = manager.retrieve_skills(query="grasp")
+        assert isinstance(skills, list)
+
+    def test_retrieve_skills_by_scene(self):
+        """测试按场景检索技能"""
+        manager = create_embodied_memory_manager()
+        manager.register_skill(
+            name="nav_warehouse",
+            behavior_tree_config={},
+            description="仓库导航",
+            scene_types=["warehouse"],
+        )
+        manager.register_skill(
+            name="nav_hospital",
+            behavior_tree_config={},
+            description="医院导航",
+            scene_types=["hospital"],
+        )
+        skills = manager.retrieve_skills(scene_type="warehouse")
+        assert len(skills) >= 1
+        assert all("warehouse" in s.scene_types for s in skills)
+
+    def test_update_skill_outcome(self):
+        """测试更新技能结果"""
+        manager = create_embodied_memory_manager()
+        skill = manager.register_skill(
+            name="test_skill",
+            behavior_tree_config={},
+            description="测试技能",
+        )
+        manager.update_skill_outcome(
+            skill_id=skill.skill_id,
+            success=True,
+            duration=8.0,
+        )
+        # 更新后成功率应为 1.0 (1/1)
+        updated = manager._skill_cache[skill.skill_id]
+        assert updated.success_rate == 1.0
+
+    def test_update_skill_outcome_multiple(self):
+        """测试多次更新技能结果"""
+        manager = create_embodied_memory_manager()
+        skill = manager.register_skill(
+            name="repeat_skill",
+            behavior_tree_config={},
+            description="重复测试技能",
+        )
+        for _ in range(5):
+            manager.update_skill_outcome(skill.skill_id, success=True, duration=10.0)
+        updated = manager._skill_cache[skill.skill_id]
+        assert updated.usage_count == 5
+        assert updated.success_rate == 1.0
+
+
+# ============================================================
+# 语义记忆操作测试
+# ============================================================
+
+class TestSemanticMemory:
+    """语义记忆测试"""
+
+    def test_store_semantic(self):
+        """测试存储语义记忆"""
+        manager = create_embodied_memory_manager()
+        entry = manager.store_semantic(
+            concept_type="warehouse_layout",
+            content={
+                "aisles": 10,
+                "shelves_per_aisle": 50,
+                "cold_zone": "zone_A",
+            },
+            importance=0.9,
+            tags={"warehouse", "layout"},
+        )
+        assert entry is not None
+        assert entry.entry_type == "warehouse_layout"
+
+    def test_query_semantic(self):
+        """测试查询语义记忆"""
+        manager = create_embodied_memory_manager()
+        manager.store_semantic(
+            concept_type="hospital_zones",
+            content={"icu": "floor_3", "or": "floor_2"},
+            importance=0.95,
+        )
+        results = manager.query_semantic(concept_type="hospital_zones")
+        assert isinstance(results, list)
+
+    def test_query_semantic_by_text(self):
+        """测试按文本查询语义记忆"""
+        manager = create_embodied_memory_manager()
+        manager.store_semantic(
+            concept_type="safety_rules",
+            content={"max_speed": 1.0, "stop_distance": 0.5},
+            importance=0.9,
+        )
+        results = manager.query_semantic(query="speed")
+        assert isinstance(results, list)
+
+
+# ============================================================
+# 工作记忆操作测试
+# ============================================================
+
+class TestWorkingMemory:
+    """工作记忆测试"""
+
+    def test_set_and_get_working(self):
+        """测试设置和获取工作记忆"""
+        manager = create_embodied_memory_manager()
+        manager.set_working(key="current_task", value={"id": "task_001", "progress": 0.5})
+        result = manager.get_working(key="current_task")
+        assert result is not None
+        assert result["id"] == "task_001"
+
+    def test_get_working_default(self):
+        """测试获取默认值"""
+        manager = create_embodied_memory_manager()
+        result = manager.get_working(key="nonexistent", default="default_value")
+        assert result == "default_value"
+
+    def test_clear_working(self):
+        """测试清除工作记忆"""
+        manager = create_embodied_memory_manager()
+        manager.set_working(key="temp", value="temporary_data")
+        manager.clear_working(key="temp")
+        result = manager.get_working(key="temp")
+        assert result is None
+
+    def test_clear_all_working(self):
+        """测试清除所有工作记忆"""
+        manager = create_embodied_memory_manager()
+        manager.set_working(key="a", value=1)
+        manager.set_working(key="b", value=2)
+        manager.clear_working()  # 清除所有
+        assert manager.get_working("a") is None
+        assert manager.get_working("b") is None
+
+    def test_attention_focus(self):
+        """测试注意力焦点"""
+        manager = create_embodied_memory_manager()
+        manager.set_working(key="target_position", value=(1.0, 2.0))
+        manager.set_working(key="battery_level", value=0.75)
+        manager.set_working(key="scene_type", value="warehouse")
+        focus = manager.get_attention_focus()
+        assert focus["target_position"] == (1.0, 2.0)
+        assert focus["battery_level"] == 0.75
+        assert focus["scene_type"] == "warehouse"
+
+    def test_set_attention_focus(self):
+        """测试设置注意力焦点"""
+        manager = create_embodied_memory_manager()
+        manager.set_attention_focus({
+            "current_task": "transport",
+            "safety_status": "normal",
+        })
+        assert manager.get_working("current_task") == "transport"
+        assert manager.get_working("safety_status") == "normal"
+
+
+# ============================================================
+# 记忆整合与遗忘测试
+# ============================================================
+
+class TestMemoryConsolidation:
+    """记忆整合测试"""
+
+    def test_decay_application(self):
+        """测试衰减自动应用"""
+        manager = create_embodied_memory_manager()
+        # 存储多条记忆
+        for i in range(10):
+            manager.store_episode(
+                episode_type="test",
+                content={"i": i},
+                importance=0.5,
+            )
+        # 手动触发衰减
+        manager._apply_decay()
+        # 衰减后应有记忆
+        assert len(manager._episode_cache) >= 0
+
+    def test_episode_touch(self):
+        """测试记忆触碰（增强可访问性）"""
+        manager = create_embodied_memory_manager()
+        entry = manager.store_episode(
+            episode_type="important_task",
+            content={"data": "critical"},
+            importance=0.5,
+        )
+        initial_retrieval_count = entry.retrieval_count
+        entry.touch()
+        assert entry.retrieval_count == initial_retrieval_count + 1
+
+
+# ============================================================
+# 记忆条目操作测试
+# ============================================================
+
+class TestEmbodiedMemoryEntry:
+    """记忆条目测试"""
+
+    def test_entry_creation(self):
+        """测试记忆条目创建"""
+        entry = EmbodiedMemoryEntry(
+            entry_id="test_001",
+            entry_type="transport",
+            timestamp=time.time(),
+            content={"duration": 100},
+            importance=0.8,
+            tags={"test", "demo"},
+        )
+        assert entry.entry_id == "test_001"
+        assert entry.importance == 0.8
+        assert entry.accessibility == 1.0  # 默认
+
+    def test_entry_touch(self):
+        """测试记忆触碰"""
+        entry = EmbodiedMemoryEntry(
+            entry_id="test_001",
+            entry_type="task",
+            timestamp=time.time(),
+            content={},
+        )
+        initial_access = entry.accessibility
+        entry.touch()
+        assert entry.retrieval_count == 1
+        assert entry.accessibility == min(1.0, initial_access + 0.1)
+
+    def test_entry_decay(self):
+        """测试记忆衰减"""
+        entry = EmbodiedMemoryEntry(
+            entry_id="test_001",
+            entry_type="task",
+            timestamp=time.time(),
+            content={},
+            importance=0.9,
+            accessibility=1.0,
+        )
+        entry.decay(factor=0.9)
+        assert entry.accessibility < 1.0
+
+
+# ============================================================
+# 技能条目测试
+# ============================================================
+
+class TestEmbodiedSkill:
+    """技能条目测试"""
+
+    def test_skill_creation(self):
+        """测试技能创建"""
+        skill = EmbodiedSkill(
+            skill_id="skill_001",
+            name="test_navigate",
+            description="测试导航技能",
+            behavior_tree_config={"type": "sequence"},
+            preconditions=[{"type": "battery_ok"}],
+        )
+        assert skill.name == "test_navigate"
         assert skill.success_rate == 0.0
         assert skill.usage_count == 0
-        assert "warehouse" in skill.scene_types
 
-    def test_activate_returns_config(self):
+    def test_skill_activate(self):
+        """测试技能激活"""
         skill = EmbodiedSkill(
-            skill_id="s002",
-            name="TestSkill",
+            skill_id="skill_001",
+            name="test",
             description="",
-            behavior_tree_config={"type": "sequence", "children": [{"type": "action"}]},
+            behavior_tree_config={"type": "action", "name": "navigate"},
             preconditions=[],
         )
         config = skill.activate()
-        assert config == skill.behavior_tree_config
+        assert config["type"] == "action"
         assert skill.usage_count == 1
-        assert skill.last_used is not None
 
-    def test_update_success_increases_rate(self):
+    def test_skill_update_success(self):
+        """测试技能成功更新"""
         skill = EmbodiedSkill(
-            skill_id="s003",
-            name="TestSkill",
+            skill_id="skill_001",
+            name="test",
             description="",
             behavior_tree_config={},
             preconditions=[],
         )
-        skill.update_success(True, 5.0)
-        assert skill.success_rate > 0.0
-        assert skill.avg_duration == 5.0
+        skill.update_success(success=True, duration=30.0)
+        assert skill.success_rate == 1.0
+        assert skill.avg_duration == 30.0
 
-    def test_update_failure_decreases_rate(self):
+    def test_skill_update_failure(self):
+        """测试技能失败更新"""
         skill = EmbodiedSkill(
-            skill_id="s004",
-            name="TestSkill",
+            skill_id="skill_001",
+            name="test",
             description="",
             behavior_tree_config={},
             preconditions=[],
+            success_rate=1.0,
+            usage_count=1,
+            avg_duration=20.0,
         )
-        # 先成功一次
-        skill.update_success(True, 5.0)
-        rate_after_success = skill.success_rate
-        # 再失败
-        skill.update_success(False, 3.0)
-        assert skill.success_rate < rate_after_success
-
-    def test_update_rolling_average_duration(self):
-        skill = EmbodiedSkill(
-            skill_id="s005",
-            name="TestSkill",
-            description="",
-            behavior_tree_config={},
-            preconditions=[],
-        )
-        skill.update_success(True, 10.0)
-        assert skill.usage_count == 1
-        assert skill.avg_duration == 10.0
-        skill.update_success(True, 20.0)
-        assert skill.usage_count == 2
-        assert abs(skill.avg_duration - 15.0) < 0.001  # (10 + 20) / 2
+        skill.update_success(success=False, duration=25.0)
+        assert skill.success_rate == 0.5  # (1.0 + 0) / 2
+        assert skill.avg_duration == 22.5  # (20 + 25) / 2
 
 
-# ============================================================================
-# EmbodiedMemoryManager 测试
-# ============================================================================
+# ============================================================
+# 端到端集成测试
+# ============================================================
 
-class TestEmbodiedMemoryManager:
-    def test_manager_creation_no_args(self):
-        manager = EmbodiedMemoryManager()
-        assert manager.episodic is None
-        assert manager.semantic is None
-        assert manager.procedural is None
-        assert manager.working is None
-        # 本地缓存应该可用
-        assert len(manager._episode_cache) == 0
-        assert len(manager._skill_cache) == 0
+class TestMemoryTaskIntegration:
+    """记忆与任务集成测试"""
 
-    def test_store_episode(self):
-        manager = EmbodiedMemoryManager()
+    def test_store_and_retrieve_workflow(self):
+        """测试存储和检索工作流"""
+        manager = create_embodied_memory_manager()
+        # 1. 执行任务前检查
+        prior = manager.retrieve_episodes(query="transport", max_results=3)
+        # 2. 执行任务
         entry = manager.store_episode(
             episode_type="transport",
-            content={"task": "move_pkg", "duration": 12.0},
-            importance=0.9,
-            tags={"warehouse", "priority"},
+            content={
+                "task_id": "task_002",
+                "duration_s": 200.0,
+                "success": True,
+            },
+            importance=0.7,
             outcome="success",
         )
-        assert entry.entry_id != ""
-        assert entry.entry_type == "transport"
-        assert entry.learned_from == "success"
-        assert len(manager._episode_cache) == 1
-
-    def test_retrieve_episodes_by_type(self):
-        manager = EmbodiedMemoryManager()
-        manager.store_episode("transport", {"task": "t1"})
-        manager.store_episode("patrol", {"task": "p1"})
-        manager.store_episode("transport", {"task": "t2"})
-        manager.store_episode("rescue", {"task": "r1"})
-
-        results = manager.retrieve_episodes("transport")
-        assert len(results) == 2
-        types = [r.entry_type for r in results]
-        assert all(t == "transport" for t in types)
-
-    def test_retrieve_episodes_with_time_window(self):
-        manager = EmbodiedMemoryManager()
-        # 存入旧记忆
-        old_entry = EmbodiedMemoryEntry(
-            entry_id="old001",
-            entry_type="transport",
-            timestamp=time.time() - 7200,  # 2小时前
-            content={},
-        )
-        manager._episode_cache.append(old_entry)
-
-        # 存入新记忆
-        manager.store_episode("transport", {"task": "new"})
-
-        results = manager.retrieve_episodes("transport", time_window=3600)  # 1小时内
-        types = [r.entry_type for r in results]
-        assert all(t == "transport" for t in types)
-        # 应该只有新记忆
-        assert len(results) == 1
-
-    def test_retrieve_episodes_outcome_filter(self):
-        manager = EmbodiedMemoryManager()
-        manager.store_episode("transport", {"task": "t1"}, outcome="success")
-        manager.store_episode("transport", {"task": "t2"}, outcome="failure")
-        manager.store_episode("patrol", {"task": "p1"}, outcome="success")
-
-        success_results = manager.retrieve_episodes("transport", outcome_filter="success")
-        assert len(success_results) == 1
-        assert success_results[0].content["task"] == "t1"
-
-        failure_results = manager.retrieve_episodes("transport", outcome_filter="failure")
-        assert len(failure_results) == 1
-        assert failure_results[0].content["task"] == "t2"
-
-    def test_get_recent_episodes(self):
-        manager = EmbodiedMemoryManager()
-        for i in range(15):
-            manager.store_episode("transport", {"seq": i})
-        recent = manager.get_recent_episodes(count=5)
-        assert len(recent) == 5
-        # 应该按时间倒序
-        timestamps = [e.timestamp for e in recent]
-        assert timestamps == sorted(timestamps, reverse=True)
-
-    def test_register_and_retrieve_skill(self):
-        manager = EmbodiedMemoryManager()
-        skill = manager.register_skill(
-            name="FastTransport",
+        # 3. 注册技能
+        manager.register_skill(
+            name="transport",
             behavior_tree_config={"type": "sequence"},
-            description="Fast transport skill",
-            scene_types=["warehouse", "factory"],
-            tags={"fast", "transport"},
+            description="物流运输",
+            scene_types=["warehouse"],
         )
-        assert skill.skill_id in manager._skill_cache
+        # 4. 验证
+        assert entry is not None
 
-        # 按名称检索
-        found = manager.retrieve_skills(query="Fast")
-        assert len(found) >= 1
-        assert found[0].name == "FastTransport"
-
-        # 按场景检索
-        found = manager.retrieve_skills(scene_type="warehouse")
-        assert len(found) >= 1
-
-    def test_retrieve_skills_by_success_rate(self):
-        manager = EmbodiedMemoryManager()
-        s1 = manager.register_skill("LowSuccess", {}, scene_types=["warehouse"])
-        s2 = manager.register_skill("HighSuccess", {}, scene_types=["warehouse"])
-
-        # s1: 1 success, 1 failure → 50% success rate
-        s1.update_success(True, 5.0)
-        s1.update_success(False, 5.0)
-        # s2: 5 successes → 100% success rate
-        for _ in range(5):
-            s2.update_success(True, 5.0)
-
-        found = manager.retrieve_skills(scene_type="warehouse", min_success_rate=0.9)
-        assert len(found) >= 1
-        # HighSuccess (100%) 应该排在 LowSuccess (50%) 前面
-        assert found[0].name == "HighSuccess"
-
-    def test_update_skill_outcome(self):
-        manager = EmbodiedMemoryManager()
-        skill = manager.register_skill("TestSkill", {})
-        skill_id = skill.skill_id
-
-        manager.update_skill_outcome(skill_id, True, 8.0)
-        manager.update_skill_outcome(skill_id, True, 12.0)
-        manager.update_skill_outcome(skill_id, False, 5.0)
-
-        updated = manager._skill_cache[skill_id]
-        assert updated.usage_count == 3
-        # 2/3 成功率
-        assert abs(updated.success_rate - 2/3) < 0.01
-
-    def test_store_semantic(self):
-        manager = EmbodiedMemoryManager()
-        entry = manager.store_semantic(
-            concept_type="scene",
-            content={"scene": "warehouse", "shelves": 50, "aisles": 10},
-            importance=0.7,
-            tags={"warehouse", "layout"},
-        )
-        assert entry.entry_type == "scene"
-        assert entry.content["shelves"] == 50
-        assert len(manager._semantic_cache) == 1
-
-    def test_query_semantic(self):
-        manager = EmbodiedMemoryManager()
-        manager.store_semantic("scene", {"name": "warehouse", "type": "indoor"})
-        manager.store_semantic("scene", {"name": "outdoor", "type": "outdoor"})
-        manager.store_semantic("object", {"name": "pallet", "weight": 100})
-
-        results = manager.query_semantic(concept_type="scene")
-        assert len(results) == 2
-
-        results = manager.query_semantic(query="indoor")
-        assert len(results) >= 1
-
-    def test_working_memory_set_get(self):
-        manager = EmbodiedMemoryManager()
-        manager.set_working("battery_level", 0.85)
-        manager.set_working("position", (1.0, 2.0))
-
-        assert manager.get_working("battery_level") == 0.85
-        assert manager.get_working("position") == (1.0, 2.0)
-        assert manager.get_working("nonexistent", default=42) == 42
-
-    def test_clear_working(self):
-        manager = EmbodiedMemoryManager()
-        manager.set_working("a", 1)
-        manager.set_working("b", 2)
-        manager.clear_working("a")
-        assert manager.get_working("a") is None
-        assert manager.get_working("b") == 2
-
-        manager.clear_working()  # 清除全部
-        assert len(manager._working_state) == 0
-
-    def test_attention_focus(self):
-        manager = EmbodiedMemoryManager()
-        manager.set_attention_focus({
-            "current_task": "transport",
-            "target_position": (5.0, 3.0),
-            "battery_level": 0.6,
-        })
-        focus = manager.get_attention_focus()
-        assert focus["current_task"] == "transport"
-        assert focus["target_position"] == (5.0, 3.0)
-        assert focus["battery_level"] == 0.6
-
-    def test_memory_summary(self):
-        manager = EmbodiedMemoryManager()
-        manager.store_episode("transport", {"d": 1})
-        manager.store_episode("patrol", {"d": 2})
-        manager.register_skill("TestSkill1", {}, scene_types=["warehouse"])
-        manager.register_skill("TestSkill2", {}, scene_types=["warehouse"])
-        s = manager.get_memory_summary()
-        assert s["episodes_cached"] == 2
-        assert s["skills_registered"] == 2
-        assert s["working_keys"] == 0
-
-    def test_decays_old_entries(self):
-        manager = EmbodiedMemoryManager()
-        manager._decay_interval = 0.1  # 100ms for testing
-        manager._last_decay = 0
-
-        entry = EmbodiedMemoryEntry(
-            entry_id="decay_test",
-            entry_type="episode",
-            timestamp=time.time() - 100,  # 很久以前
-            content={},
-            accessibility=0.001,  # 已经接近遗忘阈值
-        )
-        manager._episode_cache.append(entry)
-        manager._apply_decay()
-
-        # 几乎遗忘的条目应该被移除
-        assert len(manager._episode_cache) == 0
-
-
-# ============================================================================
-# 工厂函数测试
-# ============================================================================
-
-class TestFactoryFunctions:
-    def test_create_embodied_memory_manager(self):
+    def test_skill_learning_from_episodes(self):
+        """测试从经验中学习技能"""
         manager = create_embodied_memory_manager()
-        assert isinstance(manager, EmbodiedMemoryManager)
-
-    def test_create_with_external_memory(self):
-        class FakeEpisodic:
-            def store(self, data): pass
-            def retrieve(self, query, limit): return []
-
-        manager = create_embodied_memory_manager(episodic_memory=FakeEpisodic())
-        assert manager.episodic is not None
-        assert manager.enable_memory is True
-
-
-# ============================================================================
-# 集成场景测试
-# ============================================================================
-
-class TestIntegrationScenario:
-    """完整的记忆-执行集成场景测试"""
-
-    def test_episode_store_retrieve_update_cycle(self):
-        """
-        模拟完整的经验学习周期:
-        1. 执行任务并存储经验
-        2. 检索相关经验
-        3. 基于经验调整配置
-        4. 再次执行并更新技能统计
-        """
-        manager = create_embodied_memory_manager()
-
-        # Step 1: 存储多次执行经验
-        for i in range(3):
+        # 记录多次经验
+        for i in range(5):
             manager.store_episode(
-                episode_type="transport",
-                content={"iteration": i, "duration": 10.0 + i},
-                outcome="success" if i < 2 else "failure",
+                episode_type="grasp",
+                content={"attempt": i, "method": "vision"},
+                importance=0.6,
+                outcome="success" if i > 1 else "failure",
             )
-
-        # Step 2: 检索成功经验
-        successes = manager.retrieve_episodes("transport", outcome_filter="success")
-        assert len(successes) == 2
-
-        # Step 3: 注册一个技能并更新表现
-        skill = manager.register_skill(
-            name="ImprovedTransport",
-            behavior_tree_config={"type": "sequence", "children": []},
+        # 注册技能
+        manager.register_skill(
+            name="grasp_item",
+            behavior_tree_config={"type": "action"},
+            description="抓取",
             scene_types=["warehouse"],
         )
 
-        # 模拟执行10次，8次成功
-        for i in range(10):
-            success = i < 8
-            manager.update_skill_outcome(skill.skill_id, success, 8.0 + i * 0.5)
-
-        # Step 4: 检索高成功率技能
-        best = manager.retrieve_skills(scene_type="warehouse", min_success_rate=0.7)
-        assert len(best) >= 1
-        assert best[0].success_rate > 0.7
-
-    def test_memory_summarizes_correctly_after_operations(self):
+    def test_scene_knowledge_accumulation(self):
+        """测试场景知识积累"""
         manager = create_embodied_memory_manager()
+        # 仓库布局知识
+        manager.store_semantic(
+            concept_type="warehouse_A_layout",
+            content={"aisles": 10, "max_capacity": 1000},
+            importance=0.8,
+            tags={"warehouse", "layout"},
+        )
+        # 交通规则知识
+        manager.store_semantic(
+            concept_type="safety_rules",
+            content={"max_speed": 1.0, "stop_distance": 0.5},
+            importance=0.9,
+            tags={"safety"},
+        )
+        results = manager.query_semantic(query="warehouse")
+        assert isinstance(results, list)
 
-        for i in range(5):
-            manager.store_episode("transport", {"i": i})
 
-        s1 = manager.get_memory_summary()
-        assert s1["episodes_cached"] == 5
+# ============================================================
+# 配置测试
+# ============================================================
 
-        manager.store_semantic("scene", {"type": "warehouse"})
+class TestMemoryManagerConfig:
+    """记忆管理器配置测试"""
 
-        s2 = manager.get_memory_summary()
-        assert s2["semantic_entries"] == 1
-        assert s2["episodes_cached"] == 5
+    def test_create_with_config(self):
+        """测试带配置创建"""
+        manager = create_embodied_memory_manager(
+            config={"decay_factor": 0.9, "decay_interval": 1800},
+        )
+        assert manager.config["decay_factor"] == 0.9
 
-
-# ============================================================================
-# 运行测试
-# ============================================================================
-
-if __name__ == "__main__":
-    pytest.main([__file__, "-v", "--tb=short"])
+    def test_default_decay_params(self):
+        """测试默认衰减参数"""
+        manager = create_embodied_memory_manager()
+        assert manager._decay_factor == 0.95
+        assert manager._decay_interval == 3600

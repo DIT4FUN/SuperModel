@@ -1,3 +1,19 @@
+## v3.7.0 (2026-04-13) [SCENE TASK PLANNER + MEMORY INTEGRATION TESTS]
+### Core Highlights
+- ✅ **87 New Tests Passing** (total: 2800+ tests)
+- 📝 **Scene Task Planner Tests** (`tests/embodiment/test_scene_task_planner.py`, 52 tests):
+  - SceneTaskConfig, SceneTaskTemplate, SceneTaskLibrary (9 scene types, 3+ templates each)
+  - SceneTaskPlanner, Warehouse/Hospital/Factory/Restaurant/OutdoorTaskPlanner
+  - SceneAdaptationEngine with success-rate learning
+  - AGV 5-level grade adaptation coverage
+- 🧠 **Embodied Memory Integration Tests** (`tests/embodiment/test_memory_integration.py`, 35 tests):
+  - Episodic/Procedural/Semantic/Working memory operations
+  - EmbodiedMemoryEntry and EmbodiedSkill lifecycle
+  - Memory-task execution workflow integration
+  - Ebbinghaus forgetting curve decay
+
+---
+
 ## v3.1.2 (2026-04-13) [EMBODY INTEGRATION TESTS + REAL AGV ADAPTER]
 ### Core Highlights
 - ✅ **193 Tests Passing** (up from 137 base + 53 in v3.1.1 = 190)

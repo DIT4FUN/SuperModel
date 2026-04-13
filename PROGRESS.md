@@ -4,6 +4,41 @@
 
 ---
 
+## v3.7.0 (2026-04-13 21:43) - 场景任务规划器测试 + 具身记忆系统测试 + 87项新测试
+
+### 本次更新
+
+✅ **场景任务规划器测试** (`tests/embodiment/test_scene_task_planner.py`, ~700行, 52项):
+   - `TestSceneTaskConfig`: 场景任务配置 (AGV五级等级适配)
+   - `TestSceneTaskTemplate`: 场景任务模板字段验证
+   - `TestSceneTaskLibrary`: 场景任务库 (9大场景类型, 每场景3+模板)
+   - `TestSceneTaskPlanner`: 通用规划器 (任务规划/重规划/活跃计划)
+   - `TestWarehouseTaskPlanner`: 仓库规划器 (区域巡检规划)
+   - `TestHospitalTaskPlanner`: 医院规划器 (验证配送任务规划)
+   - `TestFactoryTaskPlanner`: 工厂规划器 (生产线任务规划)
+   - `TestRestaurantTaskPlanner`: 餐厅规划器 (食物配送规划)
+   - `TestOutdoorTaskPlanner`: 户外规划器 (户外配送规划)
+   - `TestSceneAdaptationEngine`: 场景自适应引擎 (成功率学习/参数调整)
+   - `TestSceneTaskPlannerFactory`: 工厂函数 (全局单例)
+   - `TestSceneTaskPlannerGradeAdaptation`: AGV五级规格全覆盖测试
+   - 52项全部通过 ✅
+
+✅ **具身记忆系统集成测试** (`tests/embodiment/test_memory_integration.py`, ~550行, 35项):
+   - `TestEpisodicMemory`: 情景记忆 (存储/检索/衰减/过滤)
+   - `TestProceduralMemory`: 程序记忆/技能 (注册/检索/更新/场景过滤)
+   - `TestSemanticMemory`: 语义记忆 (存储/概念查询/文本搜索)
+   - `TestWorkingMemory`: 工作记忆 (设置/获取/清除/注意力焦点)
+   - `TestMemoryConsolidation`: 记忆整合与遗忘
+   - `TestEmbodiedMemoryEntry`: 记忆条目操作 (触碰/衰减)
+   - `TestEmbodiedSkill`: 技能条目 (激活/成功失败更新)
+   - `TestMemoryTaskIntegration`: 端到端集成 (存储-检索-技能-知识工作流)
+   - `TestMemoryManagerConfig`: 配置管理 (衰减因子/间隔)
+   - 35项全部通过 ✅
+
+📊 整体研发进度: ~95%
+
+---
+
 ## v3.5.0 (2026-04-13 19:55) - 具身智能统一Pipeline + 新增46项测试
 ### 本次更新
 ✅ **具身智能统一Pipeline** (`src/embodied/embodied_pipeline.py`, ~650行):
