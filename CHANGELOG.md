@@ -1,3 +1,50 @@
+## v3.12.0 (2026-04-14) [DIGITAL TWIN + HIL + TERRAIN DEFORMATION + STATE ESTIMATION]
+### Core Highlights
+- ✅ **4 New Classes Added** to `simulation_enhancement.py` (+649 lines):
+  - `DigitalTwinSynchronizer`: 数字孪生同步器 - 仿真与真实AGV状态双向同步, 卡尔曼滤波状态估计, 延迟补偿, 异常检测与自动重置
+  - `HILBridge`: 硬件在环测试桥接 - 连接真实AGV硬件与仿真环境, 传感器数据注入, 执行器命令转发, 模式切换(SIL/HIL/Hardware), 故障注入与测试
+  - `TerrainDeformationModel`: 地形变形模型 - 动态地形变形(压痕/斜坡/凹陷), 载荷相关地面沉降, 轮胎印迹生成, 地形恢复模型, 对AGV运动学影响计算
+  - `AGVStateEstimator`: AGV状态估计器 - EKF融合轮式里程计/IMU/激光雷达定位
+- ✅ **42 New Tests** added to `test_simulation_enhancement.py` (total: 136 tests)
+- ✅ **Module Exports Updated**: `src/embodied/__init__.py` exports all new classes
+
+### DigitalTwinSynchronizer
+- `sync_frequency`, `use_kalman_filter`, `position_drift_threshold` 可配置
+- `update_real_state()` / `update_sim_state()`: 实时状态更新
+- `get_compensated_state()`: 线性插值延迟补偿
+- `_update_kalman_filter()`: EKF状态估计
+- `sync()`: 完整同步 + 异常检测 + 自动重置
+- `set_mode()`: 支持 real_to_sim / sim_to_real / bidirectional / estimation_only
+
+### HILBridge
+- `HILBridge.Mode`: SIMULATION_ONLY / HIL_SOFTWARE_IN_LOOP / HIL_HARDWARE_IN_LOOP / HARDWARE_ONLY
+- `register_sensor_interface()` / `register_actuator_interface()`: 硬件接口注册
+- `read_real_sensors()`: 真实传感器数据读取 (支持故障注入)
+- `forward_command()`: 控制命令转发到真实驱动器 (支持饱和故障)
+- `inject_fault()`: 故障注入 (sensor_dropout / command_delay / actuator_saturation / sensor_noise_spike / communication_loss)
+- `get_performance_metrics()`: 实时性能监控 (loop时间/overrun检测)
+
+### TerrainDeformationModel
+- `apply_wheel_deformation()`: 单轮地面变形 (高斯压痕)
+- `apply_agv_deformation()`: AGV整体变形
+- `recover_terrain()`: 弹性/塑性地形恢复
+- `get_terrain_adjustment()`: 地形对AGV运动的影响 (高度偏移/角度偏移/坡度因子)
+- `add_pothole()`: 坑洼建模
+
+### AGVStateEstimator
+- `predict()`: 基于运动模型的EKF预测 (直线/弧线)
+- `update_odometry()` / `update_imu()`: 多传感器融合更新
+- 状态维度: [x, y, theta, v, omega, ax, ay]
+
+### Tests (136 total in test_simulation_enhancement.py)
+- TestDigitalTwinSynchronizer: 8 tests (初始化/状态更新/Kalman滤波/延迟补偿/异常检测/模式设置/重置)
+- TestHILBridge: 11 tests (传感器注册/读取/故障注入/命令转发/生命周期/性能指标)
+- TestTerrainDeformationModel: 9 tests (变形/恢复/坑洼/斜坡/重置)
+- TestAGVStateEstimator: 8 tests (预测/弧线运动/里程计更新/IMU更新/状态/协方差/重置)
+- TestNewClassesIntegration: 3 tests (数字孪生+HIL集成/地形+状态估计/完整HIL流水线)
+
+---
+
 ## v3.9.3 (2026-04-14) [FEDERATED LEARNING + SWARM INTEGRATION]
 ### Core Highlights
 - ✅ **14 New Tests Passing** (`tests/embodiment/test_embodied_pipeline.py`, 60 total in file)

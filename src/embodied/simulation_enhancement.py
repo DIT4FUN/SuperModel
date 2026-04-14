@@ -15,7 +15,7 @@ SuperModel 超模态大模型具身智能系统
 from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass, field
-from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Callable, Dict, List, Literal, Optional, Tuple, Union
 from enum import Enum
 import logging
 import random
@@ -1652,4 +1652,681 @@ __all__ += [
     'TerrainModelingSystem',
     'TerrainRegion',
     'FloorType',
+    'DigitalTwinSynchronizer',
+    'HILBridge',
+    'TerrainDeformationModel',
+    'AGVStateEstimator',
 ]
+
+
+# ---------------------------------------------------------------------
+# Digital Twin Synchronizer - 数字孪生同步器
+# ---------------------------------------------------------------------
+
+class DigitalTwinSynchronizer:
+    """
+    数字孪生同步器 - 仿真与真实AGV状态双向同步
+    
+    功能:
+    - 实时同步真实AGV位姿到仿真环境
+    - 同步仿真状态到真实AGV控制接口
+    - 延迟补偿与状态插值
+    - 状态估计 (扩展卡尔曼滤波)
+    - 异常检测与自动切换
+    """
+
+    def __init__(
+        self,
+        sync_frequency: float = 50.0,
+        max_latency_compensation: float = 0.5,
+        use_kalman_filter: bool = True,
+        measurement_noise_position: float = 0.01,
+        measurement_noise_velocity: float = 0.05,
+        process_noise_position: float = 0.005,
+        process_noise_velocity: float = 0.02,
+        position_drift_threshold: float = 0.5,
+        velocity_drift_threshold: float = 0.5,
+    ):
+        self.sync_frequency = sync_frequency
+        self.dt = 1.0 / sync_frequency
+        self.max_latency_compensation = max_latency_compensation
+        self.use_kalman_filter = use_kalman_filter
+
+        # 真实AGV状态 (来自传感器)
+        self.real_position = np.zeros(3)    # x, y, theta
+        self.real_velocity = np.zeros(2)    # v, omega
+        self.real_timestamp = 0.0
+
+        # 仿真AGV状态
+        self.sim_position = np.zeros(3)
+        self.sim_velocity = np.zeros(2)
+        self.sim_timestamp = 0.0
+
+        # 数字孪生融合状态 (估计值)
+        self.estimated_position = np.zeros(3)
+        self.estimated_velocity = np.zeros(2)
+        self.estimated_timestamp = 0.0
+
+        # 卡尔曼滤波器状态 (位姿: x, y, theta, v, omega)
+        self.state_dim = 5
+        self.x = np.zeros(self.state_dim)  # [x, y, theta, v, omega]
+        self.P = np.eye(self.state_dim) * 0.1  # 协方差
+        self.F = np.eye(self.state_dim)  # 状态转移矩阵
+        self.Q = np.diag([process_noise_position, process_noise_position,
+                           0.01, process_noise_velocity, process_noise_velocity])
+        self.R = np.diag([measurement_noise_position, measurement_noise_position,
+                           0.01, measurement_noise_velocity, measurement_noise_velocity])
+
+        # 延迟补偿
+        self.position_buffer: List[Tuple[float, np.ndarray]] = []
+        self.velocity_buffer: List[Tuple[float, np.ndarray]] = []
+        self.buffer_max_len = 100
+
+        # 异常检测
+        self.position_drift_threshold = position_drift_threshold
+        self.velocity_drift_threshold = velocity_drift_threshold
+        self.is_diverged = False
+        self.divergence_reason = ""
+
+        # 同步模式
+        self.mode = "bidirectional"
+        self.sync_enabled = True
+
+        # 统计
+        self.sync_count = 0
+        self.last_sync_time = 0.0
+        self.drift_history: List[float] = []
+
+    def update_real_state(self, position: np.ndarray, velocity: np.ndarray, timestamp: float) -> None:
+        """更新真实AGV状态 (来自传感器)"""
+        self.real_position = np.array(position, dtype=np.float64)
+        self.real_velocity = np.array(velocity, dtype=np.float64)
+        self.real_timestamp = timestamp
+        self.position_buffer.append((timestamp, self.real_position.copy()))
+        self.velocity_buffer.append((timestamp, self.real_velocity.copy()))
+        while len(self.position_buffer) > self.buffer_max_len:
+            self.position_buffer.pop(0)
+        while len(self.velocity_buffer) > self.buffer_max_len:
+            self.velocity_buffer.pop(0)
+
+    def update_sim_state(self, position: np.ndarray, velocity: np.ndarray, timestamp: float) -> None:
+        """更新仿真AGV状态"""
+        self.sim_position = np.array(position, dtype=np.float64)
+        self.sim_velocity = np.array(velocity, dtype=np.float64)
+        self.sim_timestamp = timestamp
+
+    def get_compensated_state(self, target_timestamp: float) -> Tuple[np.ndarray, np.ndarray]:
+        """获取延迟补偿后的状态 (线性插值)"""
+        if not self.position_buffer:
+            return self.real_position, self.real_velocity
+        pos = self._interpolate_buffer(self.position_buffer, target_timestamp)
+        vel = self._interpolate_buffer(self.velocity_buffer, target_timestamp)
+        return pos, vel
+
+    def _interpolate_buffer(self, buffer: List[Tuple[float, np.ndarray]], target_time: float) -> np.ndarray:
+        """线性插值缓冲区数据"""
+        if len(buffer) == 0:
+            return np.zeros(3)
+        if len(buffer) == 1:
+            return buffer[0][1].copy()
+        for i in range(len(buffer) - 1):
+            t0, s0 = buffer[i]
+            t1, s1 = buffer[i + 1]
+            if t0 <= target_time <= t1:
+                alpha = (target_time - t0) / max(t1 - t0, 1e-6)
+                return s0 + alpha * (s1 - s0)
+        return buffer[-1][1].copy() if target_time > buffer[-1][0] else buffer[0][1].copy()
+
+    def _update_kalman_filter(self, dt: float) -> None:
+        """更新扩展卡尔曼滤波器"""
+        theta = self.x[2]
+        v = self.x[3]
+        self.F[0, 3] = dt * np.cos(theta)
+        self.F[0, 4] = -dt * v * np.sin(theta)
+        self.F[1, 3] = dt * np.sin(theta)
+        self.F[1, 4] = dt * v * np.cos(theta)
+        self.F[2, 4] = dt
+        x_pred = self._state_transition(self.x, dt)
+        P_pred = self.F @ self.P @ self.F.T + self.Q
+        compensated_pos, compensated_vel = self.get_compensated_state(self.real_timestamp)
+        z = np.concatenate([compensated_pos, compensated_vel])
+        H = np.zeros((5, 5))
+        np.fill_diagonal(H, 1.0)
+        y = z - H @ x_pred
+        S = H @ P_pred @ H.T + self.R
+        K = P_pred @ H.T @ np.linalg.inv(S + 1e-6 * np.eye(5))
+        self.x = x_pred + K @ y
+        self.P = (np.eye(5) - K @ H) @ P_pred
+        self.x[2] = self._normalize_angle(self.x[2])
+
+    def _state_transition(self, x: np.ndarray, dt: float) -> np.ndarray:
+        """状态转移函数"""
+        x_new = x.copy()
+        theta, v, omega = x[2], x[3], x[4]
+        x_new[0] += dt * v * np.cos(theta)
+        x_new[1] += dt * v * np.sin(theta)
+        x_new[2] += dt * omega
+        x_new[2] = self._normalize_angle(x_new[2])
+        return x_new
+
+    @staticmethod
+    def _normalize_angle(angle: float) -> float:
+        while angle > np.pi: angle -= 2 * np.pi
+        while angle < -np.pi: angle += 2 * np.pi
+        return angle
+
+    def sync(self, current_time: float) -> Dict[str, Any]:
+        """执行同步"""
+        if not self.sync_enabled:
+            return {'status': 'disabled', 'action': 'none'}
+
+        # 计算当前仿真与真实状态之间的漂移 (在使用之前)
+        position_drift = np.linalg.norm(self.sim_position[:2] - self.real_position[:2])
+        velocity_drift = np.linalg.norm(self.sim_velocity - self.real_velocity)
+
+        # 检测异常
+        if position_drift > self.position_drift_threshold:
+            self.is_diverged = True
+            self.divergence_reason = f"position drift {position_drift:.3f}m > threshold"
+        elif velocity_drift > self.velocity_drift_threshold:
+            self.is_diverged = True
+            self.divergence_reason = f"velocity drift {velocity_drift:.3f}m/s > threshold"
+        else:
+            self.is_diverged = False
+            self.divergence_reason = ""
+
+        compensated_pos, compensated_vel = self.get_compensated_state(current_time)
+        if self.use_kalman_filter:
+            self._update_kalman_filter(self.dt)
+            self.estimated_position = self.x[:3]
+            self.estimated_velocity = self.x[3:5]
+        else:
+            alpha = 0.7
+            self.estimated_position = alpha * compensated_pos + (1 - alpha) * self.sim_position
+            self.estimated_velocity = alpha * compensated_vel + (1 - alpha) * self.sim_velocity
+        self.estimated_timestamp = current_time
+
+        self.drift_history.append(position_drift)
+        if len(self.drift_history) > 100:
+            self.drift_history.pop(0)
+
+        result = {
+            'status': 'diverged' if self.is_diverged else 'ok',
+            'action': 'reset_simulation' if self.is_diverged else 'none',
+            'estimated_position': self.estimated_position.tolist(),
+            'estimated_velocity': self.estimated_velocity.tolist(),
+            'drift': float(position_drift),
+            'is_diverged': self.is_diverged,
+            'divergence_reason': self.divergence_reason,
+        }
+
+        if self.is_diverged:
+            self.sim_position = self.real_position.copy()
+            self.sim_velocity = self.real_velocity.copy()
+            self.x[:3] = self.real_position
+            self.x[3:5] = self.real_velocity
+        elif self.mode in ("real_to_sim", "bidirectional"):
+            self.sim_position = compensated_pos.copy()
+            self.sim_velocity = compensated_vel.copy()
+        self.sync_count += 1
+        self.last_sync_time = current_time
+        return result
+
+    def get_estimated_state(self) -> Tuple[np.ndarray, np.ndarray]:
+        return self.estimated_position.copy(), self.estimated_velocity.copy()
+
+    def set_mode(self, mode: str) -> None:
+        """设置同步模式"""
+        valid_modes = {"real_to_sim", "sim_to_real", "bidirectional", "estimation_only"}
+        if mode in valid_modes:
+            self.mode = mode
+
+    def reset(self) -> None:
+        self.real_position = np.zeros(3)
+        self.real_velocity = np.zeros(2)
+        self.sim_position = np.zeros(3)
+        self.sim_velocity = np.zeros(2)
+        self.estimated_position = np.zeros(3)
+        self.estimated_velocity = np.zeros(2)
+        self.x = np.zeros(self.state_dim)
+        self.P = np.eye(self.state_dim) * 0.1
+        self.position_buffer.clear()
+        self.velocity_buffer.clear()
+        self.is_diverged = False
+        self.sync_count = 0
+
+
+# ---------------------------------------------------------------------
+# Hardware-in-the-Loop Bridge - HIL测试桥接
+# ---------------------------------------------------------------------
+
+class HILBridge:
+    """
+    硬件在环 (HIL) 测试桥接模块
+    
+    功能:
+    - 连接真实AGV硬件与仿真环境
+    - 传感器数据注入 (用真实传感器数据替换仿真传感器)
+    - 执行器命令转发 (将仿真命令发往真实驱动器)
+    - 模式切换 (纯仿真 / HIL / 纯硬件)
+    - 实时性能监控
+    - 故障注入与测试
+    """
+
+    class Mode(Enum):
+        SIMULATION_ONLY = "simulation_only"
+        HIL_SOFTWARE_IN_LOOP = "hil_software_in_loop"
+        HIL_HARDWARE_IN_LOOP = "hil_hardware_in_loop"
+        HARDWARE_ONLY = "hardware_only"
+
+    def __init__(self, grade: str = "M", control_frequency: float = 100.0, sensor_frequency: float = 200.0):
+        self.grade = grade
+        self.control_frequency = control_frequency
+        self.sensor_frequency = sensor_frequency
+        self.dt_control = 1.0 / control_frequency
+        self.dt_sensor = 1.0 / sensor_frequency
+        self.mode = self.Mode.HIL_SOFTWARE_IN_LOOP
+        self.real_sensor_interfaces: Dict[str, Any] = {}
+        self.real_actuator_interfaces: Dict[str, Any] = {}
+        self.simulator: Optional[Any] = None
+        self.inject_lidar = True
+        self.inject_imu = True
+        self.inject_force = True
+        self.inject_tactile = True
+        self.inject_odometry = True
+        self.forward_commands = True
+        self.control_loop_times: List[float] = []
+        self.sensor_loop_times: List[float] = []
+        self.max_control_loop_time = 1.0 / control_frequency * 0.8
+        self.max_sensor_loop_time = 1.0 / sensor_frequency * 0.8
+        self.is_running = False
+        self.is_paused = False
+        self.total_steps = 0
+        self.real_sensor_updates = 0
+        self.sim_sensor_updates = 0
+        self.commands_forwarded = 0
+        self.real_commands_forwarded = 0
+        self.inject_count = 0
+        self.injectable_faults: Dict[str, bool] = {
+            'sensor_dropout': False, 'command_delay': False,
+            'actuator_saturation': False, 'sensor_noise_spike': False,
+            'communication_loss': False,
+        }
+        self.fault_timers: Dict[str, float] = {k: 0.0 for k in self.injectable_faults}
+        self.fault_params: Dict[str, Dict[str, Any]] = {
+            'sensor_dropout': {'probability': 0.05, 'duration': 0.5},
+            'command_delay': {'delay': 0.1},
+            'actuator_saturation': {'limit': 1.5},
+            'sensor_noise_spike': {'multiplier': 10.0, 'duration': 0.2},
+            'communication_loss': {'duration': 2.0, 'interval': 10.0},
+        }
+        self.step_callbacks: List[Callable[[Dict[str, Any]], None]] = []
+
+    def set_simulator(self, simulator: Any) -> None:
+        self.simulator = simulator
+
+    def register_sensor_interface(self, sensor_name: str, interface: Any) -> None:
+        self.real_sensor_interfaces[sensor_name] = interface
+
+    def register_actuator_interface(self, actuator_name: str, interface: Any) -> None:
+        self.real_actuator_interfaces[actuator_name] = interface
+
+    def read_real_sensors(self, sensor_names: Optional[List[str]] = None) -> Dict[str, Any]:
+        data = {}
+        targets = sensor_names if sensor_names else list(self.real_sensor_interfaces.keys())
+        for name in targets:
+            if name in self.real_sensor_interfaces:
+                try:
+                    interface = self.real_sensor_interfaces[name]
+                    if hasattr(interface, 'read'):
+                        reading = interface.read()
+                        if self.injectable_faults['sensor_dropout'] and random.random() < self.fault_params['sensor_dropout']['probability']:
+                            reading = None
+                        data[name] = reading
+                except Exception:
+                    data[name] = None
+        return data
+
+    def forward_command(self, command: Dict[str, Any]) -> None:
+        if not self.forward_commands:
+            return
+        actuator = command.get('actuator', 'motor')
+        cmd_type = command.get('type', 'speed')
+        value = command.get('value')
+        if self.injectable_faults['actuator_saturation']:
+            limit = self.fault_params['actuator_saturation']['limit']
+            if isinstance(value, (int, float)) and abs(value) > limit:
+                value = np.sign(value) * limit
+            elif isinstance(value, (list, tuple)) and len(value) == 2:
+                v0 = value[0]
+                v1 = value[1]
+                if abs(v0) > limit:
+                    v0 = np.sign(v0) * limit
+                if abs(v1) > limit:
+                    v1 = np.sign(v1) * limit
+                value = (v0, v1)
+        if actuator in self.real_actuator_interfaces:
+            interface = self.real_actuator_interfaces[actuator]
+            if cmd_type == 'speed' and hasattr(interface, 'set_speed'):
+                interface.set_speed(*value)
+            self.real_commands_forwarded += 1
+
+    def step_simulation(self, real_sensor_data: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
+        if not self.is_running or self.is_paused:
+            return {'status': 'not_running'}
+        import time
+        step_start = time.perf_counter()
+        result = {'mode': self.mode.value, 'injected_sensors': [], 'simulated_sensors': [], 'commands_forwarded': 0}
+        if self.mode in (self.Mode.HIL_SOFTWARE_IN_LOOP, self.Mode.HIL_HARDWARE_IN_LOOP):
+            real_data = real_sensor_data or self.read_real_sensors()
+            if real_data:
+                self.real_sensor_updates += 1
+        for fault_name, active in self.injectable_faults.items():
+            if active:
+                self._update_fault(fault_name)
+        step_time = time.perf_counter() - step_start
+        self.control_loop_times.append(step_time)
+        if len(self.control_loop_times) > 1000:
+            self.control_loop_times.pop(0)
+        self.total_steps += 1
+        for callback in self.step_callbacks:
+            try:
+                callback(result)
+            except Exception:
+                pass
+        return result
+
+    def _update_fault(self, fault_name: str) -> None:
+        self.fault_timers[fault_name] += self.dt_control
+
+    def inject_fault(self, fault_name: str, active: bool = True) -> None:
+        if fault_name in self.injectable_faults:
+            self.injectable_faults[fault_name] = active
+            if active:
+                self.fault_timers[fault_name] = 0.0
+
+    def get_performance_metrics(self) -> Dict[str, Any]:
+        import statistics
+        control_times = self.control_loop_times[-100:]
+        metrics = {
+            'mode': self.mode.value, 'is_running': self.is_running, 'is_paused': self.is_paused,
+            'total_steps': self.total_steps, 'real_sensor_updates': self.real_sensor_updates,
+            'commands_forwarded': self.commands_forwarded, 'real_commands_forwarded': self.real_commands_forwarded,
+            'inject_count': self.inject_count,
+            'active_faults': [k for k, v in self.injectable_faults.items() if v],
+        }
+        if control_times:
+            metrics['control_loop_mean_ms'] = statistics.mean(control_times) * 1000
+            metrics['control_loop_max_ms'] = max(control_times) * 1000
+            metrics['control_loop_overrun'] = any(t > self.max_control_loop_time for t in control_times)
+        return metrics
+
+    def start(self) -> None:
+        self.is_running = True
+        self.is_paused = False
+        self.total_steps = 0
+
+    def pause(self) -> None:
+        self.is_paused = True
+
+    def resume(self) -> None:
+        self.is_paused = False
+
+    def stop(self) -> None:
+        self.is_running = False
+        self.is_paused = False
+
+    def reset(self) -> None:
+        self.is_running = False
+        self.is_paused = False
+        self.total_steps = 0
+        self.real_sensor_updates = 0
+        self.sim_sensor_updates = 0
+        self.commands_forwarded = 0
+        self.real_commands_forwarded = 0
+        self.inject_count = 0
+        self.control_loop_times.clear()
+        self.sensor_loop_times.clear()
+        for fault_name in self.injectable_faults:
+            self.injectable_faults[fault_name] = False
+            self.fault_timers[fault_name] = 0.0
+
+
+# ---------------------------------------------------------------------
+# Terrain Deformation Model - 地形变形模型
+# ---------------------------------------------------------------------
+
+class TerrainDeformationModel:
+    """
+    地形变形模型 - 仿真地面形变对AGV的影响
+    
+    功能:
+    - 动态地形变形 (压痕/斜坡/凹陷)
+    - 载荷相关的地面沉降
+    - 轮胎印迹生成
+    - 地形恢复模型
+    - 对AGV运动学的影响计算
+    """
+
+    def __init__(self, grid_resolution: float = 0.05, grid_size: Tuple[int, int] = (200, 200)):
+        self.grid_resolution = grid_resolution
+        self.nx, self.ny = grid_size
+        self.height_map = np.zeros((self.nx, self.ny), dtype=np.float32)
+        self.deformation_log: List[Dict[str, Any]] = []
+        self.soil_stiffness = 1e6
+        self.recovery_rate = 0.01
+        self.permanent_deformation_ratio = 0.3
+        self.terrain_type: str = "elastic"
+
+    def world_to_grid(self, x: float, y: float) -> Tuple[int, int]:
+        gx = int(x / self.grid_resolution + self.nx // 2)
+        gy = int(y / self.grid_resolution + self.ny // 2)
+        gx = max(0, min(self.nx - 1, gx))
+        gy = max(0, min(self.ny - 1, gy))
+        return gx, gy
+
+    def apply_wheel_deformation(self, x: float, y: float, load_force: float,
+                                 wheel_radius: float = 0.07, dt: float = 0.01) -> float:
+        contact_radius = wheel_radius * 0.8
+        contact_area = np.pi * contact_radius ** 2
+        gx, gy = self.world_to_grid(x, y)
+        deform_max = load_force / (self.soil_stiffness * contact_area + 1e-10)
+        gr = int(contact_radius / self.grid_resolution) + 1
+        for di in range(-gr, gr + 1):
+            for dj in range(-gr, gr + 1):
+                ni, nj = gx + di, gy + dj
+                if 0 <= ni < self.nx and 0 <= nj < self.ny:
+                    dist = np.sqrt(di ** 2 + dj ** 2) * self.grid_resolution
+                    if dist < contact_radius:
+                        influence = np.exp(-(dist / contact_radius) ** 2)
+                        delta_z = deform_max * influence
+                        self.height_map[ni, nj] -= delta_z
+        self.deformation_log.append({'x': x, 'y': y, 'load_force': load_force, 'max_deformation': deform_max})
+        return deform_max
+
+    def apply_agv_deformation(self, position: np.ndarray, total_mass: float,
+                               wheel_base: float = 0.45, dt: float = 0.01) -> Dict[str, float]:
+        x, y, theta = position[0], position[1], position[2]
+        gravity = 9.81
+        total_force = total_mass * gravity
+        half_base = wheel_base / 2
+        front_x = x + half_base * np.cos(theta)
+        front_y = y + half_base * np.sin(theta)
+        rear_x = x - half_base * np.cos(theta)
+        rear_y = y - half_base * np.sin(theta)
+        front_load = total_force * 0.5
+        rear_load = total_force * 0.5
+        front_def = self.apply_wheel_deformation(front_x, front_y, front_load, dt=dt)
+        rear_def = self.apply_wheel_deformation(rear_x, rear_y, rear_load, dt=dt)
+        return {'front': front_def, 'rear': rear_def}
+
+    def recover_terrain(self, dt: float) -> None:
+        if self.terrain_type == "rigid":
+            return
+        recovery = self.recovery_rate * dt
+        if self.terrain_type == "elastic":
+            self.height_map += recovery
+            self.height_map = np.minimum(self.height_map, 0.0)
+        elif self.terrain_type == "plastic":
+            self.height_map += recovery * self.permanent_deformation_ratio
+            self.height_map = np.minimum(self.height_map, 0.0)
+
+    def get_height_at(self, x: float, y: float) -> float:
+        gx, gy = self.world_to_grid(x, y)
+        return float(self.height_map[gx, gy])
+
+    def get_slope_at(self, x: float, y: float) -> Tuple[float, float]:
+        gx, gy = self.world_to_grid(x, y)
+        if gx > 0 and gx < self.nx - 1:
+            dz_dx = (self.height_map[gx + 1, gy] - self.height_map[gx - 1, gy]) / (2 * self.grid_resolution)
+        else:
+            dz_dx = 0.0
+        if gy > 0 and gy < self.ny - 1:
+            dz_dy = (self.height_map[gx, gy + 1] - self.height_map[gx, gy - 1]) / (2 * self.grid_resolution)
+        else:
+            dz_dy = 0.0
+        return dz_dx, dz_dy
+
+    def get_terrain_adjustment(self, x: float, y: float) -> Dict[str, float]:
+        z = self.get_height_at(x, y)
+        dz_dx, dz_dy = self.get_slope_at(x, y)
+        pitch_angle = np.arctan(dz_dx)
+        roll_angle = np.arctan(dz_dy)
+        slope_factor = np.cos(pitch_angle) * np.cos(roll_angle)
+        return {'height_offset': z, 'pitch_offset': pitch_angle, 'roll_offset': roll_angle, 'slope_factor': slope_factor}
+
+    def add_pothole(self, x: float, y: float, radius: float = 0.1, depth: float = 0.02) -> None:
+        gx, gy = self.world_to_grid(x, y)
+        gr = int(radius / self.grid_resolution)
+        for di in range(-gr, gr + 1):
+            for dj in range(-gr, gr + 1):
+                ni, nj = gx + di, gy + dj
+                if 0 <= ni < self.nx and 0 <= nj < self.ny:
+                    dist = np.sqrt(di ** 2 + dj ** 2) * self.grid_resolution
+                    if dist < radius:
+                        self.height_map[ni, nj] -= depth * (1 - (dist / radius) ** 2)
+        self.deformation_log.append({'type': 'pothole', 'x': x, 'y': y, 'radius': radius, 'depth': depth})
+
+    def reset(self) -> None:
+        self.height_map.fill(0.0)
+        self.deformation_log.clear()
+
+
+# ---------------------------------------------------------------------
+# AGV State Estimator (EKF-based)
+# ---------------------------------------------------------------------
+
+class AGVStateEstimator:
+    """
+    AGV状态估计器 - 融合多传感器数据估计AGV状态
+    
+    使用扩展卡尔曼滤波 (EKF) 融合:
+    - 轮式里程计
+    - IMU
+    - 激光雷达定位
+    - GPS/RTK (可选)
+    """
+
+    def __init__(
+        self,
+        wheel_radius: float = 0.07,
+        wheel_base: float = 0.45,
+        process_noise_pos: float = 0.005,
+        process_noise_vel: float = 0.02,
+        odometry_noise: float = 0.01,
+        imu_noise_accel: float = 0.1,
+        imu_noise_gyro: float = 0.05,
+    ):
+        self.wheel_radius = wheel_radius
+        self.wheel_base = wheel_base
+        self.state_dim = 7
+        self.x = np.zeros(self.state_dim)
+        self.P = np.eye(self.state_dim) * 0.1
+        self.q_pos = process_noise_pos
+        self.q_vel = process_noise_vel
+        self.r_odom = odometry_noise
+        self.Q = np.diag([process_noise_pos, process_noise_pos, 0.01,
+                           process_noise_vel, 0.01, 0.1, 0.1])
+        self.R_odom = np.diag([odometry_noise] * 3)
+        self.R_imu = np.diag([imu_noise_accel, imu_noise_accel, imu_noise_gyro])
+        self.state_history: List[Dict[str, float]] = []
+
+    def predict(self, v: float, omega: float, dt: float) -> None:
+        theta = self.x[2]
+        if abs(omega) < 1e-6:
+            dx = v * np.cos(theta) * dt
+            dy = v * np.sin(theta) * dt
+            dtheta = 0.0
+        else:
+            r = v / omega
+            dtheta = omega * dt
+            dx = r * (np.sin(theta + dtheta) - np.sin(theta))
+            dy = r * (-np.cos(theta + dtheta) + np.cos(theta))
+        self.x[0] += dx
+        self.x[1] += dy
+        self.x[2] += dtheta
+        self.x[2] = self._normalize_angle(self.x[2])
+        self.x[3] = v
+        self.x[4] = omega
+        F = self._get_jacobian_F(v, omega, theta, dt)
+        self.P = F @ self.P @ F.T + self.Q
+
+    def update_odometry(self, x: float, y: float, theta: float) -> None:
+        z = np.array([x, y, theta])
+        H = np.zeros((3, self.state_dim))
+        H[:, :3] = np.eye(3)
+        y_res = z - self.x[:3]
+        y_res[2] = self._normalize_angle(y_res[2])
+        S = H @ self.P @ H.T + self.R_odom
+        K = self.P @ H.T @ np.linalg.inv(S + 1e-6 * np.eye(3))
+        self.x += K @ y_res  # full state update
+        self.x[2] = self._normalize_angle(self.x[2])
+        I_KH = np.eye(self.state_dim) - K @ H
+        self.P = I_KH @ self.P @ I_KH.T + K @ self.R_odom @ K.T
+
+    def update_imu(self, accel: np.ndarray, gyro: float) -> None:
+        z_accel = accel[:2]
+        z_gyro = gyro
+        H = np.zeros((3, self.state_dim))
+        H[2, 4] = 1.0
+        y = np.concatenate([z_accel, [z_gyro - self.x[4]]])
+        S = H @ self.P @ H.T + self.R_imu
+        K = self.P @ H.T @ np.linalg.inv(S + 1e-6 * np.eye(3))
+        self.x += K @ y
+        I_KH = np.eye(self.state_dim) - K @ H
+        self.P = I_KH @ self.P @ I_KH.T + K @ self.R_imu @ K.T
+
+    def get_state(self) -> Dict[str, float]:
+        return {'x': self.x[0], 'y': self.x[1], 'theta': self.x[2], 'v': self.x[3], 'omega': self.x[4], 'ax': self.x[5], 'ay': self.x[6]}
+
+    def get_covariance(self) -> np.ndarray:
+        return self.P.copy()
+
+    def _get_jacobian_F(self, v: float, omega: float, theta: float, dt: float) -> np.ndarray:
+        F = np.eye(self.state_dim)
+        if abs(omega) < 1e-6:
+            F[0, 2] = -v * np.sin(theta) * dt
+            F[0, 3] = np.cos(theta) * dt
+            F[1, 2] = v * np.cos(theta) * dt
+            F[1, 3] = np.sin(theta) * dt
+        else:
+            r = v / omega
+            dtheta = omega * dt
+            F[0, 2] = r * (np.cos(theta + dtheta) - np.cos(theta))
+            F[0, 3] = (np.sin(theta + dtheta) - np.sin(theta)) / omega
+            F[1, 2] = r * (-np.sin(theta + dtheta) + np.sin(theta))
+            F[1, 3] = (-np.cos(theta + dtheta) + np.cos(theta)) / omega
+        F[2, 4] = dt
+        return F
+
+    @staticmethod
+    def _normalize_angle(angle: float) -> float:
+        while angle > np.pi: angle -= 2 * np.pi
+        while angle < -np.pi: angle += 2 * np.pi
+        return angle
+
+    def reset(self) -> None:
+        self.x.fill(0.0)
+        self.P.fill(0.0)
+        np.fill_diagonal(self.P, 0.1)
+        self.state_history.clear()

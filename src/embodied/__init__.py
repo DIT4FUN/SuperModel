@@ -61,6 +61,10 @@ from .simulation_enhancement import (
     WeatherEffect,
     Obstacle,
     WEATHER_EFFECTS,
+    DigitalTwinSynchronizer,
+    HILBridge,
+    TerrainDeformationModel,
+    AGVStateEstimator,
 )
 
 from .real_agv_interface import (
