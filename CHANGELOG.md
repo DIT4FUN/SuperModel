@@ -1,3 +1,30 @@
+## v3.13.0 (2026-04-14) [RESTAURANT + OUTDOOR SCENES + NEW TESTS]
+### Core Highlights
+- ✅ **餐厅场景化具身智能** (restaurant_scene.py, 745行):
+  - RestaurantSceneController: 餐桌管理/餐具回收/订单追踪/卫生监控/菜单管理
+  - TableManager: 餐桌创建/状态管理/座位管理/可用餐桌查询
+  - DishCollector: 餐具分类回收/餐具统计
+  - OrderTracker: 订单生命周期管理/配送时间统计
+  - HygieneMonitor: 餐厅卫生监控/温度检测/卫生警报
+  - MenuManager: 菜单管理/可用性控制/按类别查询
+  - RestaurantZone/FoodCategory/FoodTemperature/OrderType完整枚举
+  - 52项测试全通过
+
+- ✅ **户外场景化具身智能** (outdoor_scene.py, 785行):
+  - OutdoorSceneController: 地形导航/天气监控/GPS定位/配送确认/紧急处理
+  - TerrainNavigator: 14种地形速度/稳定性/能耗因子, 路线规划
+  - WeatherMonitor: 12种天气条件/四级恶劣等级/操作建议/坡度限制
+  - GPSLocalizer: GPS/北斗融合/位置跟踪/距离计算/锁定状态统计
+  - DeliveryConfirmation: 配送确认/快递柜投递/完成率统计
+  - EmergencyHandler: 7类紧急情况/恢复动作/应急日志
+  - OutdoorZone(14区域)/TerrainType(14类型)/WeatherCondition(12种)
+  - 40项测试全通过
+
+- ✅ **embodied/__init__.py**: 新增餐厅/户外场景导出, 版本号更新至v3.12.0
+- ✅ **docs/MODEL_INDEX.md**: 新增restaurant_scene/outdoor_scene模块文档
+- ✅ **92项新增测试**: test_restaurant_scene.py (52项) + test_outdoor_scene.py (40项)
+- 总计: 2850+项pytest测试
+
 ## v3.12.0 (2026-04-14) [DIGITAL TWIN + HIL + TERRAIN DEFORMATION + STATE ESTIMATION]
 ### Core Highlights
 - ✅ **4 New Classes Added** to `simulation_enhancement.py` (+649 lines):

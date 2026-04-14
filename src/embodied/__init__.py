@@ -476,4 +476,38 @@ from .instruction_grounding import (
     create_grounding_module,
 )
 
-__version__ = "3.11.0"
+# 餐厅场景化具身智能
+from .restaurant_scene import (
+    RestaurantZone,
+    FoodCategory,
+    FoodTemperature,
+    OrderType,
+    RestaurantTask,
+    RestaurantTaskLibrary,
+    RestaurantSceneController,
+    TableManager,
+    DishCollector,
+    OrderTracker,
+    HygieneMonitor,
+    MenuManager,
+    get_restaurant_scene_controller,
+)
+
+# 户外场景化具身智能
+from .outdoor_scene import (
+    OutdoorZone,
+    TerrainType,
+    WeatherCondition,
+    WeatherSeverity,
+    OutdoorTask,
+    OutdoorTaskLibrary,
+    OutdoorSceneController,
+    TerrainNavigator,
+    WeatherMonitor,
+    GPSLocalizer,
+    DeliveryConfirmation,
+    EmergencyHandler,
+    get_outdoor_scene_controller,
+)
+
+__version__ = "3.13.0"

@@ -137,7 +137,7 @@ src/
 │   ├── memory_store.py     # 持久化存储层 (向量+结构化存储)
 │   ├── memory_retrieval.py # 统一检索引擎 (向量+关键词+语义)
 │   └── memory_consolidation.py # 记忆巩固 (从经验中提取知识/技能)
-├── embodied/        # 具身智能模块 (16个核心文件)
+├── embodied/        # 具身智能模块 (18个核心文件)
 │   ├── __init__.py
 │   ├── behavior_tree.py        # 行为树 + 具身任务规划器 (65KB, 51+节点)
 │   ├── embodied_pipeline.py    # 具身Pipeline (启动/任务执行/状态机)
@@ -155,6 +155,8 @@ src/
 │   ├── deployment.py          # 部署管理 (DeploymentValidator/HealthMonitor/EmergencyProcedure)
 │   ├── healthcare_scene.py    # 医疗场景具体化
 │   ├── industrial_scene.py    # 工业场景具体化
+│   ├── restaurant_scene.py    # 餐厅场景具体化 (TableManager/DishCollector/OrderTracker/HygieneMonitor)
+│   ├── outdoor_scene.py       # 户外场景具体化 (TerrainNavigator/WeatherMonitor/GPSLocalizer/EmergencyHandler)
 │   └── federated_learning.py  # 联邦学习 (FedAvg/ByzantineFilter/差分隐私)
 │
 └── config_loader.py   # 配置加载器
