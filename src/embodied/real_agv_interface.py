@@ -14,9 +14,11 @@ SuperModel 超模态大模型具身智能系统
 
 from __future__ import annotations
 import abc
+import enum
 import time
 import threading
 import queue
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union
 import numpy as np
@@ -667,15 +669,34 @@ class RealAGVController:
         self.initialized: bool = False
         self.running: bool = False
 
+        # 状态机
+        self.state_machine = AGVStateMachine(agv_id=f"agv_{id(self)}")
+        self.state_machine.connect()
+
+        # 心跳监控器 (延迟初始化)
+        self.heartbeat_monitor: Optional[AGVHeartbeatMonitor] = None
+
+        # 健康监控
+        self.health_monitor = AGVHealthMonitor(agv_id=f"agv_{id(self)}")
+
         # 当前状态
         self.current_velocity = np.zeros(2)  # v, w
         self.current_position = np.zeros(3)  # x, y, theta
         self.battery_voltage: float = 24.0
         self.battery_level: float = 1.0
 
+        # 电池阈值
+        self._battery_warning_voltage = 23.5
+        self._battery_critical_voltage = 22.0
+
     def initialize(self) -> bool:
         """初始化所有硬件"""
         try:
+            self.state_machine.transition(
+                self.state_machine.State.CONNECTING,
+                "initializing hardware"
+            )
+
             # 1. 初始化 CAN Bus
             self.can_driver = CANBusDriver(
                 interface=self.config.can_interface,
@@ -683,6 +704,7 @@ class RealAGVController:
             )
             if not self.can_driver.connect():
                 logger.error("Failed to connect CAN Bus")
+                self.state_machine.set_error("CAN Bus connection failed")
                 return False
 
             # 2. 初始化电机控制器
@@ -740,8 +762,23 @@ class RealAGVController:
                 )
                 self.sensor_reader.start()
 
+            # 8. 初始化心跳监控器
+            self.heartbeat_monitor = AGVHeartbeatMonitor(
+                controller=self,
+                state_machine=self.state_machine,
+                heartbeat_interval=1.0,
+                max_timeout_count=3,
+                reconnect_delay=2.0,
+                max_reconnect_attempts=5,
+            )
+            self.heartbeat_monitor.start()
+
             self.initialized = True
             self.running = True
+            self.state_machine.transition(
+                self.state_machine.State.IDLE,
+                "initialization complete"
+            )
             logger.info("Real AGV controller initialized successfully")
             logger.info(f"Connected sensors: {list(sensors.keys())}")
 
@@ -749,11 +786,18 @@ class RealAGVController:
 
         except Exception as e:
             logger.error(f"Real AGV initialization failed: {e}")
+            self.state_machine.set_error(str(e))
             return False
 
     def shutdown(self) -> None:
         """关闭所有硬件"""
+        self.state_machine.shutdown()
         self.running = False
+
+        if self.heartbeat_monitor:
+            self.heartbeat_monitor.stop()
+            self.heartbeat_monitor = None
+
         if self.sensor_reader:
             self.sensor_reader.stop()
         if self.motor_controller:
@@ -765,6 +809,7 @@ class RealAGVController:
         if self.imu:
             self.imu.disconnect()
         self.initialized = False
+        self.state_machine.disconnect()
         logger.info("Real AGV controller shutdown")
 
     def set_speed(self, linear_velocity: float, angular_velocity: float) -> bool:
@@ -817,6 +862,73 @@ class RealAGVController:
             data['motor_status'] = self.motor_controller.read_status()
 
         return data
+
+    def get_full_status(self) -> Dict[str, Any]:
+        """
+        获取完整AGV状态报告
+        
+        Returns:
+            包含状态机/心跳监控/传感器数据/电池状态的完整状态报告
+        """
+        status = {
+            'initialized': self.initialized,
+            'running': self.running,
+            'state_machine': {
+                'state': self.state_machine.state.value,
+                'is_operational': self.state_machine.is_operational,
+                'is_alive': self.state_machine.is_alive,
+                'error_reason': self.state_machine._error_reason,
+                'time_in_current_state_s': round(self.state_machine.time_in_current_state(), 2),
+            },
+        }
+
+        # 心跳监控
+        if self.heartbeat_monitor:
+            status['heartbeat'] = self.heartbeat_monitor.get_status()
+
+        # 健康监控
+        if self.health_monitor:
+            status['health'] = self.health_monitor.get_health_status()
+
+        # 传感器数据
+        status['sensor_data'] = self.get_sensor_data()
+
+        # 电池状态
+        status['battery'] = {
+            'voltage': self.battery_voltage,
+            'level': self.battery_level,
+            'warning_threshold': self._battery_warning_voltage,
+            'critical_threshold': self._battery_critical_voltage,
+            'is_low': self.battery_voltage < self._battery_warning_voltage,
+            'is_critical': self.battery_voltage < self._battery_critical_voltage,
+        }
+
+        # 硬件连接状态
+        status['hardware'] = {
+            'can_bus': self.can_driver.is_connected() if self.can_driver else False,
+            'motor': self.motor_controller is not None,
+            'lidar': self.lidar.is_connected() if self.lidar else False,
+            'imu': self.imu.is_connected() if self.imu else False,
+            'tactile': self.tactile.is_connected() if self.tactile else False,
+            'force': self.force_sensor.is_connected() if self.force_sensor else False,
+        }
+
+        return status
+
+    def start_task(self) -> bool:
+        """开始任务"""
+        if not self.initialized:
+            logger.warning("Cannot start task: not initialized")
+            return False
+        return self.state_machine.start_running()
+
+    def pause_task(self) -> bool:
+        """暂停任务"""
+        return self.state_machine.pause()
+
+    def resume_task(self) -> bool:
+        """恢复任务"""
+        return self.state_machine.resume()
 
     def update_odometry(self, delta_time: float) -> None:
         """更新里程计"""
@@ -1048,6 +1160,464 @@ class AGVHealthMonitor:
             self.metrics[key].clear()
 
 
+class AGVStateMachine:
+    """
+    AGV状态机 - 管理AGV硬件状态转换
+    
+    状态:
+    - DISCONNECTED: 初始断开状态
+    - CONNECTING: 正在连接硬件
+    - IDLE: 已连接,待机状态
+    - RUNNING: 执行任务中
+    - PAUSED: 暂停
+    - ERROR: 错误状态
+    - RECOVERING: 正在恢复
+    - SHUTDOWN: 已关闭
+    
+    转换规则:
+    - DISCONNECTED -> CONNECTING (调用connect)
+    - CONNECTING -> IDLE (连接成功)
+    - CONNECTING -> ERROR (连接失败)
+    - IDLE -> RUNNING (开始任务)
+    - RUNNING -> IDLE (任务完成)
+    - RUNNING -> ERROR (检测到错误)
+    - ERROR -> RECOVERING (尝试恢复)
+    - RECOVERING -> IDLE (恢复成功)
+    - RECOVERING -> ERROR (恢复失败)
+    - any -> SHUTDOWN (调用shutdown)
+    """
+
+    class State(enum.Enum):
+        DISCONNECTED = "disconnected"
+        CONNECTING = "connecting"
+        IDLE = "idle"
+        RUNNING = "running"
+        PAUSED = "paused"
+        ERROR = "error"
+        RECOVERING = "recovering"
+        SHUTDOWN = "shutdown"
+
+    def __init__(self, agv_id: str):
+        self.agv_id = agv_id
+        self._state = self.State.DISCONNECTED
+        self._error_reason: Optional[str] = None
+        self._last_transition_time: float = time.time()
+        self._transition_history: List[Dict[str, Any]] = []
+        self._listeners: Dict[str, List[Callable]] = {
+            'state_changed': [],
+            'error': [],
+            'recovery': [],
+        }
+
+    @property
+    def state(self) -> 'AGVStateMachine.State':
+        return self._state
+
+    @property
+    def is_operational(self) -> bool:
+        return self._state in (self.State.IDLE, self.State.RUNNING, self.State.PAUSED)
+
+    @property
+    def is_alive(self) -> bool:
+        return self._state not in (self.State.DISCONNECTED, self.State.SHUTDOWN)
+
+    def transition(self, new_state: 'AGVStateMachine.State', reason: str = "") -> bool:
+        """状态转换"""
+        if self._state == new_state:
+            return True
+
+        old_state = self._state
+        self._state = new_state
+        self._last_transition_time = time.time()
+
+        entry = {
+            'from': old_state.value,
+            'to': new_state.value,
+            'reason': reason,
+            'timestamp': self._last_transition_time,
+        }
+        self._transition_history.append(entry)
+
+        logger.info(f"AGV {self.agv_id} state: {old_state.value} -> {new_state.value} ({reason})")
+
+        # 通知监听器
+        self._notify('state_changed', entry)
+        if new_state == self.State.ERROR:
+            self._error_reason = reason
+            self._notify('error', {'reason': reason, 'timestamp': self._last_transition_time})
+        if old_state == self.State.RECOVERING and new_state == self.State.IDLE:
+            self._notify('recovery', {'timestamp': self._last_transition_time})
+
+        return True
+
+    def set_error(self, reason: str) -> None:
+        """设置错误状态"""
+        self.transition(self.State.ERROR, reason)
+
+    def set_recovering(self) -> None:
+        """设置恢复状态"""
+        self.transition(self.State.RECOVERING, "attempting recovery")
+
+    def connect(self) -> bool:
+        """开始连接"""
+        return self.transition(self.State.CONNECTING, "connecting")
+
+    def disconnect(self) -> None:
+        """断开连接"""
+        self.transition(self.State.DISCONNECTED, "disconnected")
+
+    def start_running(self) -> bool:
+        """开始运行"""
+        if self._state not in (self.State.IDLE, self.State.PAUSED):
+            logger.warning(f"Cannot start running from state {self._state.value}")
+            return False
+        self.transition(self.State.RUNNING, "task started")
+        return True
+
+    def pause(self) -> bool:
+        """暂停"""
+        if self._state != self.State.RUNNING:
+            return False
+        self.transition(self.State.PAUSED, "paused")
+        return True
+
+    def resume(self) -> bool:
+        """恢复"""
+        if self._state != self.State.PAUSED:
+            return False
+        self.transition(self.State.RUNNING, "resumed")
+        return True
+
+    def recover_success(self) -> None:
+        """恢复成功"""
+        self.transition(self.State.IDLE, "recovery successful")
+
+    def shutdown(self) -> None:
+        """关闭"""
+        self.transition(self.State.SHUTDOWN, "shutdown")
+
+    def add_listener(self, event: str, callback: Callable) -> None:
+        """添加状态监听器"""
+        if event in self._listeners:
+            self._listeners[event].append(callback)
+
+    def _notify(self, event: str, data: Any) -> None:
+        for cb in self._listeners.get(event, []):
+            try:
+                cb(data)
+            except Exception as e:
+                logger.error(f"State listener error: {e}")
+
+    def get_transition_history(self, limit: int = 50) -> List[Dict[str, Any]]:
+        return self._transition_history[-limit:]
+
+    def time_in_current_state(self) -> float:
+        return time.time() - self._last_transition_time
+
+
+class AGVHeartbeatMonitor:
+    """
+    AGV心跳监控器 - 定期检查硬件存活并触发重连
+    
+    功能:
+    - 定期发送心跳信号到所有硬件组件
+    - 检测组件超时/无响应
+    - 触发自动重连机制
+    - 记录心跳历史和统计
+    """
+
+    def __init__(
+        self,
+        controller: RealAGVController,
+        state_machine: AGVStateMachine,
+        heartbeat_interval: float = 1.0,
+        max_timeout_count: int = 3,
+        reconnect_delay: float = 2.0,
+        max_reconnect_attempts: int = 5,
+    ):
+        self.controller = controller
+        self.state_machine = state_machine
+        self.heartbeat_interval = heartbeat_interval
+        self.max_timeout_count = max_timeout_count
+        self.reconnect_delay = reconnect_delay
+        self.max_reconnect_attempts = max_reconnect_attempts
+
+        self._running = False
+        self._thread: Optional[threading.Thread] = None
+        self._lock = threading.Lock()
+
+        # 心跳计数
+        self.heartbeat_count: int = 0
+        self.last_heartbeat_time: float = 0.0
+        self.last_response_time: float = 0.0
+
+        # 超时跟踪
+        self.timeout_counts: Dict[str, int] = {
+            'can_bus': 0,
+            'motor': 0,
+            'lidar': 0,
+            'imu': 0,
+            'tactile': 0,
+            'force': 0,
+        }
+
+        # 心跳历史
+        self.heartbeat_history: deque = deque(maxlen=100)
+        self.error_history: deque = deque(maxlen=100)
+        self.reconnect_history: deque = deque(maxlen=50)
+
+        # 统计
+        self.total_heartbeats: int = 0
+        self.total_timeouts: int = 0
+        self.total_reconnects: int = 0
+        self.start_time: float = 0.0
+
+    def start(self) -> None:
+        """启动心跳监控"""
+        if self._running:
+            return
+        self._running = True
+        self.start_time = time.time()
+        self._thread = threading.Thread(target=self._heartbeat_loop, daemon=True)
+        self._thread.start()
+        logger.info(f"AGVHeartbeatMonitor started (interval={self.heartbeat_interval}s)")
+
+    def stop(self) -> None:
+        """停止心跳监控"""
+        self._running = False
+        if self._thread:
+            self._thread.join(timeout=3.0)
+            self._thread = None
+        logger.info("AGVHeartbeatMonitor stopped")
+
+    def _heartbeat_loop(self) -> None:
+        """心跳主循环"""
+        while self._running:
+            try:
+                self._do_heartbeat()
+                time.sleep(self.heartbeat_interval)
+            except Exception as e:
+                logger.error(f"Heartbeat loop error: {e}")
+                time.sleep(self.heartbeat_interval)
+
+    def _do_heartbeat(self) -> None:
+        """执行一次心跳"""
+        self.heartbeat_count += 1
+        self.last_heartbeat_time = time.time()
+
+        heartbeat_result = {
+            'timestamp': self.last_heartbeat_time,
+            'heartbeat_num': self.heartbeat_count,
+            'components': {},
+            'overall_alive': True,
+            'errors': [],
+        }
+
+        # 检查 CAN Bus
+        can_alive = self._check_can_bus()
+        heartbeat_result['components']['can_bus'] = can_alive
+        if not can_alive:
+            self._handle_component_timeout('can_bus')
+            heartbeat_result['errors'].append('CAN bus timeout')
+
+        # 检查电机
+        motor_alive = self._check_motor()
+        heartbeat_result['components']['motor'] = motor_alive
+        if not motor_alive:
+            self._handle_component_timeout('motor')
+            heartbeat_result['errors'].append('Motor timeout')
+
+        # 检查传感器
+        lidar_alive = self._check_lidar()
+        heartbeat_result['components']['lidar'] = lidar_alive
+        if not lidar_alive:
+            self._handle_component_timeout('lidar')
+
+        imu_alive = self._check_imu()
+        heartbeat_result['components']['imu'] = imu_alive
+        if not imu_alive:
+            self._handle_component_timeout('imu')
+
+        # 传感器超时不算致命错误
+        heartbeat_result['overall_alive'] = can_alive and motor_alive
+
+        self.last_response_time = time.time()
+        self.total_heartbeats += 1
+
+        if heartbeat_result['errors']:
+            self.error_history.append(heartbeat_result)
+
+        self.heartbeat_history.append(heartbeat_result)
+
+    def _check_can_bus(self) -> bool:
+        """检查CAN总线"""
+        try:
+            if self.controller.can_driver is None:
+                return False
+            return self.controller.can_driver.is_connected()
+        except Exception:
+            return False
+
+    def _check_motor(self) -> bool:
+        """检查电机控制器"""
+        try:
+            if self.controller.motor_controller is None:
+                return False
+            # 尝试读取编码器位置
+            self.controller.motor_controller.get_encoder_position()
+            return True
+        except Exception:
+            return False
+
+    def _check_lidar(self) -> bool:
+        """检查激光雷达"""
+        try:
+            if self.controller.lidar is None:
+                return False
+            if not self.controller.lidar.is_connected():
+                return False
+            self.controller.lidar.read()
+            return True
+        except Exception:
+            return False
+
+    def _check_imu(self) -> bool:
+        """检查IMU"""
+        try:
+            if self.controller.imu is None:
+                return False
+            if not self.controller.imu.is_connected():
+                return False
+            self.controller.imu.read()
+            return True
+        except Exception:
+            return False
+
+    def _handle_component_timeout(self, component: str) -> None:
+        """处理组件超时"""
+        self.timeout_counts[component] += 1
+        self.total_timeouts += 1
+
+        logger.warning(
+            f"Component {component} timeout "
+            f"(count={self.timeout_counts[component]}/{self.max_timeout_count})"
+        )
+
+        # 超过最大超时次数，触发重连
+        if self.timeout_counts[component] >= self.max_timeout_count:
+            logger.error(f"Component {component} exceeded timeout limit, triggering reconnect")
+            self._attempt_reconnect(component)
+            # 重置计数
+            self.timeout_counts[component] = 0
+
+    def _attempt_reconnect(self, component: str) -> bool:
+        """尝试重连指定组件"""
+        reconnect_attempt = {
+            'component': component,
+            'timestamp': time.time(),
+            'attempts': 0,
+            'success': False,
+        }
+
+        for attempt in range(1, self.max_reconnect_attempts + 1):
+            reconnect_attempt['attempts'] = attempt
+            logger.info(f"Reconnect attempt {attempt}/{self.max_reconnect_attempts} for {component}")
+
+            try:
+                success = False
+                if component == 'can_bus':
+                    success = self._reconnect_can_bus()
+                elif component == 'motor':
+                    success = self._reconnect_motor()
+                elif component == 'lidar':
+                    success = self._reconnect_lidar()
+                elif component == 'imu':
+                    success = self._reconnect_imu()
+
+                if success:
+                    reconnect_attempt['success'] = True
+                    self.state_machine._error_reason = None
+                    logger.info(f"Successfully reconnected {component} on attempt {attempt}")
+                    break
+
+            except Exception as e:
+                logger.error(f"Reconnect attempt {attempt} failed for {component}: {e}")
+
+            time.sleep(self.reconnect_delay)
+
+        self.total_reconnects += 1
+        self.reconnect_history.append(reconnect_attempt)
+        return reconnect_attempt['success']
+
+    def _reconnect_can_bus(self) -> bool:
+        """重连CAN总线"""
+        if self.controller.can_driver is None:
+            return False
+        self.controller.can_driver.disconnect()
+        return self.controller.can_driver.connect()
+
+    def _reconnect_motor(self) -> bool:
+        """重连电机控制器"""
+        if self.controller.motor_controller is None:
+            return False
+        try:
+            self.controller.motor_controller.clear_fault()
+            return True
+        except Exception:
+            return False
+
+    def _reconnect_lidar(self) -> bool:
+        """重连激光雷达"""
+        if self.controller.lidar is None:
+            return False
+        self.controller.lidar.disconnect()
+        return self.controller.lidar.connect()
+
+    def _reconnect_imu(self) -> bool:
+        """重连IMU"""
+        if self.controller.imu is None:
+            return False
+        self.controller.imu.disconnect()
+        return self.controller.imu.connect()
+
+    def reset_timeout_count(self, component: str) -> None:
+        """重置指定组件的超时计数"""
+        if component in self.timeout_counts:
+            self.timeout_counts[component] = 0
+
+    def get_heartbeat_statistics(self) -> Dict[str, Any]:
+        """获取心跳统计信息"""
+        uptime = time.time() - self.start_time if self.start_time else 0.0
+        recent_history = list(self.heartbeat_history)[-20:]
+        error_rate = (
+            sum(1 for h in recent_history if h.get('errors')) / len(recent_history)
+            if recent_history else 0.0
+        )
+
+        return {
+            'total_heartbeats': self.total_heartbeats,
+            'total_timeouts': self.total_timeouts,
+            'total_reconnects': self.total_reconnects,
+            'uptime_s': round(uptime, 1),
+            'heartbeat_interval_s': self.heartbeat_interval,
+            'recent_error_rate': round(error_rate, 4),
+            'current_timeout_counts': dict(self.timeout_counts),
+            'last_heartbeat_time': self.last_heartbeat_time,
+            'last_response_time': self.last_response_time,
+        }
+
+    def get_status(self) -> Dict[str, Any]:
+        """获取完整状态"""
+        return {
+            'running': self._running,
+            'statistics': self.get_heartbeat_statistics(),
+            'recent_errors': list(self.error_history)[-10:],
+            'reconnect_history': list(self.reconnect_history)[-10:],
+        }
+
+
 __all__ += [
     'AGVHealthMonitor',
+    'AGVStateMachine',
+    'AGVHeartbeatMonitor',
 ]

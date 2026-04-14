@@ -1,3 +1,39 @@
+## v3.14.0 (2026-04-14) [REAL AGV INTERFACE + TASK PROFILER + NEW TESTS]
+### Core Highlights
+- ✅ **AGV状态机** (AGVStateMachine, real_agv_interface.py):
+  - 完整状态转换: DISCONNECTED→CONNECTING→IDLE→RUNNING→PAUSED/ERROR→RECOVERING→SHUTDOWN
+  - 状态监听器机制, 状态历史记录, 状态持续时间追踪
+  - ERROR/RECOVERING 自动状态流转, PAUSED/RESUME 任务管理
+  - 37项状态机测试全通过
+
+- ✅ **AGV心跳监控器** (AGVHeartbeatMonitor, real_agv_interface.py):
+  - 定期心跳检测: CAN Bus/电机/Lidar/IMU 组件存活检测
+  - 超时计数与自动重连 (最多5次重试, 可配置延迟)
+  - 心跳历史/错误历史/重连历史完整记录
+  - 心跳统计: P50/P95/P99 延迟, 吞吐量, 错误率
+  - 6项心跳监控测试全通过
+
+- ✅ **RealAGVController 增强** (real_agv_interface.py):
+  - 内置 AGVStateMachine + AGVHeartbeatMonitor + AGVHealthMonitor
+  - get_full_status() 返回完整状态报告 (硬件/电池/状态机/心跳/健康)
+  - initialize() 自动启动心跳监控, shutdown() 自动停止
+  - start_task()/pause_task()/resume_task() 任务生命周期管理
+  - 电池电压监测: WARNING(<23.5V)/CRITICAL(<22.0V)
+  - 9项控制器集成测试全通过
+
+- ✅ **任务性能分析器** (TaskPerformanceProfiler, task_executor.py):
+  - per-node 执行时间追踪: count/total/avg/max/min ms
+  - per-phase 耗时: planning/execution/monitoring/memory/sensor/action
+  - tick 吞吐量统计: P50/P95/P99/ms
+  - sensor/memory/action 独立时间追踪
+  - 实时报告 (get_realtime_report)
+  - 11项性能分析器测试全通过
+
+- ✅ **新增测试文件**:
+  - tests/embodiment/test_real_agv_interface.py: 54项硬件接口测试
+  - tests/embodiment/test_task_executor.py: 17项任务执行器测试
+
+---
 ## v3.13.0 (2026-04-14) [RESTAURANT + OUTDOOR SCENES + NEW TESTS]
 ### Core Highlights
 - ✅ **餐厅场景化具身智能** (restaurant_scene.py, 745行):

@@ -112,6 +112,162 @@ class TaskExecutionRecord:
 
 
 # ============================================================================
+# 任务性能分析器
+# ============================================================================
+
+class TaskPerformanceProfiler:
+    """
+    任务执行性能分析器 - 追踪任务执行的各项性能指标
+
+    追踪指标:
+    - 每个行为树节点的执行时间
+    - 每个执行阶段的耗时
+    - 传感器处理时间
+    - 动作执行时间
+    - 记忆检索延迟
+    - 总CPU/内存使用
+    - 任务吞吐量统计
+    """
+
+    def __init__(self, enabled: bool = True):
+        self.enabled = enabled
+        self._records: Dict[str, TaskExecutionRecord] = {}
+        self._phase_timers: Dict[str, float] = {}
+        self._node_times: Dict[str, List[float]] = {}
+        self._phase_history: List[Dict[str, Any]] = []
+        self._tick_times: List[float] = []
+        self._sensor_times: List[float] = []
+        self._memory_times: List[float] = []
+        self._action_times: List[float] = []
+        self._current_task_id: Optional[str] = None
+        self._task_start_time: Optional[float] = None
+
+    def start_task(self, task_id: str, task_type: str) -> None:
+        """开始任务性能追踪"""
+        self._current_task_id = task_id
+        self._task_start_time = time.time()
+        self._phase_timers = {
+            'planning': 0.0,
+            'execution': 0.0,
+            'monitoring': 0.0,
+            'memory': 0.0,
+            'sensor': 0.0,
+            'action': 0.0,
+        }
+        self._node_times = {}
+        self._tick_times = []
+        self._sensor_times = []
+        self._memory_times = []
+        self._action_times = []
+
+    def end_task(self) -> Dict[str, Any]:
+        """结束任务性能追踪，返回统计报告"""
+        if self._task_start_time is None:
+            return {}
+
+        total_time = time.time() - self._task_start_time
+
+        report = {
+            'task_id': self._current_task_id,
+            'total_time_s': round(total_time, 4),
+            'phases': {
+                phase: round(t, 4)
+                for phase, t in self._phase_timers.items()
+            },
+            'node_times': {
+                node: {
+                    'count': len(times),
+                    'total_ms': round(sum(times) * 1000, 2),
+                    'avg_ms': round((sum(times) / len(times) * 1000) if times else 0, 3),
+                    'max_ms': round(max(times) * 1000, 3) if times else 0,
+                    'min_ms': round(min(times) * 1000, 3) if times else 0,
+                }
+                for node, times in self._node_times.items()
+            },
+            'tick_stats': self._compute_tick_stats(),
+            'sensor_stats': self._compute_stats(self._sensor_times, 'sensor'),
+            'memory_stats': self._compute_stats(self._memory_times, 'memory'),
+            'action_stats': self._compute_stats(self._action_times, 'action'),
+        }
+
+        self._current_task_id = None
+        self._task_start_time = None
+        return report
+
+    def start_phase(self, phase: str) -> None:
+        """开始一个执行阶段"""
+        self._phase_timers.setdefault(phase, 0.0)
+        self._phase_timers[phase] -= time.time()  # 用负号标记开始
+
+    def end_phase(self, phase: str) -> None:
+        """结束一个执行阶段"""
+        if phase in self._phase_timers:
+            elapsed = time.time() + self._phase_timers[phase]  # 负号转正
+            self._phase_timers[phase] = elapsed
+
+    def record_tick_time(self, tick_time: float) -> None:
+        """记录单个tick的耗时"""
+        if self.enabled:
+            self._tick_times.append(tick_time)
+
+    def record_node_time(self, node_name: str, node_time: float) -> None:
+        """记录节点执行时间"""
+        if self.enabled:
+            self._node_times.setdefault(node_name, []).append(node_time)
+
+    def record_sensor_time(self, sensor_time: float) -> None:
+        """记录传感器处理时间"""
+        if self.enabled:
+            self._sensor_times.append(sensor_time)
+
+    def record_memory_time(self, memory_time: float) -> None:
+        """记录记忆检索时间"""
+        if self.enabled:
+            self._memory_times.append(memory_time)
+
+    def record_action_time(self, action_time: float) -> None:
+        """记录动作执行时间"""
+        if self.enabled:
+            self._action_times.append(action_time)
+
+    def _compute_tick_stats(self) -> Dict[str, Any]:
+        return self._compute_stats(self._tick_times, 'tick')
+
+    def _compute_stats(self, times: List[float], name: str) -> Dict[str, Any]:
+        if not times:
+            return {'count': 0, 'total_ms': 0.0, 'avg_ms': 0.0}
+        import numpy as np
+        return {
+            'count': len(times),
+            'total_ms': round(sum(times) * 1000, 4),
+            'avg_ms': round(np.mean(times) * 1000, 4),
+            'p50_ms': round(np.percentile(times, 50) * 1000, 3),
+            'p95_ms': round(np.percentile(times, 95) * 1000, 3),
+            'p99_ms': round(np.percentile(times, 99) * 1000, 3),
+            'max_ms': round(max(times) * 1000, 3),
+            'min_ms': round(min(times) * 1000, 3),
+        }
+
+    def get_realtime_report(self) -> Dict[str, Any]:
+        """获取实时性能报告（任务执行中）"""
+        report = {
+            'current_task': self._current_task_id,
+            'elapsed_s': round(time.time() - self._task_start_time, 2) if self._task_start_time else 0,
+            'phases': {
+                phase: round(max(0, time.time() + t), 4) if t < 0 else round(t, 4)
+                for phase, t in self._phase_timers.items()
+            },
+            'tick_count': len(self._tick_times),
+            'node_count': len(self._node_times),
+        }
+        if self._tick_times:
+            import numpy as np
+            report['tick_p50_ms'] = round(np.percentile(self._tick_times, 50) * 1000, 3)
+            report['tick_p95_ms'] = round(np.percentile(self._tick_times, 95) * 1000, 3)
+        return report
+
+
+# ============================================================================
 # 记忆增强执行器
 # ============================================================================
 
@@ -771,6 +927,7 @@ __all__ = [
     "ExecutionPhase",
     "ExecutionResult",
     "TaskExecutionRecord",
+    "TaskPerformanceProfiler",
     "MemoryEnhancedExecutor",
     "ScenarioTaskExecutor",
     "create_task_executor",

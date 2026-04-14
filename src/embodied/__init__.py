@@ -78,6 +78,9 @@ from .real_agv_interface import (
     ForceSensorInterface,
     RealAGVController,
     ThreadedSensorReader,
+    AGVStateMachine,
+    AGVHeartbeatMonitor,
+    AGVHealthMonitor,
 )
 
 from .scene_intelligence import (
@@ -140,6 +143,7 @@ from .task_executor import (
     ExecutionPhase,
     ExecutionResult,
     TaskExecutionRecord,
+    TaskPerformanceProfiler,
     MemoryEnhancedExecutor,
     ScenarioTaskExecutor,
     create_task_executor,
