@@ -41,6 +41,9 @@ __all__ = [
     'EmbodiedPipeline',
     'create_embodied_pipeline',
     'create_pipeline_from_config',
+    'DegradationManager',
+    'DegradationLevel',
+    'DegradedCapability',
     'ErrorRecoveryPolicy',
     'DiagnosticCollector',
 ]
@@ -218,6 +221,9 @@ class EmbodiedPipeline:
         # FL round tracking
         self._fl_round_count: int = 0
         self._fl_last_result: Optional[Any] = None
+
+        # 优雅降级管理器
+        self._degradation_manager: Optional[DegradationManager] = None
 
     # ----------------------------------------------------------
     # 状态管理
@@ -445,6 +451,65 @@ class EmbodiedPipeline:
         self._init_simulation()
         self._init_federated_learning()
         self._init_swarm_coordination()
+        self._init_degradation_manager()
+
+    # ----------------------------------------------------------
+    # 降级管理
+    # ----------------------------------------------------------
+
+    def _init_degradation_manager(self) -> None:
+        """初始化优雅降级管理器"""
+        try:
+            self._degradation_manager = DegradationManager(
+                pipeline=self,
+                auto_recover=True,
+                recovery_interval_s=30.0,
+            )
+            logger.info("DegradationManager initialized")
+        except Exception as e:
+            logger.warning(f"DegradationManager init failed: {e}")
+            self._degradation_manager = None
+
+    def get_degradation_report(self) -> Dict[str, Any]:
+        """
+        获取降级状态报告
+
+        Returns:
+            包含当前降级等级、降级模块、激活的降级策略等
+        """
+        if self._degradation_manager is None:
+            return {'error': 'DegradationManager not initialized'}
+        return self._degradation_manager.get_degradation_report()
+
+    def check_degradation(self) -> str:
+        """
+        检查并更新降级等级
+
+        Returns:
+            当前降级等级字符串
+        """
+        if self._degradation_manager is None:
+            return "unknown"
+        level = self._degradation_manager.check_and_update()
+        return level.value
+
+    def can_use_capability(self, capability: str) -> bool:
+        """
+        检查某项能力是否可用
+
+        Args:
+            capability: 能力名称 (DegradedCapability枚举值)
+
+        Returns:
+            True if available
+        """
+        if self._degradation_manager is None:
+            return True  # 假设可用如果未初始化
+        try:
+            cap = DegradedCapability(capability)
+            return self._degradation_manager.can_use_capability(cap)
+        except ValueError:
+            return True  # 未知能力假设可用
 
     # ----------------------------------------------------------
     # Pipeline 生命周期
@@ -1173,6 +1238,247 @@ def create_pipeline_from_config(config_dict: Dict[str, Any]) -> EmbodiedPipeline
 # ============================================================
 # 错误恢复与诊断增强 (v3.9.4)
 # ============================================================
+
+class DegradationLevel(Enum):
+    """降级等级"""
+    FULLY_OPERATIONAL = "fully_operational"   # 完全正常运行
+    DEGRADED_MINOR = "degraded_minor"          # 轻微降级 (部分非关键模块不可用)
+    DEGRADED_MODERATE = "degraded_moderate"    # 中度降级 (部分关键模块不可用)
+    DEGRADED_SEVERE = "degraded_severe"         # 严重降级 (仅保留核心功能)
+    EMERGENCY_ONLY = "emergency_only"          # 仅紧急模式
+    OFFLINE = "offline"                        # 完全离线
+
+
+class DegradedCapability(Enum):
+    """可降级的能力"""
+    FEDERATED_LEARNING = "federated_learning"
+    SWARM_COORDINATION = "swarm_coordination"
+    VLA_INFERENCE = "vla_inference"
+    BEHAVIOR_TREE_PLANNING = "behavior_tree_planning"
+    SCENE_UNDERSTANDING = "scene_understanding"
+    LONG_TERM_MEMORY = "long_term_memory"
+    HIL_TESTING = "hil_testing"
+    MULTI_AGV_COORDINATION = "multi_agv_coordination"
+    TERRAIN_MODELING = "terrain_modeling"
+    FEDERATED_AGGREGATION = "federated_aggregation"
+
+
+class DegradationManager:
+    """
+    优雅降级管理器
+
+    监控各模块健康状态，自动触发降级策略:
+    - 模块健康检查与故障检测
+    - 降级等级评估
+    - 自动降级/恢复
+    - 降级能力映射表
+    """
+
+    # 模块 -> 降级能力的映射
+    MODULE_CAPABILITY_MAP = {
+        '_fl_coordinator': {
+            'capability': DegradedCapability.FEDERATED_LEARNING,
+            'critical': False,
+            'fallback': 'local_training_only',
+        },
+        '_swarm_coord': {
+            'capability': DegradedCapability.SWARM_COORDINATION,
+            'critical': False,
+            'fallback': 'single_agv_mode',
+        },
+        '_vla_model': {
+            'capability': DegradedCapability.VLA_INFERENCE,
+            'critical': False,
+            'fallback': 'behavior_tree_only',
+        },
+        '_bt_planner': {
+            'capability': DegradedCapability.BEHAVIOR_TREE_PLANNING,
+            'critical': True,
+            'fallback': 'simple_rule_based',
+        },
+        '_scene_intel': {
+            'capability': DegradedCapability.SCENE_UNDERSTANDING,
+            'critical': True,
+            'fallback': 'basic_scene_model',
+        },
+        '_memory_mgr': {
+            'capability': DegradedCapability.LONG_TERM_MEMORY,
+            'critical': False,
+            'fallback': 'episodic_only',
+        },
+        '_hil_runner': {
+            'capability': DegradedCapability.HIL_TESTING,
+            'critical': False,
+            'fallback': 'simulation_only',
+        },
+        '_sim_enhancer': {
+            'capability': DegradedCapability.TERRAIN_MODELING,
+            'critical': False,
+            'fallback': 'basic_physics',
+        },
+    }
+
+    # 降级等级阈值
+    DEGRADATION_THRESHOLDS = {
+        DegradationLevel.FULLY_OPERATIONAL: 0,
+        DegradationLevel.DEGRADED_MINOR: 2,       # 2个非关键模块不可用
+        DegradationLevel.DEGRADED_MODERATE: 4,   # 4个模块不可用 或 1个关键模块不可用
+        DegradationLevel.DEGRADED_SEVERE: 6,      # 6个模块不可用 或 2个关键模块不可用
+        DegradationLevel.EMERGENCY_ONLY: 8,      # 大部分模块不可用
+        DegradationLevel.OFFLINE: 10,            # 所有模块不可用
+    }
+
+    def __init__(
+        self,
+        pipeline: EmbodiedPipeline,
+        auto_recover: bool = True,
+        recovery_interval_s: float = 30.0,
+    ):
+        self._pipeline = pipeline
+        self._auto_recover = auto_recover
+        self._recovery_interval_s = recovery_interval_s
+        self._degraded_modules: Dict[str, float] = {}  # module_name -> failure_time
+        self._degraded_capabilities: Set[DegradedCapability] = set()
+        self._active_fallbacks: Dict[DegradedCapability, str] = {}
+        self._degradation_history: List[Dict] = []
+        self._last_recovery_check: float = time.time()
+        self._current_level = DegradationLevel.FULLY_OPERATIONAL
+
+    @property
+    def current_level(self) -> DegradationLevel:
+        return self._current_level
+
+    @property
+    def degraded_capabilities(self) -> Set[DegradedCapability]:
+        return self._degraded_capabilities.copy()
+
+    def check_and_update(self) -> DegradationLevel:
+        """
+        检查所有模块健康状态，更新降级等级
+
+        Returns:
+            当前降级等级
+        """
+        unavailable = []
+        critical_unavailable = []
+
+        for module_name, info in self.MODULE_CAPABILITY_MAP.items():
+            module = getattr(self._pipeline, module_name, None)
+            if module is None:
+                unavailable.append(module_name)
+                if info['critical']:
+                    critical_unavailable.append(module_name)
+                self._degraded_modules[module_name] = time.time()
+                self._degraded_capabilities.add(info['capability'])
+                if info['capability'] not in self._active_fallbacks:
+                    self._active_fallbacks[info['capability']] = info['fallback']
+
+        # 计算降级分数
+        non_critical = len([m for m in unavailable if m not in critical_unavailable])
+        critical_count = len(critical_unavailable)
+
+        # 综合评分
+        degradation_score = non_critical + critical_count * 2
+
+        # 确定降级等级
+        if degradation_score == 0:
+            new_level = DegradationLevel.FULLY_OPERATIONAL
+        elif degradation_score >= 8:
+            new_level = DegradationLevel.EMERGENCY_ONLY
+        elif degradation_score >= 6:
+            new_level = DegradationLevel.DEGRADED_SEVERE
+        elif degradation_score >= 4 or critical_count >= 1:
+            new_level = DegradationLevel.DEGRADED_MODERATE
+        elif degradation_score >= 2:
+            new_level = DegradationLevel.DEGRADED_MINOR
+        else:
+            new_level = DegradationLevel.FULLY_OPERATIONAL
+
+        old_level = self._current_level
+        if old_level != new_level:
+            self._degradation_history.append({
+                'timestamp': time.time(),
+                'old_level': old_level.value,
+                'new_level': new_level.value,
+                'degraded_modules': unavailable,
+                'critical_unavailable': critical_unavailable,
+                'score': degradation_score,
+            })
+            self._current_level = new_level
+            logger.warning(
+                f"Degradation level changed: {old_level.value} -> {new_level.value} "
+                f"(modules unavailable: {len(unavailable)}, score: {degradation_score})"
+            )
+
+        # 触发自动恢复检查
+        if self._auto_recover and time.time() - self._last_recovery_check > self._recovery_interval_s:
+            self._try_recover_modules()
+            self._last_recovery_check = time.time()
+
+        return new_level
+
+    def _try_recover_modules(self) -> None:
+        """尝试恢复已降级的模块"""
+        recovery_count = 0
+        for module_name in list(self._degraded_modules.keys()):
+            module = getattr(self._pipeline, module_name, None)
+            if module is not None:
+                # 模块已恢复
+                failure_time = self._degraded_modules.pop(module_name, None)
+                if failure_time:
+                    info = self.MODULE_CAPABILITY_MAP.get(module_name, {})
+                    cap = info.get('capability')
+                    if cap:
+                        self._degraded_capabilities.discard(cap)
+                        self._active_fallbacks.pop(cap, None)
+                    logger.info(f"Module {module_name} recovered after {time.time() - failure_time:.1f}s")
+                    recovery_count += 1
+        if recovery_count > 0:
+            self.check_and_update()
+
+    def get_degradation_report(self) -> Dict[str, Any]:
+        """获取完整的降级状态报告"""
+        score = 0
+        for m in self._degraded_modules:
+            info = self.MODULE_CAPABILITY_MAP.get(m, {})
+            score += 2 if info.get('critical', False) else 1
+
+        return {
+            'level': self._current_level.value,
+            'level_score': score,
+            'degraded_modules': {
+                name: {
+                    'failed_at': t,
+                    'downtime_s': time.time() - t,
+                    'capability': self.MODULE_CAPABILITY_MAP.get(name, {}).get('capability', None),
+                    'critical': self.MODULE_CAPABILITY_MAP.get(name, {}).get('critical', False),
+                    'fallback': self.MODULE_CAPABILITY_MAP.get(name, {}).get('fallback', None),
+                }
+                for name, t in self._degraded_modules.items()
+            },
+            'active_fallbacks': {
+                cap.value: fallback
+                for cap, fallback in self._active_fallbacks.items()
+            },
+            'degraded_capabilities': [cap.value for cap in self._degraded_capabilities],
+            'history': self._degradation_history[-10:],  # 最近10条
+            'auto_recover_enabled': self._auto_recover,
+            'next_recovery_check_s': max(0, self._recovery_interval_s - (time.time() - self._last_recovery_check)),
+        }
+
+    def get_allowed_capabilities(self) -> Set[DegradedCapability]:
+        """获取当前允许使用的能力集 (排除已降级的)"""
+        all_caps = set(DegradedCapability)
+        return all_caps - self._degraded_capabilities
+
+    def can_use_capability(self, capability: DegradedCapability) -> bool:
+        """检查某项能力是否可用"""
+        return capability not in self._degraded_capabilities
+
+    def get_fallback_for(self, capability: DegradedCapability) -> Optional[str]:
+        """获取某能力的降级替代方案"""
+        return self._active_fallbacks.get(capability)
+
 
 class ErrorRecoveryPolicy(Enum):
     """错误恢复策略"""

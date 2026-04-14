@@ -27,7 +27,7 @@ from .behavior_tree import (
     ParallelNode,
     RepeaterNode,
     ConditionNode,
-    ActionNode,
+    LambdaActionNode,
     BehaviorTree,
     Blackboard,
     EmbodiedTask,
@@ -60,6 +60,11 @@ __all__ = [
     'RestaurantTaskPlanner',
     'OutdoorTaskPlanner',
     'SceneAdaptationEngine',
+    'HierarchicalBehaviorTreeComposer',
+    'SceneMemoryAugmentedPlanner',
+    'CrossSceneTransferLearner',
+    'HierarchicalTaskLevel',
+    'TaskCompositionRule',
     'get_scene_task_planner',
 ]
 
@@ -1067,6 +1072,957 @@ class SceneAdaptationEngine:
             params["safe_distance"] = params["safe_distance"] * caution_mult
         
         return params
+
+
+# ============================================================
+# 层级任务规划
+# ============================================================
+
+class HierarchicalTaskLevel(Enum):
+    """层级任务级别"""
+    STRATEGIC = "strategic"      # 战略级: 任务分配/资源规划
+    TACTICAL = "tactical"       # 战术级: 路径规划/场景选择
+    EXECUTION = "execution"     # 执行级: 动作序列/技能调用
+    REACTIVE = "reactive"       # 反应级: 避障/安全检查
+
+
+class TaskCompositionRule(Enum):
+    """任务组合规则"""
+    SEQUENTIAL = "sequential"   # 顺序执行
+    PARALLEL = "parallel"       # 并行执行
+    FALLBACK = "fallback"       # 降级执行
+    CONDITIONAL = "conditional"  # 条件执行
+    REPEAT_UNTIL = "repeat_until"  # 重复直到成功
+
+
+class HierarchicalBehaviorTreeComposer:
+    """
+    层级行为树组合器
+
+    从高层任务目标逐层分解为可执行的行为树:
+    Level 1 (Strategic): "完成餐厅配送任务" -> 选择配送策略
+    Level 2 (Tactical): "规划导航路径" -> 选择导航树
+    Level 3 (Execution): "执行具体动作" -> 调用技能节点
+    Level 4 (Reactive): "实时避障" -> 条件监控
+    """
+
+    def __init__(
+        self,
+        scene_intelligence: Optional[SceneIntelligence] = None,
+        skill_registry: Optional[Any] = None,
+    ):
+        self._scene_intelligence = scene_intelligence
+        self._skill_registry = skill_registry
+        self._composition_cache: Dict[str, BehaviorTree] = {}
+        self._level_handlers = {
+            HierarchicalTaskLevel.STRATEGIC: self._build_strategic_level,
+            HierarchicalTaskLevel.TACTICAL: self._build_tactical_level,
+            HierarchicalTaskLevel.EXECUTION: self._build_execution_level,
+            HierarchicalTaskLevel.REACTIVE: self._build_reactive_level,
+        }
+
+    def compose_task_tree(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> BehaviorTree:
+        """
+        从高层任务目标组合完整行为树
+
+        Args:
+            task_goal: 任务目标描述 ("完成餐厅配送", "执行仓库巡逻")
+            scene_type: 场景类型
+            context: 场景上下文
+
+        Returns:
+            完整的层级行为树
+        """
+        cache_key = f"{task_goal}:{scene_type.value}"
+        if cache_key in self._composition_cache:
+            return self._composition_cache[cache_key]
+
+        context = context or {}
+        # Root: Selector - try full HTN plan, fallback to simple execution
+        bt = BehaviorTree(
+            name=f"HTN_{task_goal}_{scene_type.value}",
+            root=SelectorNode(name="root_selector"),
+        )
+
+        # Primary branch: Full hierarchical plan (strategic -> tactical -> execution)
+        # with reactive monitoring as parallel guard
+        primary_plan = self._build_primary_plan(task_goal, scene_type, context)
+        bt.root.add_child(primary_plan)
+
+        # Fallback branch: Simple reactive-only mode (when planning fails)
+        fallback_plan = self._build_fallback_plan(scene_type, context)
+        bt.root.add_child(fallback_plan)
+
+        self._composition_cache[cache_key] = bt
+        return bt
+
+    def _build_primary_plan(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        context: Dict[str, Any],
+    ) -> BTNode:
+        """
+        构建主计划: 战略->战术->执行, 带反应级并行监控
+
+        结构:
+        Parallel (success=REQUIRE_ALL, failure=REQUIRE_ANY)
+        ├── Reactive: 持续安全监控 (碰撞/电池/通信/心跳)
+        └── Sequence: 主任务执行流程
+            ├── Strategic: 资源分配 + 任务分解
+            ├── Tactical: 场景感知 + 路径规划
+            └── Execution: 技能匹配 + 动作序列 + 结果验证
+        """
+        # 并行运行: 持续反应监控 + 主任务流程
+        parallel = ParallelNode(
+            name="primary_parallel",
+            success_policy=ParallelNode.Policy.REQUIRE_ALL,
+            failure_policy=ParallelNode.Policy.REQUIRE_ANY,
+        )
+
+        # 反应级监控 (持续运行)
+        reactive_tree = self._build_reactive_level(scene_type, context)
+        parallel.add_child(reactive_tree.root)
+
+        # 主任务流程: 战略->战术->执行
+        main_seq = SequenceNode(name="main_sequence")
+
+        # Strategic level
+        strategic_tree = self._build_strategic_level(task_goal, scene_type, context)
+        main_seq.add_child(strategic_tree.root)
+
+        # Tactical level
+        tactical_tree = self._build_tactical_level(task_goal, scene_type, context)
+        main_seq.add_child(tactical_tree.root)
+
+        # Execution level
+        execution_tree = self._build_execution_level(task_goal, scene_type, context)
+        main_seq.add_child(execution_tree.root)
+
+        parallel.add_child(main_seq)
+        return parallel
+
+    def _build_fallback_plan(
+        self,
+        scene_type: SceneType,
+        context: Dict[str, Any],
+    ) -> BTNode:
+        """
+        构建降级计划: 仅保留反应级监控和基本动作
+
+        当主计划失败时的降级方案:
+        - 仅保留安全监控
+        - 使用简化动作序列
+        """
+        fallback_seq = SequenceNode(name="fallback_sequence")
+
+        # 记录降级状态
+        fallback_seq.add_child(
+            LambdaActionNode(
+                action=lambda s: self._bb_set(s, "fallback_mode", True) or NodeStatus.SUCCESS,
+                name="enter_fallback_mode",
+            )
+        )
+
+        # 保留反应级监控
+        reactive_tree = self._build_reactive_level(scene_type, context)
+        fallback_seq.add_child(reactive_tree.root)
+
+        # 简化的安全导航
+        fallback_seq.add_child(
+            LambdaActionNode(
+                action=lambda s: self._bb_set(s, "simple_nav", True) or NodeStatus.SUCCESS,
+                name="simple_navigate",
+            )
+        )
+
+        return fallback_seq
+
+    def _bb_set(self, blackboard: Blackboard, key: str, value: Any) -> None:
+        """Helper: safely set blackboard value"""
+        try:
+            blackboard.set(key, value)
+        except (TypeError, AttributeError):
+            pass
+
+    def _bb_get(self, blackboard: Blackboard, key: str, default: Any = None) -> Any:
+        """Helper: safely get blackboard value"""
+        try:
+            return blackboard.get(key, default)
+        except (TypeError, AttributeError):
+            return default
+
+    def _build_strategic_level(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        context: Dict[str, Any],
+    ) -> BehaviorTree:
+        """构建战略级行为树"""
+        root = SelectorNode(name="strategic_selector")
+        bt = BehaviorTree(name=f"strategic_{task_goal}", root=root)
+
+        # 任务可行性检查
+        feasibility_seq = SequenceNode(name="feasibility_check")
+        feasibility_seq.add_child(
+            ConditionNode(
+                name="check_battery",
+                condition=lambda s: s.get("battery_level", 100) > 20,
+            )
+        )
+        feasibility_seq.add_child(
+            ConditionNode(
+                name="check_agv_health",
+                condition=lambda s: s.get("agv_healthy", True),
+            )
+        )
+        feasibility_seq.add_child(
+            LambdaActionNode(
+                name="plan_resource_allocation",
+                action=lambda s: self._allocate_resources(task_goal, scene_type, s),
+            )
+        )
+        root.add_child(feasibility_seq)
+
+        # 任务分解策略
+        decompose_sel = SelectorNode(name="task_decompose")
+        if scene_type == SceneType.WAREHOUSE:
+            decompose_sel.add_child(
+                LambdaActionNode(
+                    name="decompose_warehouse_task",
+                    action=lambda s: self._decompose_warehouse(task_goal, s),
+                )
+            )
+        elif scene_type == SceneType.RESTAURANT:
+            decompose_sel.add_child(
+                LambdaActionNode(
+                    name="decompose_restaurant_task",
+                    action=lambda s: self._decompose_restaurant(task_goal, s),
+                )
+            )
+        elif scene_type == SceneType.HOSPITAL:
+            decompose_sel.add_child(
+                LambdaActionNode(
+                    name="decompose_hospital_task",
+                    action=lambda s: self._decompose_hospital(task_goal, s),
+                )
+            )
+        else:
+            decompose_sel.add_child(
+                LambdaActionNode(
+                    name="decompose_generic_task",
+                    action=lambda s: self._decompose_generic(task_goal, s),
+                )
+            )
+        root.add_child(decompose_sel)
+        return bt
+
+    def _build_tactical_level(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        context: Dict[str, Any],
+    ) -> BehaviorTree:
+        """构建战术级行为树"""
+        root = SequenceNode(name="tactical_sequence")
+        bt = BehaviorTree(name=f"tactical_{task_goal}", root=root)
+
+        # 场景感知
+        root.add_child(
+            LambdaActionNode(
+                name="perceive_scene",
+                action=lambda s: self._perceive_scene(scene_type, s),
+            )
+        )
+
+        # 路径规划选择
+        path_sel = SelectorNode(name="path_planning_selector")
+
+        # 主路径规划
+        path_sel.add_child(
+            LambdaActionNode(
+                name="plan_primary_path",
+                action=lambda s: self._plan_primary_path(scene_type, s),
+            )
+        )
+
+        # 备用路径规划
+        path_sel.add_child(
+            LambdaActionNode(
+                name="plan_secondary_path",
+                action=lambda s: self._plan_secondary_path(scene_type, s),
+            )
+        )
+
+        root.add_child(path_sel)
+
+        # 资源预留
+        root.add_child(
+            LambdaActionNode(
+                name="reserve_resources",
+                action=lambda s: self._reserve_resources(scene_type, s),
+            )
+        )
+        return bt
+
+    def _build_execution_level(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        context: Dict[str, Any],
+    ) -> BehaviorTree:
+        """构建执行级行为树"""
+        root = SequenceNode(name="execution_sequence")
+        bt = BehaviorTree(name=f"execution_{task_goal}", root=root)
+
+        # 技能匹配
+        root.add_child(
+            LambdaActionNode(
+                name="match_skills",
+                action=lambda s: self._match_skills_to_task(task_goal, scene_type, s),
+            )
+        )
+
+        # 动作序列执行
+        action_sel = SelectorNode(name="action_sequence_selector")
+
+        # 尝试标准动作序列
+        standard_seq = SequenceNode(name="standard_action_sequence")
+        standard_seq.add_child(
+            LambdaActionNode(
+                name="execute_navigate",
+                action=lambda s: self._execute_navigate(s),
+            )
+        )
+        standard_seq.add_child(
+            LambdaActionNode(
+                name="execute_manipulate",
+                action=lambda s: self._execute_manipulate(s),
+            )
+        )
+        standard_seq.add_child(
+            LambdaActionNode(
+                name="execute_place",
+                action=lambda s: self._execute_place(s),
+            )
+        )
+        action_sel.add_child(standard_seq)
+
+        # 降级动作序列
+        fallback_seq = SequenceNode(name="fallback_action_sequence")
+        fallback_seq.add_child(
+            ConditionNode(
+                name="has_simplified_path",
+                condition=lambda s: s.get("simplified_available", False),
+            )
+        )
+        fallback_seq.add_child(
+            LambdaActionNode(
+                name="execute_simplified",
+                action=lambda s: self._execute_simplified(s),
+            )
+        )
+        action_sel.add_child(fallback_seq)
+        root.add_child(action_sel)
+
+        # 结果验证
+        root.add_child(
+            LambdaActionNode(
+                name="verify_execution",
+                action=lambda s: self._verify_execution(s),
+            )
+        )
+        return bt
+
+    def _build_reactive_level(
+        self,
+        scene_type: SceneType,
+        context: Dict[str, Any],
+    ) -> BehaviorTree:
+        """构建反应级行为树"""
+        root = ParallelNode(
+            name="reactive_parallel",
+            success_policy=ParallelNode.Policy.REQUIRE_ALL,
+            failure_policy=ParallelNode.Policy.REQUIRE_ANY,
+        )
+        bt = BehaviorTree(name=f"reactive_{scene_type.value}", root=root)
+
+        # 碰撞监控
+        root.add_child(
+            SequenceNode(
+                name="collision_monitor",
+                children=[
+                    ConditionNode(
+                        name="check_obstacle",
+                        condition=lambda s: s.get("obstacle_detected", False),
+                    ),
+                    LambdaActionNode(
+                        name="trigger_avoidance",
+                        action=lambda s: self._trigger_avoidance(s),
+                    ),
+                ],
+            )
+        )
+
+        # 电池监控
+        root.add_child(
+            SequenceNode(
+                name="battery_monitor",
+                children=[
+                    ConditionNode(
+                        name="check_low_battery",
+                        condition=lambda s: s.get("battery_level", 100) < 15,
+                    ),
+                    LambdaActionNode(
+                        name="trigger_recharge",
+                        action=lambda s: self._trigger_recharge(s),
+                    ),
+                ],
+            )
+        )
+
+        # 通信监控
+        root.add_child(
+            SequenceNode(
+                name="comms_monitor",
+                children=[
+                    ConditionNode(
+                        name="check_comms_lost",
+                        condition=lambda s: not s.get("comms_active", True),
+                    ),
+                    LambdaActionNode(
+                        name="trigger_comms_recovery",
+                        action=lambda s: self._trigger_comms_recovery(s),
+                    ),
+                ],
+            )
+        )
+
+        # 心跳监控
+        root.add_child(
+            SequenceNode(
+                name="heartbeat_monitor",
+                children=[
+                    ConditionNode(
+                        name="check_heartbeat_timeout",
+                        condition=lambda s: s.get("heartbeat_timeout", False),
+                    ),
+                    LambdaActionNode(
+                        name="trigger_heartbeat_recovery",
+                        action=lambda s: self._trigger_heartbeat_recovery(s),
+                    ),
+                ],
+            )
+        )
+        return bt
+
+    # ---- 战略级处理器 ----
+
+    def _allocate_resources(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        blackboard: Blackboard,
+    ) -> NodeStatus:
+        """分配任务资源"""
+        required = {
+            SceneType.WAREHOUSE: {"battery": 40, "time": 300},
+            SceneType.RESTAURANT: {"battery": 30, "time": 180},
+            SceneType.HOSPITAL: {"battery": 50, "time": 400},
+            SceneType.FACTORY: {"battery": 35, "time": 250},
+            SceneType.OUTDOOR: {"battery": 60, "time": 600},
+        }
+        req = required.get(scene_type, {"battery": 30, "time": 200})
+        blackboard.set("allocated_battery", req["battery"])
+        blackboard.set("allocated_time", req["time"])
+        blackboard.set("resources_allocated", True)
+        return NodeStatus.SUCCESS
+
+    def _decompose_warehouse(self, task_goal: str, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("subtasks", ["navigate_to_pick", "pick_item", "navigate_to_drop", "place_item"])
+        return NodeStatus.SUCCESS
+
+    def _decompose_restaurant(self, task_goal: str, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("subtasks", ["navigate_to_kitchen", "pick_food", "navigate_to_table", "deliver_food"])
+        return NodeStatus.SUCCESS
+
+    def _decompose_hospital(self, task_goal: str, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("subtasks", ["navigate_to_storage", "pick_medicine", "navigate_to_ward", "deliver_medicine", "verify_delivery"])
+        return NodeStatus.SUCCESS
+
+    def _decompose_generic(self, task_goal: str, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("subtasks", ["navigate", "manipulate", "navigate_back"])
+        return NodeStatus.SUCCESS
+
+    # ---- 战术级处理器 ----
+
+    def _perceive_scene(self, scene_type: SceneType, blackboard: Blackboard) -> NodeStatus:
+        if self._scene_intelligence:
+            scene_ctx = self._scene_intelligence.get_scene_context(scene_type)
+            blackboard.set("scene_context", scene_ctx)
+        blackboard.set("scene_perceived", True)
+        return NodeStatus.SUCCESS
+
+    def _plan_primary_path(self, scene_type: SceneType, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("primary_path", f"path_{scene_type.value}_primary")
+        blackboard.set("path_planned", True)
+        return NodeStatus.SUCCESS
+
+    def _plan_secondary_path(self, scene_type: SceneType, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("secondary_path", f"path_{scene_type.value}_secondary")
+        blackboard.set("fallback_available", True)
+        return NodeStatus.SUCCESS
+
+    def _reserve_resources(self, scene_type: SceneType, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("resources_reserved", True)
+        return NodeStatus.SUCCESS
+
+    # ---- 执行级处理器 ----
+
+    def _match_skills_to_task(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        blackboard: Blackboard,
+    ) -> NodeStatus:
+        if self._skill_registry:
+            skills = self._skill_registry.get_skills_by_scene(scene_type.value)
+            blackboard.set("matched_skills", [s.name() for s in skills[:3]])
+        else:
+            blackboard.set("matched_skills", ["navigate", "manipulate", "place"])
+        return NodeStatus.SUCCESS
+
+    def _execute_navigate(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("nav_progress", blackboard.get("nav_progress", 0) + 1)
+        blackboard.set("current_action", "navigate")
+        return NodeStatus.SUCCESS
+
+    def _execute_manipulate(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("manip_progress", blackboard.get("manip_progress", 0) + 1)
+        blackboard.set("current_action", "manipulate")
+        return NodeStatus.SUCCESS
+
+    def _execute_place(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("place_progress", blackboard.get("place_progress", 0) + 1)
+        blackboard.set("current_action", "place")
+        return NodeStatus.SUCCESS
+
+    def _execute_simplified(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("simplified_executed", True)
+        blackboard.set("current_action", "simplified")
+        return NodeStatus.SUCCESS
+
+    def _verify_execution(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("execution_verified", True)
+        return NodeStatus.SUCCESS
+
+    # ---- 反应级处理器 ----
+
+    def _trigger_avoidance(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("avoidance_triggered", True)
+        blackboard.set("current_action", "avoidance")
+        return NodeStatus.SUCCESS
+
+    def _trigger_recharge(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("recharge_triggered", True)
+        blackboard.set("current_action", "recharge")
+        return NodeStatus.SUCCESS
+
+    def _trigger_comms_recovery(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("comms_recovery_triggered", True)
+        blackboard.set("current_action", "comms_recovery")
+        return NodeStatus.SUCCESS
+
+    def _trigger_heartbeat_recovery(self, blackboard: Blackboard) -> NodeStatus:
+        blackboard.set("heartbeat_recovery_triggered", True)
+        blackboard.set("current_action", "heartbeat_recovery")
+        return NodeStatus.SUCCESS
+
+
+# ============================================================
+# 记忆增强的场景规划器
+# ============================================================
+
+class SceneMemoryAugmentedPlanner:
+    """
+    记忆增强的场景规划器
+
+    利用长期记忆中的场景经验来增强任务规划:
+    - 检索相似历史任务的执行策略
+    - 基于记忆优化参数配置
+    - 跨任务经验迁移
+    - 失败模式识别与规避
+    """
+
+    def __init__(
+        self,
+        scene_intelligence: Optional[SceneIntelligence] = None,
+        memory: Optional["LongTermMemory"] = None,
+    ):
+        self._scene_intelligence = scene_intelligence
+        self._memory = memory
+        self._experience_cache: Dict[str, List[Dict]] = {}
+        self._success_patterns: Dict[str, List[Dict]] = {}
+        self._failure_patterns: Dict[str, List[Dict]] = {}
+
+    def retrieve_relevant_experiences(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        max_count: int = 5,
+    ) -> List[Dict[str, Any]]:
+        """
+        检索与当前任务相关的历史经验
+
+        Args:
+            task_goal: 任务目标
+            scene_type: 场景类型
+            max_count: 最大返回数量
+
+        Returns:
+            相关经验列表
+        """
+        cache_key = f"{task_goal}:{scene_type.value}"
+        if cache_key in self._experience_cache:
+            return self._experience_cache[cache_key]
+
+        experiences = []
+
+        # 从记忆中检索
+        if self._memory:
+            try:
+                results = self._memory.retrieve(
+                    query=f"{scene_type.value} {task_goal}",
+                    top_k=max_count,
+                )
+                if results:
+                    experiences.extend([{"source": "memory", **r} for r in results])
+            except Exception:
+                pass
+
+        # 如果记忆中没有，使用场景特定的默认经验
+        if not experiences:
+            experiences = self._get_default_experiences(task_goal, scene_type)
+
+        self._experience_cache[cache_key] = experiences
+        return experiences[:max_count]
+
+    def _get_default_experiences(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+    ) -> List[Dict[str, Any]]:
+        """获取场景默认经验"""
+        defaults = {
+            SceneType.WAREHOUSE: [
+                {"pattern": "pick_item", "avg_duration_ms": 15000, "success_rate": 0.92},
+                {"pattern": "place_item", "avg_duration_ms": 12000, "success_rate": 0.95},
+                {"pattern": "zone_patrol", "avg_duration_ms": 60000, "success_rate": 0.88},
+            ],
+            SceneType.RESTAURANT: [
+                {"pattern": "pick_food", "avg_duration_ms": 8000, "success_rate": 0.90},
+                {"pattern": "deliver_food", "avg_duration_ms": 20000, "success_rate": 0.87},
+                {"pattern": "clear_table", "avg_duration_ms": 25000, "success_rate": 0.83},
+            ],
+            SceneType.HOSPITAL: [
+                {"pattern": "verify_delivery", "avg_duration_ms": 5000, "success_rate": 0.98},
+                {"pattern": "medicine_delivery", "avg_duration_ms": 30000, "success_rate": 0.96},
+            ],
+            SceneType.FACTORY: [
+                {"pattern": "assembly_task", "avg_duration_ms": 45000, "success_rate": 0.91},
+                {"pattern": "quality_check", "avg_duration_ms": 10000, "success_rate": 0.89},
+            ],
+            SceneType.OUTDOOR: [
+                {"pattern": "gps_navigation", "avg_duration_ms": 90000, "success_rate": 0.85},
+                {"pattern": "terrain_avoidance", "avg_duration_ms": 15000, "success_rate": 0.82},
+            ],
+        }
+        return defaults.get(scene_type, [])
+
+    def optimize_task_params(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        base_params: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        基于历史经验优化任务参数
+
+        Args:
+            task_goal: 任务目标
+            scene_type: 场景类型
+            base_params: 基础参数
+
+        Returns:
+            优化后的参数
+        """
+        params = dict(base_params)
+        experiences = self.retrieve_relevant_experiences(task_goal, scene_type)
+
+        if not experiences:
+            return params
+
+        # 基于成功率调整安全系数
+        avg_success = np.mean([e.get("success_rate", 0.8) for e in experiences])
+        if avg_success < 0.8:
+            params["safety_margin"] = params.get("safety_margin", 1.0) * 1.2
+            params["timeout_factor"] = params.get("timeout_factor", 1.0) * 1.3
+        elif avg_success > 0.95:
+            params["safety_margin"] = params.get("safety_margin", 1.0) * 0.9
+            params["timeout_factor"] = params.get("timeout_factor", 1.0) * 0.85
+
+        # 基于平均执行时间调整超时
+        avg_duration = np.mean([e.get("avg_duration_ms", 30000) for e in experiences])
+        params["estimated_duration_ms"] = avg_duration
+        params["timeout_ms"] = avg_duration * params.get("timeout_factor", 1.2)
+
+        return params
+
+    def record_experience(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+        success: bool,
+        duration_ms: float,
+        params: Dict[str, Any],
+        outcome_details: Optional[Dict[str, Any]] = None,
+    ) -> None:
+        """记录一次任务执行经验"""
+        cache_key = f"{task_goal}:{scene_type.value}"
+
+        exp = {
+            "task_goal": task_goal,
+            "scene_type": scene_type.value,
+            "success": success,
+            "duration_ms": duration_ms,
+            "params": params,
+            "timestamp": time.time(),
+            **(outcome_details or {}),
+        }
+
+        # 更新缓存
+        if cache_key not in self._experience_cache:
+            self._experience_cache[cache_key] = []
+        self._experience_cache[cache_key].append(exp)
+
+        # 如果成功，更新成功模式
+        if success:
+            if cache_key not in self._success_patterns:
+                self._success_patterns[cache_key] = []
+            self._success_patterns[cache_key].append(exp)
+        else:
+            if cache_key not in self._failure_patterns:
+                self._failure_patterns[cache_key] = []
+            self._failure_patterns[cache_key].append(exp)
+
+        # 存储到长期记忆
+        if self._memory:
+            try:
+                self._memory.store_episode(
+                    summary=f"{scene_type.value}:{task_goal} {'success' if success else 'failure'}",
+                    context=exp,
+                    actions=[],
+                    outcomes={"success": success},
+                    importance_score=8.0 if not success else 5.0,
+                    tags=[scene_type.value, task_goal, "success" if success else "failure"],
+                )
+            except Exception:
+                pass
+
+    def get_failure_warnings(
+        self,
+        task_goal: str,
+        scene_type: SceneType,
+    ) -> List[str]:
+        """基于历史失败经验返回警告"""
+        cache_key = f"{task_goal}:{scene_type.value}"
+        warnings = []
+
+        failures = self._failure_patterns.get(cache_key, [])
+        if len(failures) >= 3:
+            failure_rate = len(failures) / (
+                len(self._success_patterns.get(cache_key, [])) + len(failures) + 1e-6
+            )
+            if failure_rate > 0.3:
+                warnings.append(f"历史失败率较高: {failure_rate:.1%}")
+                recent_failures = failures[-3:]
+                if any(f.get("params", {}).get("battery_level", 100) < 30 for f in recent_failures):
+                    warnings.append("建议确保电量充足 (>50%)")
+                if any(f.get("params", {}).get("obstacle_density", 0) > 0.5 for f in recent_failures):
+                    warnings.append("历史在高障碍密度下失败，建议等待环境清理")
+
+        return warnings
+
+
+# ============================================================
+# 跨场景迁移学习器
+# ==========================================================
+
+class CrossSceneTransferLearner:
+    """
+    跨场景迁移学习器
+
+    从一个场景学习到的知识迁移到另一个场景:
+    - 提取场景无关的通用策略
+    - 识别需要场景特定调整的参数
+    - 评估迁移适用性
+    - 生成场景适配建议
+    """
+
+    def __init__(
+        self,
+        scene_intelligence: Optional[SceneIntelligence] = None,
+        memory: Optional["LongTermMemory"] = None,
+    ):
+        self._scene_intelligence = scene_intelligence
+        self._memory = memory
+        self._transfer_matrix: Dict[Tuple[str, str], Dict[str, float]] = {}
+        self._generic_skills: List[str] = [
+            "navigate",
+            "obstacle_avoidance",
+            "low_battery_return",
+            "emergency_stop",
+            "comms_reconnect",
+        ]
+
+    def evaluate_transferability(
+        self,
+        source_scene: SceneType,
+        target_scene: SceneType,
+        skill: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """
+        评估从源场景到目标场景的知识迁移适用性
+
+        Returns:
+            transfer_score: 0.0-1.0 迁移适用性
+            generic_skills: 可直接迁移的通用技能
+            adaptable_skills: 需要适配的技能
+            warnings: 迁移警告
+        """
+        matrix_key = (source_scene.value, target_scene.value)
+
+        if matrix_key in self._transfer_matrix:
+            return self._transfer_matrix[matrix_key]
+
+        # 场景相似度矩阵
+        scene_similarity = self._compute_scene_similarity(source_scene, target_scene)
+
+        generic = []
+        adaptable = []
+        warnings = []
+
+        for skill_name in self._generic_skills:
+            generic.append(skill_name)
+
+        # 基于场景相似度评估
+        if scene_similarity < 0.3:
+            warnings.append("源场景与目标场景差异较大，建议谨慎迁移")
+            adaptable_ratio = 0.3
+        elif scene_similarity < 0.6:
+            warnings.append("部分参数需要场景特定调整")
+            adaptable_ratio = 0.6
+        else:
+            warnings.append("场景高度相似，可大量迁移")
+            adaptable_ratio = 0.85
+
+        result = {
+            "source_scene": source_scene.value,
+            "target_scene": target_scene.value,
+            "scene_similarity": scene_similarity,
+            "transfer_score": (scene_similarity * 0.7 + adaptable_ratio * 0.3),
+            "generic_skills": generic,
+            "adaptable_skills": [
+                "pick_item", "place_item", "patrol",
+                "deliver", "clear_table", "verify_delivery",
+            ][:int(6 * adaptable_ratio)],
+            "warnings": warnings,
+        }
+
+        self._transfer_matrix[matrix_key] = result
+        return result
+
+    def _compute_scene_similarity(
+        self,
+        scene_a: SceneType,
+        scene_b: SceneType,
+    ) -> float:
+        """计算两个场景的相似度"""
+        similarity_map = {
+            (SceneType.WAREHOUSE, SceneType.FACTORY): 0.75,
+            (SceneType.RESTAURANT, SceneType.OFFICE): 0.55,
+            (SceneType.HOSPITAL, SceneType.LABORATORY): 0.70,
+            (SceneType.OUTDOOR, SceneType.WAREHOUSE): 0.50,
+            (SceneType.FACTORY, SceneType.HOSPITAL): 0.45,
+            (SceneType.RESTAURANT, SceneType.HOSPITAL): 0.40,
+        }
+
+        if (scene_a, scene_b) in similarity_map:
+            return similarity_map[(scene_a, scene_b)]
+        if scene_a == scene_b:
+            return 1.0
+        return 0.35
+
+    def transfer_task_plan(
+        self,
+        source_scene: SceneType,
+        target_scene: SceneType,
+        source_plan: Dict[str, Any],
+    ) -> Dict[str, Any]:
+        """
+        将源场景的任务计划迁移到目标场景
+
+        Args:
+            source_scene: 源场景
+            target_scene: 目标场景
+            source_plan: 源场景的任务计划
+
+        Returns:
+            适配后的目标场景任务计划
+        """
+        transfer_info = self.evaluate_transferability(source_scene, target_scene)
+
+        adapted_plan = dict(source_plan)
+        adapted_plan["source_scene"] = source_scene.value
+        adapted_plan["target_scene"] = target_scene.value
+        adapted_plan["transfer_score"] = transfer_info["transfer_score"]
+        adapted_plan["adaptations_applied"] = []
+
+        # 调整速度参数
+        speed_adjustments = {
+            SceneType.HOSPITAL: 0.7,  # 更保守
+            SceneType.RESTAURANT: 0.85,
+            SceneType.FACTORY: 1.0,
+            SceneType.WAREHOUSE: 1.0,
+            SceneType.OUTDOOR: 1.1,
+        }
+        if "max_speed" in source_plan:
+            speed_factor = speed_adjustments.get(target_scene, 1.0)
+            adapted_plan["max_speed"] = source_plan["max_speed"] * speed_factor
+            adapted_plan["adaptations_applied"].append(f"speed_factor:{speed_factor}")
+
+        # 调整安全距离
+        safety_adjustments = {
+            SceneType.HOSPITAL: 1.3,  # 更高安全距离
+            SceneType.RESTAURANT: 1.1,
+            SceneType.FACTORY: 1.0,
+            SceneType.WAREHOUSE: 0.9,
+            SceneType.OUTDOOR: 0.85,
+        }
+        if "safe_distance" in source_plan:
+            safety_factor = safety_adjustments.get(target_scene, 1.0)
+            adapted_plan["safe_distance"] = source_plan["safe_distance"] * safety_factor
+            adapted_plan["adaptations_applied"].append(f"safety_factor:{safety_factor}")
+
+        # 添加迁移警告
+        adapted_plan["transfer_warnings"] = transfer_info["warnings"]
+
+        return adapted_plan
 
 
 # ============================================================
