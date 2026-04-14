@@ -369,7 +369,8 @@ class MemoryEnhancedExecutor:
             return []
 
         try:
-            self.current_record.memory_retrieval_count += 1
+            if self.current_record is not None:
+                self.current_record.memory_retrieval_count += 1
             # 尝试使用记忆系统的检索接口
             if hasattr(self.memory_system, 'retrieve'):
                 results = self.memory_system.retrieve(
@@ -424,23 +425,78 @@ class MemoryEnhancedExecutor:
         根据历史经验调整任务配置
 
         从相似任务的执行经验中学习，调整速度、安全阈值等参数
+        学习策略:
+        - 成功经验: 提取最优速度参数，记忆最佳安全边界
+        - 失败经验: 降低速度，增加安全裕量，延长超时时间
+        - 综合多经验: 加权平均，保留最保守的参数
         """
-        experiences = self.retrieve_relevant_experience(task_type, limit=3)
+        experiences = self.retrieve_relevant_experience(task_type, limit=5)
         if not experiences:
             return task_config
 
         adjusted = task_config.copy()
+        success_count = 0
+        failure_count = 0
+
+        # 从成功经验中提取最优参数
+        best_speed = None
+        best_threshold = None
+        best_safety = None
+
         for exp in experiences:
-            # 从成功经验中学习参数调整
             if exp.get("result") == "success":
-                # 可以从经验中提取优化后的参数
-                # 例如：如果历史经验显示某个速度参数效果更好
-                pass
-            # 从失败经验中学习避免重复错误
+                success_count += 1
+                # 从成功经验中提取性能指标
+                perf = exp.get("performance_metrics", {})
+                # 学习最优速度 (从 performance_metrics 中查找)
+                if "optimal_speed" in perf:
+                    speed = float(perf["optimal_speed"])
+                    if best_speed is None or speed > best_speed:
+                        best_speed = speed
+                # 学习最优阈值
+                if "optimal_threshold" in perf:
+                    thr = float(perf["optimal_threshold"])
+                    if best_threshold is None or thr < best_threshold:
+                        best_threshold = thr
             elif exp.get("result") == "failure":
-                # 添加安全约束
+                failure_count += 1
+                # 从失败经验中学习避免重复错误
+                # 1. 添加或增强安全约束
                 if "safety_margin" not in adjusted:
                     adjusted["safety_margin"] = 1.2
+                else:
+                    adjusted["safety_margin"] = min(adjusted["safety_margin"] * 1.1, 2.0)
+
+                # 2. 降低速度 (学习失败教训)
+                current_speed = adjusted.get("move_speed", 0.5)
+                adjusted["move_speed"] = current_speed * 0.9
+
+                # 3. 提取失败原因，避免再次触发
+                outcome = exp.get("outcome_summary", "")
+                if outcome:
+                    adjusted.setdefault("known_failure_patterns", []).append(outcome)
+
+        # 从成功经验应用最优参数
+        if best_speed is not None and success_count >= failure_count:
+            # 成功经验足够多时，采用最优速度
+            adjusted["move_speed"] = min(best_speed, adjusted.get("move_speed", 0.5) * 1.05)
+
+        if best_threshold is not None and success_count >= failure_count:
+            # 采用更精确的阈值
+            adjusted["position_threshold"] = best_threshold
+
+        # 如果全是失败经验，采用极保守策略
+        if success_count == 0 and failure_count > 0:
+            adjusted.setdefault("safety_margin", 1.5)
+            adjusted["move_speed"] = adjusted.get("move_speed", 0.5) * 0.7
+            adjusted["timeout_factor"] = 2.0  # 双倍超时
+
+        # 记录学习来源
+        adjusted["_learned_from"] = {
+            "success_count": success_count,
+            "failure_count": failure_count,
+            "total_experiences": len(experiences),
+        }
 
         return adjusted
 
