@@ -514,4 +514,63 @@ from .outdoor_scene import (
     get_outdoor_scene_controller,
 )
 
-__version__ = "3.13.0"
+# 仓储物流场景化具身智能
+from .warehouse_scene import (
+    WarehouseZone,
+    ShelfType,
+    PickStrategy,
+    InventoryStatus,
+    TaskPriority,
+    AGVLoadState,
+    SKU,
+    InventoryItem,
+    Location,
+    Shelf,
+    PickTask,
+    Wave,
+    ConveyorSegment,
+    DockDoor,
+    WorkerSafetyEvent,
+    ThroughputMetrics,
+    ShelfManager,
+    PickTaskManager,
+    InventoryTracker,
+    ConveyorSystem,
+    DockDoorManager,
+    WorkerSafetyMonitor,
+    ThroughputAnalyzer,
+    WarehouseSceneController,
+    get_warehouse_scene_controller,
+)
+
+# 多机器人动态负载均衡器
+from .multi_robot_load_balancer import (
+    LoadMetric,
+    BalanceStrategy,
+    RebalanceTrigger,
+    AGVLoadProfile,
+    TaskSpec,
+    LoadThreshold,
+    RebalanceDecision,
+    LoadStats,
+    DynamicLoadBalancer,
+)
+
+# 跨场景迁移学习
+from .cross_scene_transfer import (
+    SceneType,
+    SkillDomain,
+    TransferMode,
+    SkillSpec,
+    SceneProfile,
+    TransferCandidate,
+    TransferRecord,
+    SceneKnowledgeGraph,
+    TransferabilityAnalyzer,
+    SceneAdapter,
+    KnowledgeDistillation,
+    SceneCurriculum,
+    CrossSceneSkillLibrary,
+)
+
+__version__ = "3.15.0"
