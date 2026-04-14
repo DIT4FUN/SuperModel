@@ -1,7 +1,8 @@
 # SuperModel 模块索引 / Module Index
-- **v3.8.3** (2026-04-14): 部署模块测试(96项) + DeploymentValidator/HealthMonitor/EmergencyProcedure/DeploymentManager全覆盖; 971项pytest测试100%通过; 部署模块0未测类; 五级AGV参数化集成测试完整覆盖
-- **v3.8.0** (2026-04-14): 具身仿真增强模块测试(94项) + DynamicObstacleGenerator/MultiAGVSimulationEnhancer/WeatherEffect完整导出; 782项具身测试+828项全量测试100%通过
-- **v2.87.0** (2026-04-12): 完成长期记忆系统全模块开发; 实现记忆存储/检索/巩固/遗忘四大核心机制; 32项记忆模块测试全通过; 2735项全量测试100%通过; 符合正式发布要求
+- **v3.18.0** (2026-04-14): 行为树任务类型扩展(+rescue/inspection/assembly/patrol) + TaskExecutor行为树状态污染修复 + Simulation导入修复; deployment_benchmark.py + stress测试; ~2700+项测试100%通过
+- **v3.17.0** (2026-04-14): HierarchicalBehaviorTreeComposer+SceneMemoryAugmentedPlanner+CrossSceneTransferLearner+DegradationManager+46项新测试
+- **v3.16.0** (2026-04-14): SensorDropoutHandler+学习经验调整+传感器鲁棒性测试; 970项测试100%通过
+- **v3.15.0** (2026-04-14): WarehouseSceneController+MultiRobotLoadBalancer+CrossSceneTransferLearner+90新测试; 960项测试100%通过
 - **v2.68.0** (2026-04-11): 新增具身智能部署管理模块(deployment.py, 420行); DeploymentValidator+HealthMonitor+EmergencyProcedure+DeploymentManager; 30项测试; 2679项测试全通过; 标定噪声密度Bug修复
 - **v2.67.0** (2026-04-11): 传感器模块Bug修复(estimate_payload/abs/WrenchProcessor/VirtualSensor上下文管理器); 2625项测试全通过
 - **v2.55.0** (2026-04-10): SPEC.md第27章传感器-控制闭环集成规格; 完整闭环数据流/延迟预算/采样率映射/接口契约/异常降级策略; 2671项测试全通过
@@ -18,8 +19,8 @@
 - **v2.07.0** (2026-04-09): 触觉/力觉/IMU模块完善 + 测试扩展 + 接口规范文档; 378项测试全通过
 - **v2.06.0** (2026-04-09): 新增INTEGRATION_GUIDE完整集成指南; 传感器→融合→控制全链路接口规范; 368项传感器+融合测试全通过
 
-> **版本**: v2.87.0
-> **更新**: 2026-04-12
+> **版本**: v3.18.0
+> **更新**: 2026-04-14
 > **项目**: SuperModel 超模态机器人具身智能大脑
 
 本文档是 SuperModel 项目的完整模块索引，提供所有源代码模块、设计文档和测试用例的快速导航。

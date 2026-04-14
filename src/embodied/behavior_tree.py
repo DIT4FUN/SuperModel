@@ -942,11 +942,59 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
         self.register_task_type('transport', transport_sequence)
 
         # 3. 巡逻任务 (重复经过多个点)
-        patrol_root = UntilFailNode(
-            SelectorNode("PatrolSelector"),
-            "PatrolRoot"
+        patrol_sequence = SequenceNode("PatrolSequence")
+        patrol_sequence.add_children(
+            AGVCheckSafeCondition(),
+            AGVMoveToAction(),
+            AGVCheckPositionReached(),
         )
+        patrol_root = RepeaterNode(patrol_sequence, times=3, name="PatrolRoot")
         self.register_task_type('patrol', patrol_root)
+
+        # 4. 救援任务 (紧急移动到救援点并带回)
+        rescue_sequence = SequenceNode("RescueSequence")
+        rescue_sequence.add_children(
+            AGVCheckSafeCondition(),
+            AGVCheckBatteryCondition(0.4),  # 救援需要更多电量
+            LambdaActionNode(lambda bb: self._set_rescue_target(bb), "SetRescueTarget"),
+            AGVMoveToAction(speed=0.8),  # 快速移动
+            AGVCheckPositionReached(threshold=0.2),
+            AGVGraspAction(),
+            LambdaActionNode(lambda bb: self._set_safe_zone_target(bb), "SetSafeZoneTarget"),
+            AGVMoveToAction(speed=0.6),  # 小心移动
+            AGVCheckPositionReached(threshold=0.2),
+            AGVReleaseAction(),
+        )
+        self.register_task_type('rescue', rescue_sequence)
+
+        # 5. 巡检任务 (移动到检查点)
+        inspection_sequence = SequenceNode("InspectionSequence")
+        inspection_sequence.add_children(
+            AGVCheckSafeCondition(),
+            AGVCheckBatteryCondition(0.3),
+            LambdaActionNode(lambda bb: self._set_inspection_target(bb), "SetInspectionTarget"),
+            AGVMoveToAction(),
+            AGVCheckPositionReached(),
+            # 模拟检查动作
+            LambdaActionNode(lambda bb: NodeStatus.SUCCESS, "InspectAction"),
+        )
+        self.register_task_type('inspection', inspection_sequence)
+
+        # 6. 装配任务 (搬运部件到装配点)
+        assembly_sequence = SequenceNode("AssemblySequence")
+        assembly_sequence.add_children(
+            AGVCheckSafeCondition(),
+            AGVCheckBatteryCondition(0.3),
+            LambdaActionNode(lambda bb: self._set_pickup_target(bb), "SetPickupTarget"),
+            AGVMoveToAction(),
+            AGVCheckPositionReached(),
+            AGVGraspAction(),
+            LambdaActionNode(lambda bb: self._set_assembly_target(bb), "SetAssemblyTarget"),
+            AGVMoveToAction(),
+            AGVCheckPositionReached(),
+            AGVReleaseAction(),
+        )
+        self.register_task_type('assembly', assembly_sequence)
 
         # 4. 多AGV协同任务
         if self.capabilities.get('support_multi_agent', False):
@@ -999,6 +1047,40 @@ class AGVTaskPlanner(EmbodiedTaskPlanner):
         if dropoff_pos is not None:
             blackboard.set('current_target', dropoff_pos)
             blackboard.goal_state['target_position'] = dropoff_pos
+            return NodeStatus.SUCCESS
+        return NodeStatus.FAILURE
+
+    def _set_rescue_target(self, blackboard: Blackboard) -> NodeStatus:
+        """设置救援目标点到黑板"""
+        rescue_pos = blackboard.goal_state.get('rescue_position', blackboard.goal_state.get('target_position'))
+        if rescue_pos is not None:
+            blackboard.set('current_target', rescue_pos)
+            blackboard.goal_state['target_position'] = rescue_pos
+            return NodeStatus.SUCCESS
+        return NodeStatus.FAILURE
+
+    def _set_safe_zone_target(self, blackboard: Blackboard) -> NodeStatus:
+        """设置安全区目标点到黑板"""
+        safe_zone_pos = blackboard.goal_state.get('safe_zone_position', [5.0, 5.0, 0.0])
+        blackboard.set('current_target', safe_zone_pos)
+        blackboard.goal_state['target_position'] = safe_zone_pos
+        return NodeStatus.SUCCESS
+
+    def _set_inspection_target(self, blackboard: Blackboard) -> NodeStatus:
+        """设置巡检目标点到黑板"""
+        inspection_pos = blackboard.goal_state.get('inspection_position', blackboard.goal_state.get('target_position'))
+        if inspection_pos is not None:
+            blackboard.set('current_target', inspection_pos)
+            blackboard.goal_state['target_position'] = inspection_pos
+            return NodeStatus.SUCCESS
+        return NodeStatus.FAILURE
+
+    def _set_assembly_target(self, blackboard: Blackboard) -> NodeStatus:
+        """设置装配目标点到黑板"""
+        assembly_pos = blackboard.goal_state.get('assembly_position', blackboard.goal_state.get('dropoff_position'))
+        if assembly_pos is not None:
+            blackboard.set('current_target', assembly_pos)
+            blackboard.goal_state['target_position'] = assembly_pos
             return NodeStatus.SUCCESS
         return NodeStatus.FAILURE
 
@@ -1354,7 +1436,9 @@ def _build_node_from_config(config: Dict[str, Any], index: int = 0) -> BTNode:
         child_node = _build_node_from_config(children[0], 0) if children else LambdaActionNode(lambda bb: NodeStatus.SUCCESS)
         decorator_class = _NODE_TYPE_REGISTRY.get(node_type, RepeaterNode)
         if node_type == 'repeater':
-            times = config.get('num_repeats', config.get('times', -1))
+            # Check params first, then top-level config
+            params = config.get('params', {})
+            times = params.get('num_repeats', config.get('num_repeats', config.get('times', -1)))
             node = decorator_class(child=child_node, times=times, name=node_name)
         elif node_type == 'until_fail':
             node = decorator_class(child=child_node, name=node_name)

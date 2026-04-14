@@ -12,8 +12,7 @@ from typing import List, Tuple, Dict, Optional
 from dataclasses import dataclass
 import time
 
-from sensors.tactile import TaxelArray as TactileSensor
-from sensors.force import SixAxisFTSensor as ForceTorqueSensor
+from sensors.tactile import TactileArray as TactileSensor
 from sensors.imu import IMUSensor
 
 
