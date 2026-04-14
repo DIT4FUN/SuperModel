@@ -1233,9 +1233,423 @@ class EnvironmentalConditionSimulator:
         }
 
 
+# ============================================================================
+# 地形建模系统
+# ============================================================================
+
+
+class FloorType(Enum):
+    """地板类型枚举"""
+    SMOOTH_CONCRETE = "smooth_concrete"     # 光滑混凝土 (最理想)
+    ROUGH_CONCRETE = "rough_concrete"        # 粗糙混凝土 (仓库常用)
+    EPOXY_COATING = "epoxy_coating"           # 环氧树脂涂层 (防滑)
+    RUBBER_MAT = "rubber_mat"                # 橡胶垫 (静音)
+    OUTDOOR_ASPHALT = "outdoor_asphalt"      # 室外沥青
+    GRASS = "grass"                          # 草地 (户外)
+    METAL_PLATE = "metal_plate"              # 金属板 (车间)
+    UNKNOWN = "unknown"
+
+
+class TerrainRegion:
+    """地形区域 - 描述地图中的一个区域的地形特征"""
+    
+    def __init__(
+        self,
+        region_id: str,
+        floor_type: FloorType,
+        center: Tuple[float, float],
+        radius: float = 2.0,
+        slope_angle: float = 0.0,          # 斜坡角度 (度)
+        slope_direction: float = 0.0,       # 斜坡方向 (度, 0=正北)
+        unevenness: float = 0.0,            # 不平整度 0-1
+        is_wet: bool = False,
+    ):
+        self.region_id = region_id
+        self.floor_type = floor_type
+        self.center = center  # (x, y)
+        self.radius = radius
+        self.slope_angle = slope_angle
+        self.slope_direction = slope_direction  # degrees
+        self.unevenness = unevenness
+        self.is_wet = is_wet
+    
+    def contains_point(self, x: float, y: float) -> bool:
+        """检查点是否在此区域内"""
+        import math
+        dx = x - self.center[0]
+        dy = y - self.center[1]
+        dist = math.sqrt(dx*dx + dy*dy)
+        return dist <= self.radius
+    
+    def get_slope_vector(self) -> Tuple[float, float, float]:
+        """获取斜坡方向向量 (vx, vy, vz)"""
+        import math
+        angle_rad = math.radians(self.slope_direction)
+        # 斜坡在水平方向的投影
+        vx = math.sin(math.radians(self.slope_angle)) * math.cos(angle_rad)
+        vy = math.sin(math.radians(self.slope_angle)) * math.sin(angle_rad)
+        vz = math.cos(math.radians(self.slope_angle))
+        return (vx, vy, vz)
+
+
+class TerrainModelingSystem:
+    """
+    地形建模系统 - 模拟不同地面材质、斜坡、不平整地对AGV运动的影响
+    
+    功能:
+    - 地板类型识别与物理参数计算
+    - 斜坡角度对导航的影响
+    - 轮子打滑建模
+    - 不同地形对速度/加速度的限制
+    - 地形感知对导航路径规划的影响
+    
+    支持AGV五级规格:
+    - M级: 基本室内地形
+    - L级: 室内+轻量室外地形
+    - XL级: 全地形支持
+    - XXL级: 全地形+复杂地形
+    """
+    
+    # 地板类型物理参数: (friction_factor, max_speed_factor, slip_factor)
+    FLOOR_PARAMS = {
+        FloorType.SMOOTH_CONCRETE:   (1.00, 1.00, 0.02),
+        FloorType.ROUGH_CONCRETE:     (0.85, 0.90, 0.05),
+        FloorType.EPOXY_COATING:      (0.90, 0.95, 0.03),
+        FloorType.RUBBER_MAT:         (0.95, 0.80, 0.01),
+        FloorType.OUTDOOR_ASPHALT:    (0.75, 0.85, 0.08),
+        FloorType.GRASS:              (0.50, 0.50, 0.25),
+        FloorType.METAL_PLATE:        (0.80, 0.90, 0.10),
+        FloorType.UNKNOWN:            (0.70, 0.80, 0.10),
+    }
+    
+    # 等级对应的地形支持列表
+    GRADE_FLOOR_TYPES = {
+        'S':  [FloorType.SMOOTH_CONCRETE],
+        'M':  [FloorType.SMOOTH_CONCRETE, FloorType.ROUGH_CONCRETE, FloorType.EPOXY_COATING],
+        'L':  [FloorType.SMOOTH_CONCRETE, FloorType.ROUGH_CONCRETE, FloorType.EPOXY_COATING,
+               FloorType.RUBBER_MAT, FloorType.METAL_PLATE],
+        'XL': [FloorType.SMOOTH_CONCRETE, FloorType.ROUGH_CONCRETE, FloorType.EPOXY_COATING,
+               FloorType.RUBBER_MAT, FloorType.METAL_PLATE, FloorType.OUTDOOR_ASPHALT],
+        'XXL': list(FloorType),
+    }
+    
+    def __init__(
+        self,
+        grade: str = "M",
+        enable_slope_modeling: bool = True,
+        enable_slip_modeling: bool = True,
+        enable_wet_surface: bool = True,
+    ):
+        self.grade = grade
+        self.enable_slope_modeling = enable_slope_modeling
+        self.enable_slip_modeling = enable_slip_modeling
+        self.enable_wet_surface = enable_wet_surface
+        
+        self.regions: List[TerrainRegion] = []
+        self.supported_floor_types = self.GRADE_FLOOR_TYPES.get(grade, [FloorType.SMOOTH_CONCRETE])
+        
+        # 默认参数 (在光滑混凝土上的理想参数)
+        self.base_max_speed = 2.0        # m/s
+        self.base_max_accel = 1.0        # m/s^2
+        self.base_friction = 0.8
+        
+        # 当前地形状态
+        self.current_region: Optional[TerrainRegion] = None
+        self.last_update_position: Tuple[float, float] = (0.0, 0.0)
+    
+    def add_region(self, region: TerrainRegion) -> None:
+        """添加地形区域"""
+        # 检查AGV等级是否支持该地形
+        if region.floor_type not in self.supported_floor_types:
+            logger.warning(
+                f"AGV grade {self.grade} does not support floor type "
+                f"{region.floor_type.value}. Skipping region {region.region_id}"
+            )
+            return
+        self.regions.append(region)
+    
+    def add_region_simple(
+        self,
+        region_id: str,
+        floor_type: FloorType,
+        center: Tuple[float, float],
+        radius: float = 2.0,
+        slope_angle: float = 0.0,
+        slope_direction: float = 0.0,
+    ) -> None:
+        """简化接口：直接添加地形区域"""
+        region = TerrainRegion(
+            region_id=region_id,
+            floor_type=floor_type,
+            center=center,
+            radius=radius,
+            slope_angle=slope_angle,
+            slope_direction=slope_direction,
+        )
+        self.add_region(region)
+    
+    def get_region_at(self, x: float, y: float) -> Optional[TerrainRegion]:
+        """获取指定坐标的地形区域"""
+        for region in self.regions:
+            if region.contains_point(x, y):
+                return region
+        return None
+    
+    def update_position(self, x: float, y: float) -> None:
+        """更新AGV位置，检测当前地形区域"""
+        self.current_region = self.get_region_at(x, y)
+        self.last_update_position = (x, y)
+    
+    def get_current_floor_type(self) -> FloorType:
+        """获取当前地板类型"""
+        if self.current_region:
+            return self.current_region.floor_type
+        return FloorType.SMOOTH_CONCRETE  # 假设默认地板
+    
+    def get_floor_parameters(self, floor_type: Optional[FloorType] = None) -> Dict[str, float]:
+        """
+        获取指定地板类型的物理参数
+        
+        Returns:
+            dict with keys: friction_factor, max_speed_factor, slip_factor
+        """
+        if floor_type is None:
+            floor_type = self.get_current_floor_type()
+        
+        params = self.FLOOR_PARAMS.get(floor_type, self.FLOOR_PARAMS[FloorType.UNKNOWN])
+        return {
+            'friction_factor': params[0],
+            'max_speed_factor': params[1],
+            'slip_factor': params[2],
+        }
+    
+    def get_effective_max_speed(self) -> float:
+        """获取考虑地形后的最大有效速度"""
+        floor_params = self.get_floor_parameters()
+        speed_factor = floor_params['max_speed_factor']
+        
+        # 斜坡影响：上坡降低速度
+        if self.enable_slope_modeling and self.current_region:
+            slope_angle = self.current_region.slope_angle
+            if slope_angle > 0:
+                # 上坡: 角度越大，速度折扣越大
+                slope_factor = max(0.3, 1.0 - slope_angle / 45.0)
+                speed_factor *= slope_factor
+        
+        return self.base_max_speed * speed_factor
+    
+    def get_effective_max_acceleration(self) -> float:
+        """获取考虑地形后的最大有效加速度"""
+        floor_params = self.get_floor_parameters()
+        friction = floor_params['friction_factor']
+        
+        # 摩擦系数直接影响可用的加速度
+        accel_factor = friction
+        
+        # 斜坡影响: 上坡降低有效加速度
+        if self.enable_slope_modeling and self.current_region:
+            slope_angle = self.current_region.slope_angle
+            if slope_angle > 5.0:  # 超过5度才考虑
+                slope_factor = max(0.2, 1.0 - (slope_angle - 5.0) / 40.0)
+                accel_factor *= slope_factor
+        
+        return self.base_max_accel * accel_factor
+    
+    def get_slip_probability(
+        self,
+        velocity: Tuple[float, float],
+        load_mass: float = 0.0,
+    ) -> float:
+        """
+        计算当前地形下的打滑概率
+        
+        Args:
+            velocity: 当前速度 (vx, vy) m/s
+            load_mass: 负载质量 kg
+            
+        Returns:
+            打滑概率 0-1
+        """
+        if not self.enable_slip_modeling:
+            return 0.0
+        
+        floor_params = self.get_floor_parameters()
+        base_slip = floor_params['slip_factor']
+        
+        # 速度越高，打滑概率越高 (非线性)
+        speed = math.sqrt(velocity[0]**2 + velocity[1]**2)
+        speed_factor = min(2.0, speed / self.base_max_speed)
+        
+        # 负载增加打滑风险
+        load_factor = 1.0 + (load_mass / 500.0) * 0.5  # 500kg负载增加50%风险
+        
+        # 湿滑地面大幅增加打滑
+        wet_factor = 2.5 if (self.current_region and self.current_region.is_wet) else 1.0
+        
+        # 坡度影响
+        slope_factor = 1.0
+        if self.current_region and self.current_region.slope_angle > 3.0:
+            slope_factor = 1.0 + (self.current_region.slope_angle - 3.0) / 30.0
+        
+        slip_prob = base_slip * speed_factor * load_factor * wet_factor * slope_factor
+        return min(0.95, slip_prob)  # 最高95%
+    
+    def get_gravity_slope_force(self) -> Tuple[float, float]:
+        """
+        获取斜坡产生的重力分力 (沿坡面方向)
+        
+        Returns:
+            (force_x, force_y) 沿坡面方向的分力
+        """
+        if not self.enable_slope_modeling or not self.current_region:
+            return (0.0, 0.0)
+        
+        slope_vector = self.current_region.get_slope_vector()
+        # 返回水平方向的分力
+        return (slope_vector[0], slope_vector[1])
+    
+    def apply_slip_noise(
+        self,
+        intended_velocity: Tuple[float, float, float],
+        slip_probability: float,
+    ) -> Tuple[float, float, float]:
+        """
+        对速度应用打滑噪声
+        
+        Args:
+            intended_velocity: 目标速度 (vx, vy, vz)
+            slip_probability: 打滑概率
+            
+        Returns:
+            带打滑噪声的实际速度
+        """
+        if random.random() > slip_probability:
+            return intended_velocity
+        
+        # 打滑时，速度方向发生偏移
+        vx, vy, vz = intended_velocity
+        
+        # 随机偏移角度 (0-45度)
+        slip_angle = random.uniform(0, math.pi / 4)
+        slip_direction = random.uniform(0, 2 * math.pi)
+        
+        # 偏移后的速度
+        speed = math.sqrt(vx*vx + vy*vy + vz*vz)
+        new_vx = speed * math.cos(slip_direction) * math.cos(slip_angle) - speed * math.sin(slip_direction) * math.sin(slip_angle)
+        new_vy = speed * math.sin(slip_direction) * math.cos(slip_angle) + speed * math.cos(slip_direction) * math.sin(slip_angle)
+        
+        # 打滑时速度衰减
+        slip_magnitude = random.uniform(0.3, 0.8)
+        new_vx *= slip_magnitude
+        new_vy *= slip_magnitude
+        
+        return (new_vx, new_vy, vz)
+    
+    def check_slope_safety(self, max_safe_angle: float = 15.0) -> Tuple[bool, str]:
+        """
+        检查当前位置斜坡是否在安全范围内
+        
+        Returns:
+            (is_safe, message)
+        """
+        if not self.current_region:
+            return (True, "No slope information available")
+        
+        angle = self.current_region.slope_angle
+        if angle > max_safe_angle:
+            return (False, f"Slope angle {angle:.1f}° exceeds safe limit {max_safe_angle}°")
+        elif angle > 10.0:
+            return (True, f"Slope warning: {angle:.1f}° (approaching limit)")
+        
+        return (True, f"Slope OK: {angle:.1f}°")
+    
+    def get_terrain_status(self, x: float, y: float) -> Dict[str, Any]:
+        """
+        获取指定位置的地形状态
+        
+        Returns:
+            包含完整地形信息的字典
+        """
+        self.update_position(x, y)
+        
+        floor_type = self.get_current_floor_type()
+        floor_params = self.get_floor_parameters(floor_type)
+        
+        result = {
+            'floor_type': floor_type.value,
+            'friction_factor': floor_params['friction_factor'],
+            'max_speed_factor': floor_params['max_speed_factor'],
+            'slip_factor': floor_params['slip_factor'],
+            'effective_max_speed': self.get_effective_max_speed(),
+            'effective_max_accel': self.get_effective_max_acceleration(),
+        }
+        
+        if self.current_region:
+            result.update({
+                'slope_angle': self.current_region.slope_angle,
+                'slope_direction': self.current_region.slope_direction,
+                'unevenness': self.current_region.unevenness,
+                'is_wet': self.current_region.is_wet,
+            })
+            is_safe, msg = self.check_slope_safety()
+            result['slope_safety'] = {'is_safe': is_safe, 'message': msg}
+        else:
+            result.update({
+                'slope_angle': 0.0,
+                'slope_direction': 0.0,
+                'unevenness': 0.0,
+                'is_wet': False,
+                'slope_safety': {'is_safe': True, 'message': 'Unknown terrain'},
+            })
+        
+        return result
+    
+    def generate_warehouse_layout(
+        self,
+        seed: int = 42,
+    ) -> None:
+        """
+        生成标准仓库地形布局
+        
+        布局:
+        - 入库区: 光滑混凝土 + 卸货斜坡
+        - 存储区: 环氧树脂涂层 (平整)
+        - 出库区: 粗糙混凝土
+        - 通道: 环氧树脂涂层
+        """
+        random.seed(seed)
+        
+        self.regions.clear()
+        
+        # 入库区
+        self.add_region_simple("inbound_concrete", FloorType.SMOOTH_CONCRETE, (0, 0), radius=5.0)
+        self.add_region_simple("inbound_ramp", FloorType.ROUGH_CONCRETE, (6, 0), radius=2.0, slope_angle=8.0, slope_direction=0.0)
+        
+        # 主通道
+        self.add_region_simple("main_aisle", FloorType.EPOXY_COATING, (10, 0), radius=3.0)
+        
+        # 货架区
+        for row in range(3):
+            for col in range(5):
+                region_id = f"storage_{row}_{col}"
+                cx = 15 + col * 6
+                cy = -20 + row * 20
+                self.add_region_simple(region_id, FloorType.EPOXY_COATING, (cx, cy), radius=2.5)
+        
+        # 出库区
+        self.add_region_simple("outbound_rough", FloorType.ROUGH_CONCRETE, (45, 0), radius=5.0)
+    
+    def get_supported_floor_types(self) -> List[str]:
+        """获取AGV等级支持的地板类型列表"""
+        return [ft.value for ft in self.supported_floor_types]
+
+
 __all__ += [
     'MultiAGVSimulationEnhancer',
     'SimulationMetricsCollector',
     'DynamicObstacleGenerator',
     'EnvironmentalConditionSimulator',
+    'TerrainModelingSystem',
+    'TerrainRegion',
+    'FloorType',
 ]

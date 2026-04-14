@@ -458,4 +458,18 @@ from .vla_inference import (
     create_vla_inference_pipeline,
 )
 
-__version__ = "3.10.0"
+# 指令接地模块
+from .instruction_grounding import (
+    SpatialReference,
+    TemporalReference,
+    GroundingConfidence,
+    GroundingResult,
+    InstructionParser,
+    SpatialReasoner,
+    TemporalReasoner,
+    SkillMapper,
+    InstructionGroundingModule,
+    create_grounding_module,
+)
+
+__version__ = "3.11.0"
