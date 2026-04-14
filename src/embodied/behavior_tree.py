@@ -16,7 +16,9 @@ SuperModel 超模态大模型具身智能系统
 
 from __future__ import annotations
 import abc
+import math
 import enum
+from enum import Enum  # noqa: F401, F403
 import time
 from dataclasses import dataclass, field
 from typing import Any, Callable, Dict, List, Optional, Tuple, Union, Set
@@ -1840,6 +1842,9 @@ class MultiAGVBehaviorTreeManager:
 
 
 __all__ += [
+    'DynamicBTReplanner',
+    'ReplanTrigger',
+    'SwarmTaskAllocator',
     'MultiAGVBehaviorTreeManager',
     'BehaviorTreeBuilder',
 ]
@@ -1964,3 +1969,640 @@ class Pickup(ActionNode):
             return NodeStatus.SUCCESS
         else:
             return NodeStatus.RUNNING
+
+
+# ============================================================================
+# 动态行为树重规划器 - Dynamic BT Replanner
+# ============================================================================
+
+
+class ReplanTrigger(Enum):
+    """重规划触发原因"""
+    TASK_FAILED = "task_failed"
+    OBSTACLE_DETECTED = "obstacle_detected"
+    BATTERY_LOW = "battery_low"
+    COMMUNICATION_LOST = "communication_lost"
+    TRAJECTORY_DEVIATION = "trajectory_deviation"
+    MANUAL_REQUEST = "manual_request"
+    ENVIRONMENT_CHANGED = "environment_changed"
+    SWARM_CONFLICT = "swarm_conflict"
+
+
+class DynamicBTReplanner:
+    """
+    动态行为树重规划器
+    
+    功能:
+    - 监控BT执行失败并自动重规划
+    - 基于环境变化触发重规划
+    - 重规划历史与回退策略
+    - AGV等级适配 (重规划频率/超时)
+    """
+
+    def __init__(
+        self,
+        base_bt_factory: Callable[[], BTNode],
+        max_replan_attempts: Optional[int] = None,
+        replan_cooldown_s: Optional[float] = None,
+        deviation_threshold: Optional[float] = None,
+        grade: str = "M",
+    ):
+        self.base_bt_factory = base_bt_factory
+        self.grade = grade
+
+        # 当前活跃的BT
+        self.current_bt: Optional[BehaviorTree] = None
+        self.bt_variants: List[BTNode] = []  # 替代方案BT变体
+        self.active_variant_index = 0
+
+        # 重规划状态
+        self.replan_count = 0
+        self.last_replan_time = 0.0
+        self.replan_history: List[Dict[str, Any]] = []
+        self.failure_contexts: List[Dict[str, Any]] = []
+
+        # 监控阈值 - 先应用等级默认值，再覆盖用户显式设置的值
+        self._apply_grade_thresholds()
+        if max_replan_attempts is not None:
+            self.max_replan_attempts = max_replan_attempts
+        if replan_cooldown_s is not None:
+            self.replan_cooldown = replan_cooldown_s
+        if deviation_threshold is not None:
+            self.deviation_threshold = deviation_threshold
+
+    def _apply_grade_thresholds(self) -> None:
+        """根据AGV等级设置重规划参数"""
+        grade_params = {
+            "S": {"max_replan": 2, "cooldown": 3.0, "dev_thresh": 0.2},
+            "M": {"max_replan": 3, "cooldown": 2.0, "dev_thresh": 0.3},
+            "L": {"max_replan": 4, "cooldown": 1.5, "dev_thresh": 0.4},
+            "XL": {"max_replan": 5, "cooldown": 1.0, "dev_thresh": 0.5},
+            "XXL": {"max_replan": 6, "cooldown": 0.5, "dev_thresh": 0.6},
+        }
+        p = grade_params.get(self.grade, grade_params["M"])
+        self.max_replan_attempts = p["max_replan"]
+        self.replan_cooldown = p["cooldown"]
+        self.deviation_threshold = p["dev_thresh"]
+
+    def register_bt_variant(self, bt_variant: BTNode) -> None:
+        """注册一个BT变体作为重规划备选"""
+        self.bt_variants.append(bt_variant)
+
+    def load_initial_bt(self) -> BehaviorTree:
+        """加载初始行为树"""
+        root = self.base_bt_factory()
+        self.current_bt = BehaviorTree(root)
+        self.active_variant_index = 0
+        logger.info(f"Loaded initial BT, {len(self.bt_variants)} variant(s) available")
+        return self.current_bt
+
+    def should_replan(
+        self,
+        trigger: ReplanTrigger,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> bool:
+        """
+        判断是否应该触发重规划
+        
+        Args:
+            trigger: 触发原因
+            context: 额外上下文
+        
+        Returns:
+            True 如果应该重规划
+        """
+        now = time.time()
+
+        # 重规划次数上限 (先检查次数，再检查冷却)
+        if self.replan_count >= self.max_replan_attempts:
+            return False
+
+        # 冷却期检查
+        if now - self.last_replan_time < self.replan_cooldown:
+            return False
+
+        # 基础判断
+        _ctx = context or {}
+        reasons = {
+            ReplanTrigger.TASK_FAILED: True,
+            ReplanTrigger.OBSTACLE_DETECTED: _ctx.get('obstacle_distance', 999) < 0.5,
+            ReplanTrigger.BATTERY_LOW: _ctx.get('battery_level', 1.0) < 0.15,
+            ReplanTrigger.TRAJECTORY_DEVIATION: _ctx.get('deviation', 0.0) > self.deviation_threshold,
+            ReplanTrigger.MANUAL_REQUEST: True,
+            ReplanTrigger.ENVIRONMENT_CHANGED: True,
+        }
+        should = reasons.get(trigger, False)
+
+        if should:
+            self.failure_contexts.append({
+                'trigger': trigger.value,
+                'context': context or {},
+                'timestamp': now,
+                'replan_count': self.replan_count,
+            })
+
+        return should
+
+    def replan(
+        self,
+        trigger: ReplanTrigger,
+        context: Optional[Dict[str, Any]] = None,
+    ) -> Optional[BehaviorTree]:
+        """
+        执行重规划
+        
+        Returns:
+            新的 BehaviorTree，如果重规划失败返回 None
+        """
+        if not self.should_replan(trigger, context):
+            return self.current_bt
+
+        self.replan_count += 1
+        self.last_replan_time = time.time()
+        now = self.last_replan_time
+
+        # 尝试使用BT变体
+        if self.bt_variants and self.active_variant_index < len(self.bt_variants):
+            self.active_variant_index += 1
+            variant = self.bt_variants[self.active_variant_index - 1]
+            self.current_bt = BehaviorTree(variant)
+            new_bt = self.current_bt
+            strategy = f"variant_{self.active_variant_index}"
+        else:
+            # 重新创建基础BT
+            root = self.base_bt_factory()
+            self.current_bt = BehaviorTree(root)
+            new_bt = self.current_bt
+            self.active_variant_index = 0
+            strategy = "recreate_base"
+
+        self.replan_history.append({
+            'replan_id': self.replan_count,
+            'trigger': trigger.value,
+            'strategy': strategy,
+            'timestamp': now,
+            'context': context or {},
+            'active_variant': self.active_variant_index,
+            'total_variants': len(self.bt_variants),
+        })
+
+        logger.info(
+            f"BT Replan #{self.replan_count}: trigger={trigger.value}, "
+            f"strategy={strategy}, variant={self.active_variant_index}"
+        )
+        return new_bt
+
+    def reset_after_success(self) -> None:
+        """任务成功后重置重规划状态"""
+        self.replan_count = 0
+        self.active_variant_index = 0
+        self.failure_contexts.clear()
+
+    def get_replan_statistics(self) -> Dict[str, Any]:
+        """获取重规划统计"""
+        return {
+            'total_replans': self.replan_count,
+            'max_attempts': self.max_replan_attempts,
+            'history': self.replan_history[-10:],  # 最近10次
+            'failure_contexts': self.failure_contexts[-5:],  # 最近5次失败上下文
+            'cooldown_s': self.replan_cooldown,
+            'deviation_threshold': self.deviation_threshold,
+            'available_variants': len(self.bt_variants),
+            'active_variant': self.active_variant_index,
+        }
+
+
+# ============================================================================
+# 多机器人任务分配器 - Swarm Task Allocator
+# ============================================================================
+
+
+class AllocationStrategy(Enum):
+    """任务分配策略"""
+    GREEDY = "greedy"           # 贪心 - 最近优先
+    LOAD_BALANCED = "load_balanced"  # 负载均衡
+    CAPABILITY_MATCHED = "capability_matched"  # 能力匹配
+    DISTANCE_MINIMIZED = "distance_minimized"  # 距离最小化
+    PRIORITY_ORDERED = "priority_ordered"  # 优先级顺序
+
+
+class RobotCapabilities:
+    """机器人能力描述"""
+
+    def __init__(
+        self,
+        robot_id: str,
+        grade: str = "M",
+        max_speed: float = 1.5,
+        max_payload: float = 50.0,
+        has_lift: bool = False,
+        has_gripper: bool = True,
+        terrain_capability: float = 1.0,  # 0-1, 地形适应能力
+        battery_level: float = 1.0,
+        current_position: Tuple[float, float] = (0.0, 0.0),
+    ):
+        self.robot_id = robot_id
+        self.grade = grade
+        self.max_speed = max_speed
+        self.max_payload = max_payload
+        self.has_lift = has_lift
+        self.has_gripper = has_gripper
+        self.terrain_capability = terrain_capability
+        self.battery_level = battery_level
+        self.current_position = current_position
+
+    def can_execute(self, task: 'SwarmTask') -> bool:
+        """判断是否能执行任务"""
+        if task.required_payload > self.max_payload:
+            return False
+        if task.requires_lift and not self.has_lift:
+            return False
+        if task.requires_gripper and not self.has_gripper:
+            return False
+        if self.battery_level < 0.1:
+            return False
+        return True
+
+    def estimated_time(self, task: 'SwarmTask') -> float:
+        """估算执行任务的时间 (s)"""
+        dist = self._distance_to(task.target_position)
+        travel_time = dist / max(self.max_speed, 0.1)
+        return travel_time + task.estimated_duration
+
+    def _distance_to(self, target: Tuple[float, float]) -> float:
+        """计算到目标点的距离 (m)"""
+        dx = target[0] - self.current_position[0]
+        dy = target[1] - self.current_position[1]
+        return math.sqrt(dx*dx + dy*dy)
+
+
+class SwarmTask:
+    """蜂群任务"""
+
+    def __init__(
+        self,
+        task_id: str,
+        task_type: str,
+        target_position: Tuple[float, float],
+        priority: int = 5,  # 1-10, 10最高
+        required_payload: float = 0.0,
+        requires_lift: bool = False,
+        requires_gripper: bool = False,
+        terrain_type: Optional[str] = None,
+        estimated_duration: float = 30.0,
+        deadline: Optional[float] = None,
+    ):
+        self.task_id = task_id
+        self.task_type = task_type
+        self.target_position = target_position
+        self.priority = priority
+        self.required_payload = required_payload
+        self.requires_lift = requires_lift
+        self.requires_gripper = requires_gripper
+        self.terrain_type = terrain_type
+        self.estimated_duration = estimated_duration
+        self.deadline = deadline
+        self.assigned_robot: Optional[str] = None
+        self.status: str = "pending"
+
+
+@dataclass
+class AllocationResult:
+    """分配结果"""
+    task_id: str
+    robot_id: str
+    estimated_time: float
+    distance: float
+    strategy: AllocationStrategy
+
+
+class SwarmTaskAllocator:
+    """
+    多机器人任务分配器
+    
+    功能:
+    - 多种分配策略 (贪心/负载均衡/能力匹配/距离最小化/优先级)
+    - 多约束任务分配 ( payload/地形/电池)
+    - 冲突检测与解决
+    - 实时重分配
+    - AGV五级规格适配
+    """
+
+    def __init__(
+        self,
+        strategy: AllocationStrategy = AllocationStrategy.GREEDY,
+        max_reallocation_attempts: int = 3,
+        conflict_radius: float = 0.5,
+        grade: str = "M",
+    ):
+        self.strategy = strategy
+        self.max_reallocation = max_reallocation_attempts
+        self.conflict_radius = conflict_radius
+        self.grade = grade
+
+        self.robots: Dict[str, RobotCapabilities] = {}
+        self.pending_tasks: List[SwarmTask] = []
+        self.allocations: Dict[str, AllocationResult] = {}
+        self.allocation_history: List[Dict[str, Any]] = []
+
+    def register_robot(self, robot: RobotCapabilities) -> None:
+        """注册机器人"""
+        self.robots[robot.robot_id] = robot
+
+    def add_task(self, task: SwarmTask) -> None:
+        """添加任务"""
+        self.pending_tasks.append(task)
+
+    def add_tasks_batch(self, tasks: List[SwarmTask]) -> None:
+        """批量添加任务"""
+        self.pending_tasks.extend(tasks)
+
+    def allocate(self) -> Dict[str, AllocationResult]:
+        """
+        执行任务分配
+        
+        Returns:
+            {task_id: AllocationResult}
+        """
+        if not self.pending_tasks or not self.robots:
+            return self.allocations
+
+        # 清理已完成任务
+        self.pending_tasks = [t for t in self.pending_tasks if t.status == "pending"]
+
+        if self.strategy == AllocationStrategy.GREEDY:
+            allocations = self._allocate_greedy()
+        elif self.strategy == AllocationStrategy.LOAD_BALANCED:
+            allocations = self._allocate_load_balanced()
+        elif self.strategy == AllocationStrategy.CAPABILITY_MATCHED:
+            allocations = self._allocate_capability_matched()
+        elif self.strategy == AllocationStrategy.DISTANCE_MINIMIZED:
+            allocations = self._allocate_distance_minimized()
+        elif self.strategy == AllocationStrategy.PRIORITY_ORDERED:
+            allocations = self._allocate_priority_ordered()
+        else:
+            allocations = self._allocate_greedy()
+
+        # 冲突检测
+        allocations = self._resolve_conflicts(allocations)
+
+        self.allocations = allocations
+        self.allocation_history.append({
+            'timestamp': time.time(),
+            'strategy': self.strategy.value,
+            'allocations': {k: {'task_id': v.task_id, 'robot_id': v.robot_id, 'time': v.estimated_time}
+                            for k, v in allocations.items()},
+            'pending_count': len(self.pending_tasks),
+            'robot_count': len(self.robots),
+        })
+
+        return allocations
+
+    def _allocate_greedy(self) -> Dict[str, AllocationResult]:
+        """贪心分配 - 优先分配给最近的可用机器人"""
+        allocations = {}
+        available_robots = {rid: r for rid, r in self.robots.items()}
+
+        for task in sorted(self.pending_tasks, key=lambda t: -t.priority):
+            best_robot = None
+            best_time = float('inf')
+
+            for rid, robot in available_robots.items():
+                if not robot.can_execute(task):
+                    continue
+                est_time = robot.estimated_time(task)
+                if est_time < best_time:
+                    best_time = est_time
+                    best_robot = rid
+
+            if best_robot:
+                dist = robot._distance_to(task.target_position)
+                allocations[task.task_id] = AllocationResult(
+                    task_id=task.task_id,
+                    robot_id=best_robot,
+                    estimated_time=best_time,
+                    distance=dist,
+                    strategy=self.strategy,
+                )
+                task.assigned_robot = best_robot
+                task.status = "assigned"
+                del available_robots[best_robot]
+
+        return allocations
+
+    def _allocate_load_balanced(self) -> Dict[str, AllocationResult]:
+        """负载均衡分配"""
+        allocations = {}
+        robot_workload: Dict[str, float] = {rid: 0.0 for rid in self.robots}
+
+        for task in sorted(self.pending_tasks, key=lambda t: -t.priority):
+            best_robot = None
+            best_score = float('inf')
+
+            for rid, robot in self.robots.items():
+                if not robot.can_execute(task):
+                    continue
+                workload = robot_workload[rid]
+                est_time = robot.estimated_time(task)
+                # 分数 = 当前负载 + 预估时间
+                score = workload + est_time
+                if score < best_score:
+                    best_score = score
+                    best_robot = rid
+
+            if best_robot:
+                robot_workload[best_robot] += best_score
+                dist = self.robots[best_robot]._distance_to(task.target_position)
+                allocations[task.task_id] = AllocationResult(
+                    task_id=task.task_id,
+                    robot_id=best_robot,
+                    estimated_time=best_score,
+                    distance=dist,
+                    strategy=self.strategy,
+                )
+                task.assigned_robot = best_robot
+                task.status = "assigned"
+
+        return allocations
+
+    def _allocate_capability_matched(self) -> Dict[str, AllocationResult]:
+        """能力匹配分配"""
+        allocations = {}
+        for task in sorted(self.pending_tasks, key=lambda t: -t.priority):
+            best_robot = None
+            best_match_score = -float('inf')
+
+            for rid, robot in self.robots.items():
+                if not robot.can_execute(task):
+                    continue
+                score = 0.0
+                # payload 匹配度
+                score += (1.0 - task.required_payload / max(robot.max_payload, 1.0)) * 2.0
+                # 地形能力
+                if task.terrain_type:
+                    score += robot.terrain_capability * 1.0
+                # 电池余量
+                score += robot.battery_level * 1.0
+                # 速度
+                score += robot.max_speed / 2.0
+                # 距离惩罚
+                dist = robot._distance_to(task.target_position)
+                score -= dist * 0.5
+
+                if score > best_match_score:
+                    best_match_score = score
+                    best_robot = rid
+
+            if best_robot:
+                dist = self.robots[best_robot]._distance_to(task.target_position)
+                est_time = self.robots[best_robot].estimated_time(task)
+                allocations[task.task_id] = AllocationResult(
+                    task_id=task.task_id,
+                    robot_id=best_robot,
+                    estimated_time=est_time,
+                    distance=dist,
+                    strategy=self.strategy,
+                )
+                task.assigned_robot = best_robot
+                task.status = "assigned"
+
+        return allocations
+
+    def _allocate_distance_minimized(self) -> Dict[str, AllocationResult]:
+        """总距离最小化分配 (简化为每个任务选最近)"""
+        return self._allocate_greedy()  # 贪心 = 距离最近
+
+    def _allocate_priority_ordered(self) -> Dict[str, AllocationResult]:
+        """优先级顺序分配"""
+        allocations = {}
+        for task in sorted(self.pending_tasks, key=lambda t: (-t.priority, t.deadline or float('inf'))):
+            best_robot = None
+            best_time = float('inf')
+
+            for rid, robot in self.robots.items():
+                if not robot.can_execute(task):
+                    continue
+                est_time = robot.estimated_time(task)
+                # 考虑截止时间紧迫性
+                if task.deadline:
+                    time_to_deadline = task.deadline - time.time()
+                    if est_time > time_to_deadline:
+                        est_time *= 2.0  # 惩罚
+                if est_time < best_time:
+                    best_time = est_time
+                    best_robot = rid
+
+            if best_robot:
+                dist = self.robots[best_robot]._distance_to(task.target_position)
+                allocations[task.task_id] = AllocationResult(
+                    task_id=task.task_id,
+                    robot_id=best_robot,
+                    estimated_time=best_time,
+                    distance=dist,
+                    strategy=self.strategy,
+                )
+                task.assigned_robot = best_robot
+                task.status = "assigned"
+
+        return allocations
+
+    def _resolve_conflicts(
+        self,
+        allocations: Dict[str, AllocationResult],
+    ) -> Dict[str, AllocationResult]:
+        """解决机器人任务冲突"""
+        # 按机器人分组任务
+        robot_tasks: Dict[str, List[str]] = {}
+        for task_id, result in allocations.items():
+            rid = result.robot_id
+            if rid not in robot_tasks:
+                robot_tasks[rid] = []
+            robot_tasks[rid].append(task_id)
+
+        # 检测同一机器人多个同时任务
+        for rid, task_ids in robot_tasks.items():
+            if len(task_ids) > 1:
+                # 保留优先级最高的任务
+                task_id_map = {t.task_id: t for t in self.pending_tasks if t.task_id in task_ids}
+                sorted_tasks = sorted(
+                    [task_id_map[tid] for tid in task_ids],
+                    key=lambda t: -t.priority
+                )
+                for t in sorted_tasks[1:]:
+                    del allocations[t.task_id]
+                    t.assigned_robot = None
+                    t.status = "pending"
+
+        return allocations
+
+    def reallocate_on_failure(
+        self,
+        failed_task_id: str,
+        failed_robot_id: str,
+    ) -> Optional[AllocationResult]:
+        """任务失败后重新分配"""
+        task = next((t for t in self.pending_tasks if t.task_id == failed_task_id), None)
+        if not task or task.status == "completed":
+            return None
+
+        # 移除原分配中失败的机器人
+        if failed_task_id in self.allocations:
+            del self.allocations[failed_task_id]
+
+        # 重分配
+        for attempt in range(self.max_reallocation):
+            best_robot = None
+            best_time = float('inf')
+
+            for rid, robot in self.robots.items():
+                if rid == failed_robot_id:
+                    continue
+                if not robot.can_execute(task):
+                    continue
+                est_time = robot.estimated_time(task)
+                if est_time < best_time:
+                    best_time = est_time
+                    best_robot = rid
+
+            if best_robot:
+                dist = self.robots[best_robot]._distance_to(task.target_position)
+                result = AllocationResult(
+                    task_id=task.task_id,
+                    robot_id=best_robot,
+                    estimated_time=best_time,
+                    distance=dist,
+                    strategy=self.strategy,
+                )
+                self.allocations[task.task_id] = result
+                task.assigned_robot = best_robot
+                task.status = "assigned"
+                return result
+
+        return None
+
+    def get_allocation_report(self) -> Dict[str, Any]:
+        """获取分配报告"""
+        return {
+            'strategy': self.strategy.value,
+            'total_robots': len(self.robots),
+            'total_pending_tasks': len([t for t in self.pending_tasks if t.status == "pending"]),
+            'total_allocated': len(self.allocations),
+            'allocations': {
+                tid: {
+                    'robot_id': r.robot_id,
+                    'estimated_time_s': r.estimated_time,
+                    'distance_m': r.distance,
+                }
+                for tid, r in self.allocations.items()
+            },
+            'history_count': len(self.allocation_history),
+        }
+
+    def update_robot_state(self, robot_id: str, **kwargs) -> None:
+        """更新机器人状态"""
+        if robot_id in self.robots:
+            for key, value in kwargs.items():
+                if hasattr(self.robots[robot_id], key):
+                    setattr(self.robots[robot_id], key, value)
+
+

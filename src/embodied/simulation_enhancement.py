@@ -1645,6 +1645,9 @@ class TerrainModelingSystem:
 
 
 __all__ += [
+    'TerrainType',
+    'WheelTerrainInteractionModel',
+    'TrajectoryPredictor',
     'MultiAGVSimulationEnhancer',
     'SimulationMetricsCollector',
     'DynamicObstacleGenerator',
@@ -1812,7 +1815,7 @@ class DigitalTwinSynchronizer:
     @staticmethod
     def _normalize_angle(angle: float) -> float:
         while angle > np.pi: angle -= 2 * np.pi
-        while angle < -np.pi: angle += 2 * np.pi
+        while angle >= np.pi: angle -= 2 * np.pi
         return angle
 
     def sync(self, current_time: float) -> Dict[str, Any]:
@@ -2322,7 +2325,7 @@ class AGVStateEstimator:
     @staticmethod
     def _normalize_angle(angle: float) -> float:
         while angle > np.pi: angle -= 2 * np.pi
-        while angle < -np.pi: angle += 2 * np.pi
+        while angle >= np.pi: angle -= 2 * np.pi
         return angle
 
     def reset(self) -> None:
@@ -2330,3 +2333,645 @@ class AGVStateEstimator:
         self.P.fill(0.0)
         np.fill_diagonal(self.P, 0.1)
         self.state_history.clear()
+
+
+# ============================================================================
+# 轮地交互模型 - Wheel-Terrain Interaction Model
+# ============================================================================
+
+
+class TerrainType(Enum):
+    """地形类型枚举"""
+    FLAT_CONCRETE = "flat_concrete"
+    EPOXY_FLOOR = "epoxy_floor"
+    TILE_FLOOR = "tile_floor"
+    RUBBER_MAT = "rubber_mat"
+    GRASS = "grass"
+    GRAVEL = "gravel"
+    DIRT = "dirt"
+    SAND = "sand"
+    MUDSOIL = "mudsoil"
+    CARPET = "carpet"
+    STEEL_PLATE = "steel_plate"
+    UNKNOWN = "unknown"
+
+
+# 地形物理参数数据库 (基于AGV五级规格和实测数据)
+TERRAIN_PARAMS: Dict[TerrainType, Dict[str, float]] = {
+    TerrainType.FLAT_CONCRETE: {
+        "rolling_resistance": 0.01,
+        "friction_coef": 0.4,
+        "sinkage_coef": 0.001,
+        "slope_max_rad": 0.12,   # ~7度
+        "speed_loss_percent": 0.0,
+        "noise_imu_accel": 0.05,
+        "noise_imu_gyro": 0.01,
+    },
+    TerrainType.EPOXY_FLOOR: {
+        "rolling_resistance": 0.008,
+        "friction_coef": 0.45,
+        "sinkage_coef": 0.0005,
+        "slope_max_rad": 0.10,
+        "speed_loss_percent": 0.0,
+        "noise_imu_accel": 0.04,
+        "noise_imu_gyro": 0.008,
+    },
+    TerrainType.TILE_FLOOR: {
+        "rolling_resistance": 0.012,
+        "friction_coef": 0.38,
+        "sinkage_coef": 0.001,
+        "slope_max_rad": 0.08,
+        "speed_loss_percent": 0.0,
+        "noise_imu_accel": 0.06,
+        "noise_imu_gyro": 0.012,
+    },
+    TerrainType.RUBBER_MAT: {
+        "rolling_resistance": 0.015,
+        "friction_coef": 0.55,
+        "sinkage_coef": 0.0008,
+        "slope_max_rad": 0.15,
+        "speed_loss_percent": 0.0,
+        "noise_imu_accel": 0.03,
+        "noise_imu_gyro": 0.008,
+    },
+    TerrainType.GRASS: {
+        "rolling_resistance": 0.05,
+        "friction_coef": 0.50,
+        "sinkage_coef": 0.05,
+        "slope_max_rad": 0.25,
+        "speed_loss_percent": 15.0,
+        "noise_imu_accel": 0.15,
+        "noise_imu_gyro": 0.02,
+    },
+    TerrainType.GRAVEL: {
+        "rolling_resistance": 0.08,
+        "friction_coef": 0.45,
+        "sinkage_coef": 0.08,
+        "slope_max_rad": 0.20,
+        "speed_loss_percent": 25.0,
+        "noise_imu_accel": 0.20,
+        "noise_imu_gyro": 0.03,
+    },
+    TerrainType.DIRT: {
+        "rolling_resistance": 0.07,
+        "friction_coef": 0.40,
+        "sinkage_coef": 0.10,
+        "slope_max_rad": 0.22,
+        "speed_loss_percent": 20.0,
+        "noise_imu_accel": 0.18,
+        "noise_imu_gyro": 0.025,
+    },
+    TerrainType.SAND: {
+        "rolling_resistance": 0.15,
+        "friction_coef": 0.35,
+        "sinkage_coef": 0.20,
+        "slope_max_rad": 0.18,
+        "speed_loss_percent": 40.0,
+        "noise_imu_accel": 0.25,
+        "noise_imu_gyro": 0.04,
+    },
+    TerrainType.MUDSOIL: {
+        "rolling_resistance": 0.25,
+        "friction_coef": 0.25,
+        "sinkage_coef": 0.30,
+        "slope_max_rad": 0.15,
+        "speed_loss_percent": 60.0,
+        "noise_imu_accel": 0.30,
+        "noise_imu_gyro": 0.05,
+    },
+    TerrainType.CARPET: {
+        "rolling_resistance": 0.03,
+        "friction_coef": 0.60,
+        "sinkage_coef": 0.003,
+        "slope_max_rad": 0.10,
+        "speed_loss_percent": 5.0,
+        "noise_imu_accel": 0.08,
+        "noise_imu_gyro": 0.015,
+    },
+    TerrainType.STEEL_PLATE: {
+        "rolling_resistance": 0.006,
+        "friction_coef": 0.30,
+        "sinkage_coef": 0.0002,
+        "slope_max_rad": 0.12,
+        "speed_loss_percent": 0.0,
+        "noise_imu_accel": 0.03,
+        "noise_imu_gyro": 0.006,
+    },
+    TerrainType.UNKNOWN: {
+        "rolling_resistance": 0.02,
+        "friction_coef": 0.40,
+        "sinkage_coef": 0.002,
+        "slope_max_rad": 0.10,
+        "speed_loss_percent": 5.0,
+        "noise_imu_accel": 0.10,
+        "noise_imu_gyro": 0.02,
+    },
+}
+
+
+class WheelTerrainInteractionModel:
+    """
+    轮地交互模型 - 仿真不同地形对AGV运动的影响
+    
+    功能:
+    - 基于地形类型的滚动阻力计算
+    - 坡度对速度/加速度的影响
+    - 地形噪声注入 (IMU/里程计)
+    - AGV等级(S/M/L/XL/XXL)适配
+    - 地形自适应速度规划
+    """
+
+    def __init__(
+        self,
+        grade: str = "M",
+        wheel_radius: float = 0.07,
+        wheel_base: float = 0.45,
+        vehicle_mass: float = 50.0,  # kg
+        max_torque_per_motor: float = 10.0,  # Nm
+    ):
+        self.grade = grade
+        self.wheel_radius = wheel_radius
+        self.wheel_base = wheel_base
+        self.vehicle_mass = vehicle_mass
+        self.max_torque = max_torque_per_motor
+
+        # 当前地形
+        self.current_terrain = TerrainType.FLAT_CONCRETE
+        self.current_slope_rad: float = 0.0  # 当前坡度角 (rad)
+        self.current_elevation: float = 0.0  # 当前海拔 (m)
+
+        # 地形切换历史
+        self.terrain_history: List[Tuple[float, TerrainType]] = []  # (timestamp, terrain)
+        self.elevation_profile: List[Tuple[float, float]] = []  # (x, elevation)
+
+        # 坡度检测参数
+        self._last_imu_reading: Optional[np.ndarray] = None
+
+    def set_terrain(self, terrain: TerrainType, timestamp: float = 0.0) -> None:
+        """设置当前地形类型"""
+        self.current_terrain = terrain
+        self.terrain_history.append((timestamp, terrain))
+
+    def set_slope(self, slope_rad: float) -> None:
+        """设置当前坡度角 (rad)"""
+        self.current_slope_rad = np.clip(slope_rad, -np.pi/2, np.pi/2)
+
+    def get_terrain_params(self) -> Dict[str, float]:
+        """获取当前地形参数"""
+        return TERRAIN_PARAMS.get(self.current_terrain, TERRAIN_PARAMS[TerrainType.UNKNOWN]).copy()
+
+    def compute_rolling_resistance(self, velocity: float) -> float:
+        """
+        计算滚动阻力
+        
+        Args:
+            velocity: 当前速度 (m/s)
+        
+        Returns:
+            滚动阻力 (N)
+        """
+        params = self.get_terrain_params()
+        rr_base = params["rolling_resistance"]
+        # 速度增加时滚动阻力略有增加 (次线性)
+        rr = rr_base * self.vehicle_mass * 9.81 * (1.0 + 0.1 * abs(velocity))
+        return rr
+
+    def compute_slope_force(self) -> float:
+        """
+        计算坡度重力分量
+        
+        Returns:
+            坡度力 (N)，正值为上坡，负值为下坡
+        """
+        return self.vehicle_mass * 9.81 * np.sin(self.current_slope_rad)
+
+    def compute_max_speed_on_slope(
+        self,
+        target_slope_rad: float,
+        max_torque_ratio: float = 0.8,
+    ) -> float:
+        """
+        计算给定坡度下的最大速度
+        
+        Args:
+            target_slope_rad: 目标坡度角 (rad)
+            max_torque_ratio: 可用扭矩比例 (0-1)
+        
+        Returns:
+            最大可维持速度 (m/s)
+        """
+        params = self.get_terrain_params()
+        max_slope = params["slope_max_rad"]
+        if abs(target_slope_rad) <= max_slope:
+            # 可正常行驶
+            available_torque = self.max_torque * 2 * max_torque_ratio * self.wheel_radius
+            slope_force = self.vehicle_mass * 9.81 * np.sin(target_slope_rad)
+            rr_force = self.vehicle_mass * 9.81 * params["rolling_resistance"]
+            net_force = available_torque / self.wheel_radius - slope_force - rr_force
+            max_v = min(net_force / (params["rolling_resistance"] * self.vehicle_mass * 0.1 + 1),
+                       2.0)  # 上限2m/s
+            return max(0.0, max_v)
+        else:
+            # 超出能力范围
+            return 0.0
+
+    def apply_terrain_to_velocity(
+        self,
+        velocity: float,
+        dt: float,
+        commanded_torque: float = 0.0,
+    ) -> float:
+        """
+        在仿真中应用地形效果到速度
+        
+        Args:
+            velocity: 当前速度 (m/s)
+            dt: 时间步长 (s)
+            commanded_torque: 电机指令扭矩 (Nm)
+        
+        Returns:
+            更新后的速度 (m/s)
+        """
+        params = self.get_terrain_params()
+        # 驱动力
+        drive_force = commanded_torque * 2 / self.wheel_radius if commanded_torque > 0 else 0.0
+        # 坡度力
+        slope_force = self.compute_slope_force()
+        # 滚动阻力
+        rr_force = self.compute_rolling_resistance(velocity) * np.sign(velocity)
+        # 合成力
+        net_force = drive_force - slope_force - rr_force
+        # 加速度
+        accel = net_force / self.vehicle_mass
+        # 速度更新
+        new_velocity = velocity + accel * dt
+        # 地形速度上限
+        speed_loss = params["speed_loss_percent"] / 100.0
+        terrain_max = 1.5 * (1.0 - speed_loss)
+        return float(np.clip(new_velocity, -terrain_max, terrain_max))
+
+    def get_imu_noise(
+        self,
+        base_accel: np.ndarray,
+        base_gyro: float,
+    ) -> Tuple[np.ndarray, float]:
+        """
+        根据地形获取IMU噪声注入
+        
+        Args:
+            base_accel: 基础加速度 [ax, ay, az] (m/s^2)
+            base_gyro: 基础角速度 (rad/s)
+        
+        Returns:
+            (带噪声加速度, 带噪声角速度)
+        """
+        params = self.get_terrain_params()
+        accel_noise = params["noise_imu_accel"]
+        gyro_noise = params["noise_imu_gyro"]
+        noise_accel = base_accel + np.random.randn(3) * accel_noise
+        noise_gyro = base_gyro + np.random.randn() * gyro_noise
+        return noise_accel, noise_gyro
+
+    def compute_safe_speed_for_turn(
+        self,
+        turn_radius: float,
+        max_lateral_accel: float = 0.3,
+    ) -> float:
+        """
+        根据转弯半径计算安全速度
+        
+        Args:
+            turn_radius: 转弯半径 (m)
+            max_lateral_accel: 最大允许侧向加速度 (m/s^2)
+        
+        Returns:
+            安全速度 (m/s)
+        """
+        if turn_radius <= 0:
+            return 0.0
+        return np.sqrt(max_lateral_accel * turn_radius)
+
+    def classify_terrain_from_imu(
+        self,
+        accel: np.ndarray,
+        gyro: np.ndarray,
+        velocity: float,
+    ) -> TerrainType:
+        """
+        基于IMU数据的地形分类
+        
+        使用振动特征和噪声水平推断地形类型。
+        
+        Args:
+            accel: 加速度计读数 [ax, ay, az] (m/s^2)
+            gyro: 陀螺仪读数 (rad/s)
+            velocity: 当前速度 (m/s)
+        
+        Returns:
+            估计的地形类型
+        """
+        # 计算振动幅度
+        vib_level = np.std(accel[:2]) if len(accel) >= 2 else 0.0
+        # 计算噪声水平
+        noise_level = np.linalg.norm(accel - np.mean(accel))
+        # 速度损失特征
+        speed_factor = abs(velocity) / 1.5  # 归一化到参考速度
+
+        if vib_level < 0.05 and noise_level < 0.5:
+            return TerrainType.EPOXY_FLOOR if speed_factor > 0.7 else TerrainType.FLAT_CONCRETE
+        elif vib_level < 0.10:
+            return TerrainType.TILE_FLOOR
+        elif vib_level < 0.20:
+            return TerrainType.RUBBER_MAT if np.std(gyro) < 0.02 else TerrainType.CARPET
+        elif vib_level < 0.40:
+            return TerrainType.GRASS if np.std(gyro) < 0.05 else TerrainType.GRAVEL
+        elif vib_level < 0.70:
+            return TerrainType.DIRT
+        elif vib_level >= 0.70:
+            return TerrainType.SAND if np.mean(accel[2]) > 9.5 else TerrainType.MUDSOIL
+        return TerrainType.UNKNOWN
+
+    def get_traversability_score(self) -> float:
+        """
+        获取当前地形的可通行性评分
+        
+        Returns:
+            0.0-1.0 的可通行性评分
+        """
+        params = self.get_terrain_params()
+        # 基于滚动阻力和坡度能力计算
+        rr = params["rolling_resistance"]
+        max_slope = params["slope_max_rad"]
+        speed_loss = params["speed_loss_percent"] / 100.0
+        score = 1.0 - (rr * 5.0 + speed_loss * 0.5 + (0.12 - max_slope) * 2.0)
+        return float(np.clip(score, 0.0, 1.0))
+
+    def reset(self) -> None:
+        """重置地形模型"""
+        self.current_terrain = TerrainType.FLAT_CONCRETE
+        self.current_slope_rad = 0.0
+        self.current_elevation = 0.0
+        self.terrain_history.clear()
+        self.elevation_profile.clear()
+
+
+# ============================================================================
+# 轨迹预测器 - Trajectory Predictor
+# ============================================================================
+
+
+class TrajectoryPredictor:
+    """
+    轨迹预测器 - 基于当前状态和控制输入预测AGV未来轨迹
+    
+    用于:
+    - 碰撞预测和时间窗口分析
+    - 模型预测控制 (MPC) 前向仿真
+    - 路径重规划触发判断
+    - 多AGV轨迹冲突检测
+    """
+
+    def __init__(
+        self,
+        wheel_radius: float = 0.07,
+        wheel_base: float = 0.45,
+        max_prediction_horizon: float = 5.0,  # seconds
+        dt: float = 0.1,  # prediction step (s)
+    ):
+        self.wheel_radius = wheel_radius
+        self.wheel_base = wheel_base
+        self.max_horizon = max_prediction_horizon
+        self.dt = dt
+        self.n_steps = int(max_prediction_horizon / dt)
+
+    def predict_trajectory(
+        self,
+        initial_state: np.ndarray,
+        velocity_profile: np.ndarray,
+        omega_profile: np.ndarray,
+    ) -> List[Dict[str, Any]]:
+        """
+        基于速度/角速度配置文件预测轨迹
+        
+        Args:
+            initial_state: 初始状态 [x, y, theta, v, omega]
+            velocity_profile: 速度序列 (n_steps,)
+            omega_profile: 角速度序列 (n_steps,)
+        
+        Returns:
+            预测轨迹列表，每个元素包含 {x, y, theta, v, omega, t}
+        """
+        x, y, theta, v, omega = initial_state[:5]
+        trajectory = []
+        t = 0.0
+
+        for i in range(min(len(velocity_profile), len(omega_profile), self.n_steps)):
+            v_cmd = velocity_profile[i]
+            omega_cmd = omega_profile[i]
+            # 速度滤波 (考虑电机响应延迟)
+            alpha = 0.8  # 一阶低通
+            v = alpha * v + (1 - alpha) * v_cmd
+            omega = alpha * omega + (1 - alpha) * omega_cmd
+
+            # 运动学更新
+            if abs(omega) < 1e-6:
+                dx = v * np.cos(theta) * self.dt
+                dy = v * np.sin(theta) * self.dt
+                dtheta = 0.0
+            else:
+                r = v / omega
+                dtheta = omega * self.dt
+                dx = r * (np.sin(theta + dtheta) - np.sin(theta))
+                dy = r * (-np.cos(theta + dtheta) + np.cos(theta))
+
+            x += dx
+            y += dy
+            theta += dtheta
+            theta = self._normalize(theta)
+            t += self.dt
+
+            trajectory.append({
+                'x': float(x),
+                'y': float(y),
+                'theta': float(theta),
+                'v': float(v),
+                'omega': float(omega),
+                't': float(t),
+                'step': i,
+            })
+
+        return trajectory
+
+    def predict_constant_velocity(
+        self,
+        initial_state: np.ndarray,
+        v: float,
+        omega: float,
+    ) -> List[Dict[str, Any]]:
+        """
+        恒定速度/角速度预测轨迹
+        
+        Args:
+            initial_state: 初始状态 [x, y, theta, ...]
+            v: 速度 (m/s)
+            omega: 角速度 (rad/s)
+        
+        Returns:
+            预测轨迹
+        """
+        v_profile = np.full(self.n_steps, v)
+        omega_profile = np.full(self.n_steps, omega)
+        return self.predict_trajectory(initial_state, v_profile, omega_profile)
+
+    def predict_from_bt_actions(
+        self,
+        initial_state: np.ndarray,
+        bt_actions: List[Tuple[float, float, float]],
+    ) -> List[Dict[str, Any]]:
+        """
+        从行为树动作序列预测轨迹
+        
+        Args:
+            initial_state: 初始状态
+            bt_actions: [(v, omega, duration_s), ...] 动作序列
+        
+        Returns:
+            预测轨迹
+        """
+        all_trajectory = []
+        current_state = initial_state.copy()
+        t_offset = 0.0
+
+        for v, omega, duration in bt_actions:
+            n_steps = max(1, int(duration / self.dt))
+            v_profile = np.full(n_steps, v)
+            omega_profile = np.full(n_steps, omega)
+            trajectory = self.predict_trajectory(current_state, v_profile, omega_profile)
+            for pt in trajectory:
+                pt['t'] += t_offset
+            all_trajectory.extend(trajectory)
+            t_offset += duration
+            if trajectory:
+                current_state = np.array([
+                    trajectory[-1]['x'],
+                    trajectory[-1]['y'],
+                    trajectory[-1]['theta'],
+                    trajectory[-1]['v'],
+                    trajectory[-1]['omega'],
+                ])
+
+        return all_trajectory
+
+    def detect_collision_with_obstacle(
+        self,
+        trajectory: List[Dict[str, Any]],
+        obstacle_pos: Tuple[float, float],
+        obstacle_radius: float = 0.3,
+        agv_radius: float = 0.25,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        检测轨迹与障碍物的碰撞
+        
+        Args:
+            trajectory: 预测轨迹
+            obstacle_pos: 障碍物位置 (x, y)
+            obstacle_radius: 障碍物半径 (m)
+            agv_radius: AGV等效半径 (m)
+        
+        Returns:
+            碰撞信息 {'time', 'step', 'distance'} 或 None
+        """
+        combined_radius = agv_radius + obstacle_radius
+        for pt in trajectory:
+            dx = pt['x'] - obstacle_pos[0]
+            dy = pt['y'] - obstacle_pos[1]
+            dist = np.sqrt(dx*dx + dy*dy)
+            if dist < combined_radius:
+                return {
+                    'time': pt['t'],
+                    'step': pt['step'],
+                    'distance': dist,
+                    'collision_x': pt['x'],
+                    'collision_y': pt['y'],
+                }
+        return None
+
+    def detect_trajectory_conflict(
+        self,
+        traj_a: List[Dict[str, Any]],
+        traj_b: List[Dict[str, Any]],
+        min_separation: float = 0.5,
+    ) -> Optional[Dict[str, Any]]:
+        """
+        检测两条轨迹之间的冲突
+        
+        Args:
+            traj_a: 轨迹A
+            traj_b: 轨迹B
+            min_separation: 最小安全距离 (m)
+        
+        Returns:
+            冲突信息或 None
+        """
+        min_dist = float('inf')
+        collision_time = None
+        collision_step = None
+
+        for i in range(min(len(traj_a), len(traj_b))):
+            dx = traj_a[i]['x'] - traj_b[i]['x']
+            dy = traj_a[i]['y'] - traj_b[i]['y']
+            dist = np.sqrt(dx*dx + dy*dy)
+            if dist < min_dist:
+                min_dist = dist
+                collision_time = traj_a[i]['t']
+                collision_step = i
+
+            if dist < min_separation:
+                return {
+                    'time': collision_time,
+                    'step': collision_step,
+                    'min_distance': dist,
+                    'conflict_type': 'collision' if dist < min_separation * 0.5 else 'too_close',
+                }
+
+        return None
+
+    def get_time_to_collision(
+        self,
+        trajectory: List[Dict[str, Any]],
+        obstacle_pos: Tuple[float, float],
+        obstacle_radius: float = 0.3,
+        agv_radius: float = 0.25,
+    ) -> Optional[float]:
+        """
+        计算到达碰撞的时间 (TTC)
+        
+        Returns:
+            碰撞时间 (s)，如果不会碰撞返回 None
+        """
+        collision = self.detect_collision_with_obstacle(
+            trajectory, obstacle_pos, obstacle_radius, agv_radius
+        )
+        return collision['time'] if collision else None
+
+    def compute_trajectory_length(
+        self,
+        trajectory: List[Dict[str, Any]],
+    ) -> float:
+        """计算轨迹总长度"""
+        if len(trajectory) < 2:
+            return 0.0
+        length = 0.0
+        for i in range(1, len(trajectory)):
+            dx = trajectory[i]['x'] - trajectory[i-1]['x']
+            dy = trajectory[i]['y'] - trajectory[i-1]['y']
+            length += np.sqrt(dx*dx + dy*dy)
+        return length
+
+    @staticmethod
+    def _normalize(angle: float) -> float:
+        while angle > np.pi: angle -= 2 * np.pi
+        while angle < -np.pi: angle += 2 * np.pi
+        return angle
+
+

@@ -1617,7 +1617,548 @@ class AGVHeartbeatMonitor:
 
 
 __all__ += [
+    'TrajectoryTrackingController',
+    'SensorAutoCalibrator',
+    'CalibrationStatus',
     'AGVHealthMonitor',
     'AGVStateMachine',
     'AGVHeartbeatMonitor',
 ]
+
+
+# ============================================================================
+# 轨迹跟踪控制器 - Trajectory Tracking Controller
+# ============================================================================
+
+
+class TrajectoryTrackingController:
+    """
+    轨迹跟踪控制器 - Pure Pursuit + PID 速度控制
+    
+    功能:
+    - Pure Pursuit 路径跟踪
+    - PID 速度伺服
+    - 轨迹偏差监控
+    - AGV五级规格适配 (跟踪精度/响应速度)
+    """
+
+    def __init__(
+        self,
+        wheel_base: float = 0.45,
+        grade: str = "M",
+        look_ahead_gain: float = 0.5,
+        min_look_ahead: float = 0.1,
+        max_look_ahead: float = 1.0,
+        kp_velocity: float = 2.0,
+        ki_velocity: float = 0.1,
+        kd_velocity: float = 0.3,
+        max_linear_vel: float = 1.5,
+        max_angular_vel: float = 2.0,
+    ):
+        self.wheel_base = wheel_base
+        self.grade = grade
+        self.look_ahead_gain = look_ahead_gain
+        self.min_look_ahead = min_look_ahead
+        self.max_look_ahead = max_look_ahead
+
+        # PID velocity controller
+        self.kp = kp_velocity
+        self.ki = ki_velocity
+        self.kd = kd_velocity
+        self.integral_vel = 0.0
+        self.prev_error_vel = 0.0
+        self.prev_time = None
+
+        self.max_linear_vel = max_linear_vel
+        self.max_angular_vel = max_angular_vel
+
+        # 五级AGV参数适配
+        self._apply_grade_params()
+
+        # 跟踪状态
+        self.current_waypoint_index = 0
+        self.total_waypoints = 0
+        self.trajectory: List[Tuple[float, float]] = []  # [(x, y), ...]
+        self.last_error = 0.0
+        self.cross_track_error_history: List[float] = []
+
+    def _apply_grade_params(self) -> None:
+        """根据AGV等级应用参数"""
+        grade_params = {
+            "S": {"look_ahead_gain": 0.3, "kp": 1.5, "max_linear_vel": 0.5, "max_angular_vel": 1.5},
+            "M": {"look_ahead_gain": 0.5, "kp": 2.0, "max_linear_vel": 1.0, "max_angular_vel": 2.0},
+            "L": {"look_ahead_gain": 0.7, "kp": 2.5, "max_linear_vel": 1.5, "max_angular_vel": 2.5},
+            "XL": {"look_ahead_gain": 0.9, "kp": 3.0, "max_linear_vel": 2.0, "max_angular_vel": 3.0},
+            "XXL": {"look_ahead_gain": 1.2, "kp": 3.5, "max_linear_vel": 2.5, "max_angular_vel": 3.5},
+        }
+        p = grade_params.get(self.grade, grade_params["M"])
+        self.look_ahead_gain = p["look_ahead_gain"]
+        self.kp = p["kp"]
+        self.max_linear_vel = p["max_linear_vel"]
+        self.max_angular_vel = p["max_angular_vel"]
+
+    def load_trajectory(self, waypoints: List[Tuple[float, float]]) -> None:
+        """加载轨迹点"""
+        self.trajectory = list(waypoints)
+        self.total_waypoints = len(waypoints)
+        self.current_waypoint_index = 0
+
+    def compute_look_ahead_distance(self, velocity: float) -> float:
+        """计算前视距离 (速度越快前视越远)"""
+        lad = self.look_ahead_gain * abs(velocity)
+        return float(np.clip(lad, self.min_look_ahead, self.max_look_ahead))
+
+    def find_look_ahead_point(
+        self,
+        current_pos: Tuple[float, float],
+        velocity: float,
+    ) -> Optional[Tuple[float, float, int]]:
+        """
+        找到Pure Pursuit前视点
+        
+        Returns:
+            (lx, ly, waypoint_index) 或 None
+        """
+        if not self.trajectory:
+            return None
+        lad = self.compute_look_ahead_distance(velocity)
+        start_idx = max(0, self.current_waypoint_index - 1)
+
+        for i in range(start_idx, len(self.trajectory)):
+            # Skip waypoints already passed
+            if i < self.current_waypoint_index:
+                continue
+            wx, wy = self.trajectory[i]
+            dx = wx - current_pos[0]
+            dy = wy - current_pos[1]
+            dist = np.sqrt(dx*dx + dy*dy)
+            if dist >= lad:
+                return (float(wx), float(wy), i)
+
+        # 到终点
+        if self.trajectory:
+            last = self.trajectory[-1]
+            return (float(last[0]), float(last[1]), len(self.trajectory) - 1)
+        return None
+
+    def compute_pure_pursuit(
+        self,
+        current_pos: Tuple[float, float],
+        current_theta: float,
+        velocity: float,
+    ) -> Tuple[float, float]:
+        """
+        Pure Pursuit 控制律
+        
+        Args:
+            current_pos: (x, y)
+            current_theta: 航向角 (rad)
+            velocity: 当前速度 (m/s)
+        
+        Returns:
+            (v_cmd, omega_cmd)
+        """
+        la_point = self.find_look_ahead_point(current_pos, velocity)
+        if la_point is None:
+            return (0.0, 0.0)
+
+        lx, ly, wp_idx = la_point
+        self.current_waypoint_index = wp_idx
+
+        # 转换为车辆局部坐标系
+        dx = lx - current_pos[0]
+        dy = ly - current_pos[1]
+        local_x = dx * np.cos(current_theta) + dy * np.sin(current_theta)
+        local_y = -dx * np.sin(current_theta) + dy * np.cos(current_theta)
+
+        # 偏航角误差
+        alpha = np.arctan2(local_y, max(local_x, 0.01))
+        # 前视距离
+        lad = np.sqrt(local_x**2 + local_y**2)
+
+        # 角速度命令
+        k = 2.0 / max(lad, 0.05)
+        omega_cmd = k * np.sin(alpha)
+
+        # 速度命令 (沿轨迹方向)
+        v_cmd = velocity
+
+        # 限幅
+        v_cmd = float(np.clip(v_cmd, -self.max_linear_vel, self.max_linear_vel))
+        omega_cmd = float(np.clip(omega_cmd, -self.max_angular_vel, self.max_angular_vel))
+
+        return (v_cmd, omega_cmd)
+
+    def compute_pid_velocity(
+        self,
+        current_vel: float,
+        target_vel: float,
+        dt: float,
+    ) -> float:
+        """
+        PID速度控制
+        
+        Args:
+            current_vel: 当前速度 (m/s)
+            target_vel: 目标速度 (m/s)
+            dt: 时间步长 (s)
+        
+        Returns:
+            扭矩命令 (Nm)
+        """
+        error = target_vel - current_vel
+
+        # PID
+        self.integral_vel += error * dt
+        self.integral_vel = float(np.clip(self.integral_vel, -2.0, 2.0))
+        derivative = (error - self.prev_error_vel) / dt if dt > 0 else 0.0
+
+        torque = self.kp * error + self.ki * self.integral_vel + self.kd * derivative
+        self.prev_error_vel = error
+        return float(np.clip(torque, -5.0, 5.0))
+
+    def track_trajectory(
+        self,
+        current_pos: Tuple[float, float],
+        current_theta: float,
+        current_vel: float,
+        dt: float,
+    ) -> Dict[str, Any]:
+        """
+        主跟踪函数
+        
+        Returns:
+            {'v_cmd', 'omega_cmd', 'cross_track_error', 'waypoint_progress', 'finished'}
+        """
+        # Pure Pursuit 获取速度命令
+        v_cmd_pp, omega_cmd = self.compute_pure_pursuit(
+            current_pos, current_theta, current_vel
+        )
+
+        # PID 速度伺服
+        torque_cmd = self.compute_pid_velocity(current_vel, v_cmd_pp, dt)
+
+        # 计算横向跟踪误差
+        cross_track_error = self._compute_cross_track_error(current_pos)
+
+        # 进度
+        progress = self.current_waypoint_index / max(self.total_waypoints - 1, 1)
+        finished = self.current_waypoint_index >= len(self.trajectory) - 1
+
+        self.last_error = cross_track_error
+        self.cross_track_error_history.append(cross_track_error)
+        if len(self.cross_track_error_history) > 100:
+            self.cross_track_error_history.pop(0)
+
+        return {
+            'v_cmd': v_cmd_pp,
+            'omega_cmd': omega_cmd,
+            'torque_cmd': torque_cmd,
+            'cross_track_error': cross_track_error,
+            'waypoint_progress': progress,
+            'current_waypoint': self.current_waypoint_index,
+            'total_waypoints': self.total_waypoints,
+            'finished': finished,
+        }
+
+    def _compute_cross_track_error(self, current_pos: Tuple[float, float]) -> float:
+        """计算到轨迹的最近距离 (横向误差)"""
+        if len(self.trajectory) < 2:
+            return 0.0
+        min_dist = float('inf')
+        for i in range(len(self.trajectory) - 1):
+            p1 = self.trajectory[i]
+            p2 = self.trajectory[i + 1]
+            dist = self._point_to_segment_distance(current_pos, p1, p2)
+            if dist < min_dist:
+                min_dist = dist
+        return min_dist
+
+    @staticmethod
+    def _point_to_segment_distance(
+        point: Tuple[float, float],
+        seg_a: Tuple[float, float],
+        seg_b: Tuple[float, float],
+    ) -> float:
+        """点，到线段的最短距离"""
+        px, py = point
+        ax, ay = seg_a
+        bx, by = seg_b
+        abx, aby = bx - ax, by - ay
+        apx, apy = px - ax, py - ay
+        t = np.clip((apx * abx + apy * aby) / (abx**2 + aby**2 + 1e-10), 0.0, 1.0)
+        proj_x = ax + t * abx
+        proj_y = ay + t * aby
+        return np.sqrt((px - proj_x)**2 + (py - proj_y)**2)
+
+    def reset(self) -> None:
+        """重置跟踪器"""
+        self.current_waypoint_index = 0
+        self.integral_vel = 0.0
+        self.prev_error_vel = 0.0
+        self.cross_track_error_history.clear()
+
+
+# ============================================================================
+# 传感器自动标定 - Sensor Auto-Calibration
+# ============================================================================
+
+
+class CalibrationStatus(enum.Enum):
+    """标定状态"""
+    IDLE = "idle"
+    RUNNING = "running"
+    CALIBRATED = "calibrated"
+    FAILED = "failed"
+
+
+class SensorAutoCalibrator:
+    """
+    传感器自动标定器
+    
+    支持:
+    - IMU零偏标定 (静止状态采集)
+    - IMU噪声参数估计
+    - 力传感器零点漂移校准
+    - 里程计比例因子标定
+    """
+
+    def __init__(
+        self,
+        calibration_samples: int = 200,
+        sample_rate_hz: float = 100.0,
+        imu_bias_threshold: float = 0.1,
+        force_drift_threshold: float = 0.5,
+    ):
+        self.calibration_samples = calibration_samples
+        self.sample_rate_hz = sample_rate_hz
+        self.imu_bias_threshold = imu_bias_threshold
+        self.force_drift_threshold = force_drift_threshold
+
+        # 标定状态
+        self.imu_calibration_status = CalibrationStatus.IDLE
+        self.force_calibration_status = CalibrationStatus.IDLE
+        self.odom_calibration_status = CalibrationStatus.IDLE
+
+        # IMU标定结果
+        self.imu_accel_bias: Optional[np.ndarray] = None
+        self.imu_gyro_bias: Optional[float] = None
+        self.imu_noise_std: Optional[Dict[str, float]] = None
+
+        # 力传感器标定结果
+        self.force_zero_drift: Optional[np.ndarray] = None
+
+        # 里程计标定
+        self.odom_scale_factor: float = 1.0
+
+        # 样本缓冲区
+        self._accel_buffer: List[np.ndarray] = []
+        self._gyro_buffer: List[float] = []
+        self._force_buffer: List[np.ndarray] = []
+
+        # 标定历史
+        self.calibration_history: List[Dict[str, Any]] = []
+
+    def start_imu_calibration(self) -> None:
+        """开始IMU标定采集"""
+        self.imu_calibration_status = CalibrationStatus.RUNNING
+        self._accel_buffer.clear()
+        self._gyro_buffer.clear()
+
+    def add_imu_sample(self, accel: np.ndarray, gyro: float) -> bool:
+        """
+        添加IMU样本 (静止状态)
+        
+        Returns:
+            True 如果采集完成
+        """
+        if self.imu_calibration_status != CalibrationStatus.RUNNING:
+            return False
+
+        self._accel_buffer.append(np.array(accel, dtype=np.float64))
+        self._gyro_buffer.append(float(gyro))
+
+        if len(self._accel_buffer) >= self.calibration_samples:
+            self._finish_imu_calibration()
+            return True
+        return False
+
+    def _finish_imu_calibration(self) -> None:
+        """完成IMU标定计算"""
+        try:
+            accel_data = np.array(self._accel_buffer)
+            gyro_data = np.array(self._gyro_buffer)
+
+            # 零偏 = 均值 (静止时应为0 + 重力分量)
+            mean_accel = np.mean(accel_data, axis=0)
+            # 假设Z轴朝上，accel_z 应约为 9.81
+            gravity_vec = np.array([0.0, 0.0, 9.81])
+            # 零偏 = 测量均值 - 重力向量
+            self.imu_accel_bias = mean_accel - gravity_vec
+
+            # 陀螺仪零偏
+            self.imu_gyro_bias = float(np.mean(gyro_data))
+
+            # 噪声标准差
+            self.imu_noise_std = {
+                'accel_x': float(np.std(accel_data[:, 0])),
+                'accel_y': float(np.std(accel_data[:, 1])),
+                'accel_z': float(np.std(accel_data[:, 2])),
+                'gyro': float(np.std(gyro_data)),
+            }
+
+            # 检查标定质量
+            bias_magnitude = np.linalg.norm(self.imu_accel_bias)
+            gyro_bias_magnitude = abs(self.imu_gyro_bias)
+
+            if bias_magnitude < self.imu_bias_threshold and gyro_bias_magnitude < 0.05:
+                self.imu_calibration_status = CalibrationStatus.CALIBRATED
+            else:
+                # 仍然标定，但标记有较大偏差
+                self.imu_calibration_status = CalibrationStatus.CALIBRATED
+                logger.warning(
+                    f"IMU calibration done with bias: accel={bias_magnitude:.3f}m/s^2, "
+                    f"gyro={gyro_bias_magnitude:.3f}rad/s (thresholds: "
+                    f"{self.imu_bias_threshold}, 0.05)"
+                )
+
+            self.calibration_history.append({
+                'type': 'imu',
+                'status': self.imu_calibration_status.value,
+                'accel_bias': self.imu_accel_bias.tolist(),
+                'gyro_bias': self.imu_gyro_bias,
+                'noise_std': self.imu_noise_std,
+                'sample_count': len(self._accel_buffer),
+            })
+
+        except Exception as e:
+            self.imu_calibration_status = CalibrationStatus.FAILED
+            logger.error(f"IMU calibration failed: {e}")
+
+    def apply_imu_calibration(self, accel: np.ndarray, gyro: float) -> Tuple[np.ndarray, float]:
+        """
+        应用IMU标定补偿
+        
+        Returns:
+            (校正后加速度, 校正后角速度)
+        """
+        if self.imu_calibration_status != CalibrationStatus.CALIBRATED:
+            return accel, gyro
+
+        calibrated_accel = np.array(accel, dtype=np.float64) - (self.imu_accel_bias if self.imu_accel_bias is not None else np.zeros(3))
+        calibrated_gyro = float(gyro) - (self.imu_gyro_bias or 0.0)
+        return calibrated_accel, calibrated_gyro
+
+    def start_force_calibration(self) -> None:
+        """开始力传感器标定采集"""
+        self.force_calibration_status = CalibrationStatus.RUNNING
+        self._force_buffer.clear()
+
+    def add_force_sample(self, force: np.ndarray) -> bool:
+        """添加力传感器样本 (零负载状态)"""
+        if self.force_calibration_status != CalibrationStatus.RUNNING:
+            return False
+        self._force_buffer.append(np.array(force, dtype=np.float64))
+        if len(self._force_buffer) >= self.calibration_samples:
+            self._finish_force_calibration()
+            return True
+        return False
+
+    def _finish_force_calibration(self) -> None:
+        """完成力传感器零点漂移标定"""
+        try:
+            force_data = np.array(self._force_buffer)
+            self.force_zero_drift = np.mean(force_data, axis=0)
+            self.force_calibration_status = CalibrationStatus.CALIBRATED
+            self.calibration_history.append({
+                'type': 'force',
+                'status': self.force_calibration_status.value,
+                'zero_drift': self.force_zero_drift.tolist(),
+                'sample_count': len(self._force_buffer),
+            })
+        except Exception as e:
+            self.force_calibration_status = CalibrationStatus.FAILED
+            logger.error(f"Force calibration failed: {e}")
+
+    def apply_force_calibration(self, force: np.ndarray) -> np.ndarray:
+        """应用力传感器标定补偿"""
+        if self.force_calibration_status != CalibrationStatus.CALIBRATED:
+            return force
+        drift = self.force_zero_drift if self.force_zero_drift is not None else np.zeros(6)
+        return np.array(force, dtype=np.float64) - drift
+
+    def calibrate_odometry_scale(
+        self,
+        commanded_distance: float,
+        measured_distance: float,
+    ) -> float:
+        """
+        标定里程计比例因子
+        
+        Args:
+            commanded_distance: 命令行进距离 (m)
+            measured_distance: 测量行进距离 (m, 来自外部基准如尺子)
+        
+        Returns:
+            新的比例因子
+        """
+        if abs(measured_distance) < 0.01:
+            return self.odom_scale_factor
+        self.odom_scale_factor = commanded_distance / measured_distance
+        self.odom_calibration_status = CalibrationStatus.CALIBRATED
+        self.calibration_history.append({
+            'type': 'odometry',
+            'status': self.odom_calibration_status.value,
+            'scale_factor': self.odom_scale_factor,
+            'commanded_distance': commanded_distance,
+            'measured_distance': measured_distance,
+        })
+        return self.odom_scale_factor
+
+    def apply_odometry_calibration(self, raw_odom_distance: float) -> float:
+        """应用里程计比例因子"""
+        return raw_odom_distance * self.odom_scale_factor
+
+    def get_calibration_report(self) -> Dict[str, Any]:
+        """获取完整标定报告"""
+        return {
+            'imu': {
+                'status': self.imu_calibration_status.value,
+                'accel_bias': self.imu_accel_bias.tolist() if self.imu_accel_bias is not None else None,
+                'gyro_bias': float(self.imu_gyro_bias) if self.imu_gyro_bias is not None else None,
+                'noise_std': self.imu_noise_std,
+            },
+            'force': {
+                'status': self.force_calibration_status.value,
+                'zero_drift': self.force_zero_drift.tolist() if self.force_zero_drift is not None else None,
+            },
+            'odometry': {
+                'status': self.odom_calibration_status.value,
+                'scale_factor': self.odom_scale_factor,
+            },
+            'total_calibrations': len(self.calibration_history),
+        }
+
+    def is_fully_calibrated(self) -> bool:
+        """检查是否所有传感器都已标定"""
+        return (
+            self.imu_calibration_status == CalibrationStatus.CALIBRATED
+            and self.force_calibration_status == CalibrationStatus.CALIBRATED
+            and self.odom_calibration_status == CalibrationStatus.CALIBRATED
+        )
+
+    def reset(self) -> None:
+        """重置所有标定"""
+        self.imu_calibration_status = CalibrationStatus.IDLE
+        self.force_calibration_status = CalibrationStatus.IDLE
+        self.odom_calibration_status = CalibrationStatus.IDLE
+        self.imu_accel_bias = None
+        self.imu_gyro_bias = None
+        self.imu_noise_std = None
+        self.force_zero_drift = None
+        self.odom_scale_factor = 1.0
+        self._accel_buffer.clear()
+        self._gyro_buffer.clear()
+        self._force_buffer.clear()
+
+
