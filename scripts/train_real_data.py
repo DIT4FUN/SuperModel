@@ -868,8 +868,8 @@ class WorldModelTrainer:
             else:
                 self.optimizer.step()
 
-            self.optimizer.zero_grad()
             self.scheduler.step()
+            self.optimizer.zero_grad()
             self.global_step += 1
 
         return {k: v.item() for k, v in losses.items()}
