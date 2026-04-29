@@ -644,6 +644,16 @@ class WorldModel(nn.Module):
         Returns:
             losses: 损失字典
         """
+        # 处理维度顺序：期望 (T, B, action_dim)，但可能收到 (B, T, action_dim) 或 (1, B, T, action_dim)
+        if actions.dim() == 4:
+            # (1, B, T, action_dim) -> (T, B, action_dim)
+            actions = actions.squeeze(0).transpose(0, 1)
+        elif actions.dim() == 3 and actions.shape[0] != actions.shape[1]:
+            # (B, T, action_dim) -> (T, B, action_dim)
+            # 检测是否是 (B, T, ...) 而不是 (T, B, ...)
+            if actions.shape[0] < actions.shape[1]:
+                actions = actions.transpose(0, 1)
+        
         T, B = actions.shape[:2]
         
         # 初始化 hidden states
@@ -658,7 +668,30 @@ class WorldModel(nn.Module):
         )
         
         # KL 损失 (使用 tensor)
-        device = observations['vision'].device
+        # 获取device：从vision或第一个可用的observation，或从actions
+        if 'vision' in observations:
+            device = observations['vision'].device
+        elif observations:
+            device = next(iter(observations.values())).device
+        else:
+            device = actions.device
+        
+        # 处理 observations 维度顺序：期望 (T, B, obs_dim)，但可能收到 (B, T, obs_dim)
+        for k in list(observations.keys()):
+            v = observations[k]
+            if v.dim() == 3:
+                # 检测是否是 (B, T, obs_dim) 而不是 (T, B, obs_dim)
+                if v.shape[0] < v.shape[1]:
+                    # (B, T, obs_dim) -> (T, B, obs_dim)
+                    observations[k] = v.transpose(0, 1)
+        
+        # 处理 rewards 和 dones 维度顺序：期望 (T, B) 或 (T,)，但可能收到 (B, T)
+        if rewards.dim() == 2 and rewards.shape[0] < rewards.shape[1]:
+            # (B, T) -> (T, B)
+            rewards = rewards.transpose(0, 1)
+        if dones.dim() == 2 and dones.shape[0] < dones.shape[1]:
+            # (B, T) -> (T, B)
+            dones = dones.transpose(0, 1)
         kl_loss = torch.tensor(0.0, device=device)
         reward_loss = torch.tensor(0.0, device=device)
         decoder_loss = torch.tensor(0.0, device=device)
