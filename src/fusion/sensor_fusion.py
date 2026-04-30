@@ -1,4 +1,4 @@
-# Copyright (C) 2024-2026 赵元请 (DIT4FUN)
+# Copyright (C) 2026 焦洋 (Jiao Yang) <jiaoyang@cczu.edu.cn>
 #
 # This program is free software: you can redistribute it and/or modify
 # it under the terms of the GNU Affero General Public License as published
