@@ -901,7 +901,43 @@ brain.stop()
 
 ## 许可证
 
-MIT License
+### 双许可策略
+
+本项目采用 **分层双许可** 策略，不同组件适用不同许可协议。
+
+#### 源代码 — GNU AGPLv3
+
+源代码文件（\`.py\` 等）在非商业使用下遵循 [GNU Affero General Public License v3.0](LICENSE.AGPL)。
+
+- ✅ 自由使用、修改、分发（非商业）
+- ✅ 必须保留版权声明
+- ✅ 衍生代码或网络服务必须以 AGPLv3 开源
+- ❌ **闭源商用需购买商业授权**
+
+#### 模型权重 — CC BY-NC-SA 4.0
+
+模型权重文件遵循 [Creative Commons BY-NC-SA 4.0](LICENSE.WEIGHTS)。
+
+- ✅ 必须署名
+- ✅ 非商业用途
+- ✅ 衍生模型必须同等开源
+- ❌ **商用模型需购买商业授权**
+
+#### 商业授权
+
+如需商业使用（闭源集成、商用部署、商用模型等），请查看 [LICENSE.COMMERCIAL](LICENSE.COMMERCIAL)。
+
+#### 第三方组件
+
+项目引用的第三方组件遵循各自的许可协议（MIT、Apache 2.0、BSD 等）。详见 [licenses/third-party/](licenses/third-party/)。
+
+---
+
+完整许可文件：
+- [LICENSE.AGPL](LICENSE.AGPL) — AGPLv3 全文
+- [LICENSE.WEIGHTS](LICENSE.WEIGHTS) — CC BY-NC-SA 4.0 全文
+- [LICENSE.COMMERCIAL](LICENSE.COMMERCIAL) — 商业授权指引
+- [NOTICE](NOTICE) — 项目声明与第三方组件
 
 ## GitHub
 
